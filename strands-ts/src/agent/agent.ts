@@ -125,6 +125,8 @@ import {
   pinContextTool,
   createTokenUsageMiddleware,
 } from '../context-manager/modes/agentic/agentic-context.js'
+import { ContextManager } from '../context-manager/context-manager.js'
+import type { ContextManagerConfig } from '../context-manager/types.js'
 
 /**
  * Recursive type definition for nested tool arrays.
@@ -226,19 +228,30 @@ export type AgentConfig = {
    */
   conversationManager?: ConversationManager
   /**
-   * Context management strategy.
+   * Context management strategy or instance.
    *
+   * Accepts:
    * - `"auto"`: SummarizingConversationManager with proactive compression + ContextOffloader.
    * - `"agentic"`: Lets the model drive context management via injected tools.
+   * - A {@link ContextManager} instance for full control over compression methods,
+   *   content-aware routing, third-party integrations, and the L1 transcript.
+   * - A {@link ContextManagerConfig} object (e.g. `{ preset: "auto", threshold: 0.9 }`),
+   *   which is wrapped in a {@link ContextManager} automatically.
    *
-   * If `conversationManager` is also provided, the user's conversation manager is used instead.
-   * Defaults to undefined (SlidingWindowConversationManager, no offloader).
+   * When a {@link ContextManager} (or config object) is supplied, the
+   * {@link ConversationManager} is disabled and the ContextManager owns all
+   * compression, overflow recovery, and proactive reduction. Supplying both a
+   * `ContextManager` and a `conversationManager` is rejected.
    *
-   * @remarks The offloader uses in-memory storage that does not persist across process
-   * restarts. For agents using `sessionManager`, provide an explicit `ContextOffloader`
-   * with durable storage via the `plugins` parameter.
+   * If `conversationManager` is also provided with a string strategy, the user's
+   * conversation manager is used instead. Defaults to undefined
+   * (SlidingWindowConversationManager, no offloader).
+   *
+   * @remarks The string-strategy offloader uses in-memory storage that does not
+   * persist across process restarts. For agents using `sessionManager`, provide an
+   * explicit `ContextOffloader` with durable storage via the `plugins` parameter.
    */
-  contextManager?: ContextManagerStrategy
+  contextManager?: ContextManagerStrategy | ContextManager | ContextManagerConfig
   /**
    * Plugins to register with the agent.
    */
@@ -309,6 +322,22 @@ export type AgentConfig = {
    * default changes.
    */
   sandbox?: Sandbox | false
+}
+
+/** Returns `true` if the contextManager option is one of the string strategy facades. */
+function isContextManagerStrategy(value: AgentConfig['contextManager']): value is ContextManagerStrategy {
+  return typeof value === 'string'
+}
+
+/**
+ * Resolve the contextManager option into a {@link ContextManager} instance when an
+ * instance or config object was supplied, or `undefined` for the string facades.
+ *
+ * A config object is wrapped in a {@link ContextManager}; an instance is used as-is.
+ */
+function resolveContextManagerInstance(contextManager: AgentConfig['contextManager']): ContextManager | undefined {
+  if (contextManager === undefined || isContextManagerStrategy(contextManager)) return undefined
+  return contextManager instanceof ContextManager ? contextManager : new ContextManager(contextManager)
 }
 
 /**
@@ -413,6 +442,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   public readonly modelState: StateStore
   private readonly _conversationManager: ConversationManager
+  private readonly _contextManager: ContextManager | undefined
 
   /**
    * The model provider used by the agent for inference.
@@ -458,6 +488,15 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   get sandbox(): Sandbox {
     return this._sandbox || defaultSandbox.get()
+  }
+
+  /**
+   * The {@link ContextManager} owning compression and the L1 transcript, when one
+   * was supplied via the `contextManager` option as an instance or config object.
+   * Undefined for the string-strategy facades and the default conversation manager.
+   */
+  get contextManager(): ContextManager | undefined {
+    return this._contextManager
   }
 
   private readonly _hooksRegistry: HookRegistryImplementation
@@ -510,6 +549,12 @@ export class Agent implements LocalAgent, InvokableAgent {
       this.model = config?.model ?? new BedrockModel()
     }
 
+    // A ContextManager instance/config disables the ConversationManager and owns
+    // all compression. The string strategies keep their v1 facade behavior.
+    const contextManagerInstance = resolveContextManagerInstance(config?.contextManager)
+    const contextManagerStrategy = isContextManagerStrategy(config?.contextManager) ? config?.contextManager : undefined
+    this._contextManager = contextManagerInstance
+
     // Validate and assign conversation manager
     if (this.model.stateful) {
       if (config?.conversationManager || config?.contextManager) {
@@ -518,12 +563,19 @@ export class Agent implements LocalAgent, InvokableAgent {
         )
       }
       this._conversationManager = new NullConversationManager()
+    } else if (contextManagerInstance) {
+      if (config?.conversationManager) {
+        throw new Error(
+          'contextManager (ContextManager instance) and conversationManager cannot be used together. The ContextManager owns compression and overflow recovery.'
+        )
+      }
+      this._conversationManager = new NullConversationManager()
     } else {
-      this._conversationManager = resolveConversationManager(config?.contextManager, config?.conversationManager)
+      this._conversationManager = resolveConversationManager(contextManagerStrategy, config?.conversationManager)
     }
 
     const { tools, mcpClients } = flattenTools(config?.tools ?? [])
-    if (config?.contextManager === 'agentic') {
+    if (contextManagerStrategy === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
     this._toolRegistry = new ToolRegistry(tools)
@@ -537,7 +589,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize middleware registry
     this._middlewareRegistry = new MiddlewareRegistry()
 
-    if (config?.contextManager === 'agentic') {
+    if (contextManagerStrategy === 'agentic') {
       this._middlewareRegistry.addInput(InvokeModelStage.Input, createTokenUsageMiddleware(this.model))
     }
 
@@ -566,12 +618,14 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._conversationManager,
       ...retryStrategies,
       ...(config?.plugins ?? []),
-      ...((config?.contextManager === 'auto' || config?.contextManager === 'agentic') && !hasOffloader
+      // A ContextManager instance registers its own hooks and owns compression.
+      ...(this._contextManager ? [this._contextManager] : []),
+      ...((contextManagerStrategy === 'auto' || contextManagerStrategy === 'agentic') && !hasOffloader
         ? [
             new ContextOffloader({
               storage: new InMemoryStorage(),
               maxResultTokens:
-                config?.contextManager === 'agentic'
+                contextManagerStrategy === 'agentic'
                   ? AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS
                   : CONTEXT_MANAGER_MAX_RESULT_TOKENS,
               previewTokens: CONTEXT_MANAGER_PREVIEW_TOKENS,

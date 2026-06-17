@@ -45,6 +45,10 @@
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
     },
+    "./context-manager": {
+      "types": "./dist/src/context-manager/index.d.ts",
+      "default": "./dist/src/context-manager/index.js"
+    },
     "./vended-tools/notebook": {
       "types": "./dist/src/vended-tools/notebook/index.d.ts",
       "default": "./dist/src/vended-tools/notebook/index.js"

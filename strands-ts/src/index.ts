@@ -269,6 +269,46 @@ export {
   type SummarizingConversationManagerConfig,
 } from './conversation-manager/summarizing-conversation-manager.js'
 
+// Context Manager (L0/L1 context management with pluggable compression methods)
+export {
+  ContextManager,
+  ContentRouter,
+  FallbackChain,
+  ProtectMethod,
+  SummarizeMethod,
+  TruncateMethod,
+  OffloadMethod,
+  DropMethod,
+  SkeletonMethod,
+  SchemaOnlyMethod,
+  CollapsePairsMethod,
+  resolveMethod,
+  resolveMethodShorthand,
+  Transcript,
+} from './context-manager/index.js'
+export type {
+  CompressionMethod,
+  TokenBudget,
+  MethodShorthand,
+  MethodLike,
+  Scratchpad,
+  PreviewMode,
+  TranscriptEviction,
+  TranscriptConfig,
+  BudgetConfig,
+  ContextManagerPreset,
+  ContextManagerConfig,
+  ContentRoutes,
+  ContentCategory,
+  TranscriptReader,
+  SummarizeMethodConfig,
+  TruncateMethodConfig,
+  OffloadMethodConfig,
+  DropMethodConfig,
+  SkeletonMethodConfig,
+  SchemaOnlyMethodConfig,
+} from './context-manager/index.js'
+
 // Logging
 export { configureLogging } from './logging/logger.js'
 export type { Logger } from './logging/types.js'
