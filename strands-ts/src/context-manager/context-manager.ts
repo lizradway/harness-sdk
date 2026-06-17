@@ -31,6 +31,8 @@ import { scoreMessages } from './priority.js'
 const DEFAULT_THRESHOLD = 0.85
 /** Default number of leading messages to pin. */
 const DEFAULT_PROTECT_FIRST = 1
+/** Tool names whose results must never be re-compressed (they return recovered L1 content). */
+const RETRIEVAL_TOOL_NAMES = new Set(['get_history', 'search_history'])
 
 /** Build the method tree the `"auto"` preset resolves to. */
 function autoMethod(): ContentRouter {
@@ -293,6 +295,9 @@ export class ContextManager implements Plugin {
 
   /** Decide whether a candidate's original should be written to the L1 transcript. */
   private _shouldPreserve(message: Message): boolean {
+    // Per the design: every lossy transformation persists the original to L1
+    // first. The only exceptions are `protect` (stays in L0 unchanged) and
+    // `drop` (explicitly discards without preservation). Offload still writes L1.
     if (isProtected(message)) return false
     const method = this._method instanceof ContentRouter ? this._method.resolvedMethodFor(message) : this._method
     return method.name !== 'drop' && method.name !== 'protect'
@@ -383,12 +388,18 @@ export class ContextManager implements Plugin {
   /** Offload an oversized successful tool result immediately, mirroring the auto preset. */
   private async _maybeOffloadToolResult(event: AfterToolCallEvent): Promise<void> {
     if (event.result.status === 'error') return
+    // Never re-compress content the agent just retrieved from L1, or it loops:
+    // retrieve → offload → retrieve → offload.
+    if (RETRIEVAL_TOOL_NAMES.has(event.toolUse.name)) return
     const offload = this._findOffloadMethod()
     if (!offload) return
     const message = new Message({ role: 'user', content: [event.result] })
     const budget = this._lastBudget ?? this._computeBudget(event.agent.model, undefined)
     const [out] = await offload.compress([message], budget)
     if (out && out !== message) {
+      // Lossy transformation: persist the original to L1 first (design §2.2),
+      // unless offload is configured to skip L1 (design §2.1 keeps offload at "yes").
+      if (this._transcript) await this._transcript.append([message])
       const block = out.content.find((b) => b.type === 'toolResultBlock')
       if (block && block.type === 'toolResultBlock') event.result = block
     }

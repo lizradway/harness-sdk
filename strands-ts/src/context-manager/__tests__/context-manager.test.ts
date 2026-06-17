@@ -6,7 +6,8 @@ import { InMemoryStorage } from '../../vended-plugins/context-offloader/storage.
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { NullConversationManager } from '../../conversation-manager/null-conversation-manager.js'
-import { Message, TextBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { AfterToolCallEvent } from '../../hooks/events.js'
 
 /** Reach into private fields for white-box assertions. */
 function peek(value: object): Record<string, unknown> {
@@ -157,6 +158,65 @@ describe('ContextManager.compress', () => {
     expect(agent.messages[idx]!.metadata?.custom?.pinned).toBe(true)
     cm.unpin(idx)
     expect(agent.messages[idx]!.metadata?.custom?.pinned).toBeUndefined()
+  })
+})
+
+describe('ContextManager eager tool-result offload (design §6.3)', () => {
+  function makeEvent(agent: Agent, toolName: string, result: ToolResultBlock): AfterToolCallEvent {
+    return new AfterToolCallEvent({
+      agent,
+      toolUse: { name: toolName, toolUseId: result.toolUseId, input: {} },
+      tool: undefined,
+      result,
+      invocationState: {} as never,
+    })
+  }
+
+  async function setup(): Promise<{ cm: ContextManager; agent: Agent }> {
+    const cm = new ContextManager({
+      method: new ContentRouter({ toolResults: new OffloadMethod({ threshold: 1, keepRecent: 0 }) }),
+      scratchpad: new InMemoryStorage(),
+    })
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
+    model.updateConfig({ contextWindowLimit: 1000 })
+    const agent = new Agent({ model, contextManager: cm, printer: false })
+    await agent.initialize()
+    return { cm, agent }
+  }
+
+  it('persists the original tool result to L1 before offloading it (design §2.2)', async () => {
+    const { cm, agent } = await setup()
+    const original = new ToolResultBlock({
+      toolUseId: 't1',
+      status: 'success',
+      content: [new TextBlock('X'.repeat(8000))],
+    })
+    const event = makeEvent(agent, 'read_file', original)
+    await (cm as unknown as { _maybeOffloadToolResult(e: AfterToolCallEvent): Promise<void> })._maybeOffloadToolResult(
+      event
+    )
+
+    // L0 result was shrunk to a preview...
+    expect(JSON.stringify(event.result.toJSON()).length).toBeLessThan(8000)
+    // ...and the full original was preserved to L1.
+    const recent = await cm.transcript.getRecent(1)
+    expect(JSON.stringify(recent[0]!.toJSON())).toContain('X'.repeat(8000))
+  })
+
+  it('never re-compresses results from the L1 retrieval tools', async () => {
+    const { cm, agent } = await setup()
+    const retrieved = new ToolResultBlock({
+      toolUseId: 't2',
+      status: 'success',
+      content: [new TextBlock('Y'.repeat(8000))],
+    })
+    const event = makeEvent(agent, 'get_history', retrieved)
+    await (cm as unknown as { _maybeOffloadToolResult(e: AfterToolCallEvent): Promise<void> })._maybeOffloadToolResult(
+      event
+    )
+    // Untouched: same block, nothing written to L1.
+    expect(event.result).toBe(retrieved)
+    expect(await cm.transcript.getRecent(1)).toHaveLength(0)
   })
 })
 
