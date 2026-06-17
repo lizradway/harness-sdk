@@ -22,7 +22,7 @@ import type { Tool } from '../tools/tool.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import type { CompressionMethod, ContextManagerConfig, MethodLike, Scratchpad, TokenBudget } from './types.js'
-import { resolveMethod, OffloadMethod, SummarizeMethod } from './methods.js'
+import { resolveMethod, OffloadMethod, SummarizeMethod, DEFAULT_RECOVERY_HINT } from './methods.js'
 import { ContentRouter } from './content-router.js'
 import { Transcript, type TranscriptReader } from './transcript.js'
 import { scoreMessages } from './priority.js'
@@ -117,6 +117,13 @@ export class ContextManager implements Plugin {
           ...(transcriptConfig.eviction !== undefined && { eviction: transcriptConfig.eviction }),
         })
       : undefined
+
+    // Tell lossy methods to point the model at the retrieval tools — but only
+    // when those tools are actually registered, so we never promise a tool the
+    // model can't call.
+    if (this._transcriptEnabled && this._retrievalEnabled) {
+      this._supplyRecoveryHint(this._method, DEFAULT_RECOVERY_HINT)
+    }
   }
 
   // ----- Public instance API -------------------------------------------------
@@ -229,6 +236,19 @@ export class ContextManager implements Plugin {
     }
   }
 
+  /** Recursively give every lossy method that supports it the L1 recovery hint. */
+  private _supplyRecoveryHint(method: CompressionMethod, hint: string): void {
+    const settable = method as Partial<{ setRecoveryHint(hint: string): void }>
+    if (typeof settable.setRecoveryHint === 'function') {
+      settable.setRecoveryHint(hint)
+    }
+    if (method instanceof ContentRouter) {
+      for (const spec of method.methodSpecs()) {
+        if (typeof spec !== 'string') this._supplyRecoveryHint(spec, hint)
+      }
+    }
+  }
+
   private _computeBudget(model: Model, projected: number | undefined): TokenBudget {
     let limit = model.getConfig().contextWindowLimit
     if (limit === undefined) {
@@ -273,8 +293,13 @@ export class ContextManager implements Plugin {
     // *how* to transform; the ContextManager decides *whether* to preserve. A
     // message is not preserved when it is protected (stays in L0) or when its
     // resolved method is `drop` / `protect` (no recoverable transformation).
+    // Pass each message's conversation index so L1 reads back in order.
     if (this._transcript) {
-      await this._transcript.append(originals.filter((m) => this._shouldPreserve(m)))
+      const preserved = candidates.filter((c) => this._shouldPreserve(c.message))
+      await this._transcript.append(
+        preserved.map((c) => c.message),
+        preserved.map((c) => c.index)
+      )
     }
 
     let transformed: Message[]
@@ -399,7 +424,8 @@ export class ContextManager implements Plugin {
     if (out && out !== message) {
       // Lossy transformation: persist the original to L1 first (design §2.2),
       // unless offload is configured to skip L1 (design §2.1 keeps offload at "yes").
-      if (this._transcript) await this._transcript.append([message])
+      // A just-produced tool result is the latest message, so it sorts last in L1.
+      if (this._transcript) await this._transcript.append([message], [event.agent.messages.length])
       const block = out.content.find((b) => b.type === 'toolResultBlock')
       if (block && block.type === 'toolResultBlock') event.result = block
     }

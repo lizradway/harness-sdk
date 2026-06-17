@@ -42,6 +42,18 @@ describe('TruncateMethod', () => {
     const [out] = await new TruncateMethod({ keep: 'tail', tokens: 10 }).compress([userText(text)], BUDGET)
     expect((out!.content[0] as TextBlock).text).toContain('END')
   })
+
+  it('appends the recovery hint to output when one is set', async () => {
+    const method = new TruncateMethod({ tokens: 10 })
+    method.setRecoveryHint('recover with search_history(query) or get_history().')
+    const [out] = await method.compress([userText('x'.repeat(1000))], BUDGET)
+    expect((out!.content[0] as TextBlock).text).toContain('search_history')
+  })
+
+  it('omits the recovery hint when none is set', async () => {
+    const [out] = await new TruncateMethod({ tokens: 10 }).compress([userText('x'.repeat(1000))], BUDGET)
+    expect((out!.content[0] as TextBlock).text).not.toContain('search_history')
+  })
 })
 
 describe('DropMethod', () => {

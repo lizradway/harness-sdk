@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ContextManager } from '../context-manager.js'
 import { ContentRouter } from '../content-router.js'
-import { OffloadMethod, DropMethod, SummarizeMethod } from '../methods.js'
+import { OffloadMethod, DropMethod, SummarizeMethod, TruncateMethod } from '../methods.js'
 import { InMemoryStorage } from '../../vended-plugins/context-offloader/storage.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -50,6 +50,21 @@ describe('ContextManager construction', () => {
     const scratchpad = new InMemoryStorage()
     void new ContextManager({ method: new ContentRouter({ toolResults: offload }), scratchpad })
     expect(peek(offload)._scratchpad).toBe(scratchpad)
+  })
+
+  it('injects the recovery hint into lossy methods when retrieval is enabled', () => {
+    const truncate = new TruncateMethod()
+    void new ContextManager({ method: new ContentRouter({ assistantMessages: truncate }) })
+    expect(peek(truncate)._recoveryHint).not.toBe('')
+  })
+
+  it('does not inject the recovery hint when retrieval is disabled', () => {
+    const truncate = new TruncateMethod()
+    void new ContextManager({
+      method: new ContentRouter({ assistantMessages: truncate }),
+      transcript: { retrieval: false },
+    })
+    expect(peek(truncate)._recoveryHint).toBe('')
   })
 })
 

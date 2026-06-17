@@ -52,6 +52,20 @@ describe('Transcript', () => {
     expect(transcript.size).toBe(1)
   })
 
+  it('reads back in conversation order even when evicted out of order', async () => {
+    const transcript = new Transcript({ scratchpad: new InMemoryStorage() })
+    // Evict a later message (index 5) before an earlier one (index 2), as can
+    // happen when a low-priority message survives an earlier compression pass.
+    await transcript.append([userText('msg at five')], [5])
+    await transcript.append([userText('msg at two')], [2])
+    await transcript.append([userText('msg at nine'), userText('msg at three')], [9, 3])
+
+    const ordered = await transcript.getRecent(10)
+    const texts = ordered.map((m) => (m.content[0] as TextBlock).text)
+    // Sorted by original conversation position: 2, 3, 5, 9.
+    expect(texts).toEqual(['msg at two', 'msg at three', 'msg at five', 'msg at nine'])
+  })
+
   it('exposes get_history and search_history retrieval tools', () => {
     const transcript = new Transcript({ scratchpad: new InMemoryStorage() })
     const tools = transcript.retrievalTools()

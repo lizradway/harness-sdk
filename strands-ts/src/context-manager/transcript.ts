@@ -27,8 +27,17 @@ interface TranscriptEntry {
   text: string
   /** Byte size of the persisted payload, used for size-based eviction. */
   size: number
+  /** Original position of the message in the conversation, used to order reads. */
+  position: number
+  /** Monotonic insertion counter; breaks ties when positions collide. */
+  seq: number
   /** Whether the MemoryManager has extracted this entry to L2. */
   extracted: boolean
+}
+
+/** Order two entries by conversation position, then by insertion order. */
+function byConversationOrder(a: TranscriptEntry, b: TranscriptEntry): number {
+  return a.position - b.position || a.seq - b.seq
 }
 
 /**
@@ -36,9 +45,9 @@ interface TranscriptEntry {
  * exposing as a public API surface.
  */
 export interface TranscriptReader {
-  /** Return messages whose text matches the query, most recent first. */
+  /** Return messages whose text matches the query, latest in conversation order first. */
   search(query: string, limit?: number): Promise<Message[]>
-  /** Return the most recent N evicted messages. */
+  /** Return the last N messages in conversation order. */
   getRecent(n: number): Promise<Message[]>
 }
 
@@ -84,10 +93,16 @@ export class Transcript implements TranscriptReader {
   /**
    * Append messages to the transcript, persisting each to the scratchpad.
    *
+   * Entries are kept in conversation order (by `positions[i]`) so reads return
+   * a faithful transcript regardless of the order messages were evicted in.
+   *
    * @param messages - The original (pre-transformation) messages to preserve.
+   * @param positions - Original conversation index for each message. When omitted,
+   *   messages are appended after all existing entries in the given order.
    */
-  async append(messages: Message[]): Promise<void> {
-    for (const message of messages) {
+  async append(messages: Message[], positions?: number[]): Promise<void> {
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]!
       const payload = new TextEncoder().encode(JSON.stringify(message.toJSON()))
       let reference: string
       try {
@@ -96,9 +111,19 @@ export class Transcript implements TranscriptReader {
         logger.warn(`error=<${err}> | transcript append failed, message not preserved to L1`)
         continue
       }
-      this._entries.push({ reference, text: messageText(message), size: payload.length, extracted: false })
+      const position = positions?.[i] ?? Number.MAX_SAFE_INTEGER
+      this._entries.push({
+        reference,
+        text: messageText(message),
+        size: payload.length,
+        position,
+        seq: this._counter,
+        extracted: false,
+      })
       this._totalSize += payload.length
     }
+    // Keep entries in conversation order so reads behave like a real transcript.
+    this._entries.sort(byConversationOrder)
     await this._evictIfNeeded()
   }
 

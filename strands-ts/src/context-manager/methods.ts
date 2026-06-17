@@ -25,6 +25,43 @@ const DEFAULT_PREVIEW_TOKENS = 750
 const DEFAULT_OFFLOAD_THRESHOLD_RATIO = 0.0075
 
 /**
+ * Standard hint appended to lossily-compressed content so the model knows the
+ * full original is recoverable from the L1 transcript. The ContextManager
+ * injects this only when the retrieval tools are actually registered.
+ */
+export const DEFAULT_RECOVERY_HINT =
+  'The full original was preserved — recover it with search_history(query) or get_history().'
+
+/**
+ * Append a recovery hint to the last top-level text block of each message.
+ *
+ * Messages without a top-level text block (e.g. a tool-result message, where
+ * the text lives inside the result) are left unchanged to avoid producing
+ * structurally invalid content. A no-op when `hint` is empty.
+ */
+function appendRecoveryHint(messages: Message[], hint: string): Message[] {
+  if (!hint) return messages
+  return messages.map((message) => {
+    let lastTextIndex = -1
+    for (let i = message.content.length - 1; i >= 0; i--) {
+      if (message.content[i] instanceof TextBlock) {
+        lastTextIndex = i
+        break
+      }
+    }
+    if (lastTextIndex === -1) return message
+    const content = message.content.map((block, i) =>
+      i === lastTextIndex ? new TextBlock(`${(block as TextBlock).text}\n\n[${hint}]`) : block
+    )
+    return new Message({
+      role: message.role,
+      content,
+      ...(message.metadata !== undefined && { metadata: message.metadata }),
+    })
+  })
+}
+
+/**
  * Keep messages unchanged. Used for content that must never be compressed
  * (e.g. user messages). The ContextManager skips L1 writes for protected
  * content because it stays in L0.
@@ -56,6 +93,7 @@ export class SummarizeMethod implements CompressionMethod {
   private readonly _ratio: number
   private _model: Model | undefined
   private readonly _prompt: string
+  private _recoveryHint = ''
 
   constructor(config?: SummarizeMethodConfig) {
     this._ratio = Math.max(0.1, Math.min(0.8, config?.ratio ?? 0.3))
@@ -78,13 +116,18 @@ export class SummarizeMethod implements CompressionMethod {
     if (!this._model) this._model = model
   }
 
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
     if (messages.length === 0) return messages
     if (!this._model) {
       throw new Error('SummarizeMethod requires a model — none was provided and no agent model was attached')
     }
     const summary = await generateSummary(messages, this._model, this._prompt)
-    return [summary]
+    return appendRecoveryHint([summary], this._recoveryHint)
   }
 }
 
@@ -104,14 +147,23 @@ export class TruncateMethod implements CompressionMethod {
 
   private readonly _keep: PreviewMode
   private readonly _tokens: number
+  private _recoveryHint = ''
 
   constructor(config?: TruncateMethodConfig) {
     this._keep = config?.keep ?? 'head-tail'
     this._tokens = config?.tokens ?? DEFAULT_PREVIEW_TOKENS
   }
 
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
-    return messages.map((m) => transformMessageText(m, (text) => previewText(text, this._keep, this._tokens)))
+    const truncated = messages.map((m) =>
+      transformMessageText(m, (text) => previewText(text, this._keep, this._tokens))
+    )
+    return appendRecoveryHint(truncated, this._recoveryHint)
   }
 }
 
@@ -148,6 +200,7 @@ export class OffloadMethod implements CompressionMethod {
   private readonly _keepRecent: number
   private _scratchpad: Storage | undefined
   private readonly _fallback: MethodLike
+  private _recoveryHint = ''
 
   constructor(config?: OffloadMethodConfig) {
     this._preview = config?.preview ?? 'head-tail'
@@ -167,6 +220,11 @@ export class OffloadMethod implements CompressionMethod {
   /** Inject the scratchpad backend when the ContextManager owns it. */
   setScratchpad(scratchpad: Storage): void {
     if (!this._scratchpad) this._scratchpad = scratchpad
+  }
+
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
   }
 
   async compress(messages: Message[], budget: TokenBudget): Promise<Message[]> {
@@ -199,9 +257,10 @@ export class OffloadMethod implements CompressionMethod {
       return transformMessageText(message, (t) => previewText(t, this._preview, this._previewTokens))
     }
     const preview = previewText(text, this._preview, this._previewTokens)
-    const placeholder =
-      `[Offloaded ~${tokens.toLocaleString()} tokens to external storage. ` +
-      `Use retrieve_offloaded_content or get_history with ref: ${reference}]\n\n${preview}`
+    const recovery = this._recoveryHint
+      ? ` ${this._recoveryHint}`
+      : ' The full original was preserved in the session transcript.'
+    const placeholder = `[Offloaded ~${tokens.toLocaleString()} tokens (ref: ${reference}).${recovery}]\n\n${preview}`
     return transformMessageText(message, () => placeholder)
   }
 }
@@ -250,6 +309,7 @@ export class SkeletonMethod implements CompressionMethod {
   readonly name = 'skeleton'
 
   private readonly _fallback: MethodLike
+  private _recoveryHint = ''
 
   constructor(config?: SkeletonMethodConfig) {
     this._fallback = config?.fallback ?? 'truncate'
@@ -260,8 +320,14 @@ export class SkeletonMethod implements CompressionMethod {
     return this._fallback
   }
 
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
-    return messages.map((m) => transformMessageText(m, (text) => skeletonize(text)))
+    const skeletons = messages.map((m) => transformMessageText(m, (text) => skeletonize(text)))
+    return appendRecoveryHint(skeletons, this._recoveryHint)
   }
 }
 
@@ -303,6 +369,7 @@ export class SchemaOnlyMethod implements CompressionMethod {
   readonly name = 'schema-only'
 
   private readonly _fallback: MethodLike
+  private _recoveryHint = ''
 
   constructor(config?: SchemaOnlyMethodConfig) {
     this._fallback = config?.fallback ?? 'truncate'
@@ -313,8 +380,13 @@ export class SchemaOnlyMethod implements CompressionMethod {
     return this._fallback
   }
 
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
-    return messages.map((m) =>
+    const schematized = messages.map((m) =>
       transformMessageText(m, (text) => {
         try {
           const parsed: unknown = JSON.parse(text)
@@ -324,6 +396,7 @@ export class SchemaOnlyMethod implements CompressionMethod {
         }
       })
     )
+    return appendRecoveryHint(schematized, this._recoveryHint)
   }
 }
 
@@ -350,8 +423,15 @@ function schematize(value: unknown): unknown {
 export class CollapsePairsMethod implements CompressionMethod {
   readonly name = 'collapse-pairs'
 
+  private _recoveryHint = ''
+
+  /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
+  setRecoveryHint(hint: string): void {
+    this._recoveryHint = hint
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
-    return messages.map((m) => {
+    const collapsed = messages.map((m) => {
       const summary = messageText(m)
       const oneLine = summary.replace(/\s+/g, ' ').slice(0, CHARS_PER_TOKEN * 60)
       return new Message({
@@ -360,6 +440,7 @@ export class CollapsePairsMethod implements CompressionMethod {
         ...(m.metadata !== undefined && { metadata: m.metadata }),
       })
     })
+    return appendRecoveryHint(collapsed, this._recoveryHint)
   }
 }
 
