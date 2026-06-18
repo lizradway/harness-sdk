@@ -77,8 +77,15 @@ export type MethodLike = CompressionMethod | MethodShorthand
  */
 export type Scratchpad = Storage
 
-/** How content is previewed when a message is offloaded or truncated. */
-export type PreviewMode = 'head' | 'tail' | 'head-tail'
+/**
+ * How content is previewed when a message is offloaded or truncated.
+ *
+ * - `head` / `tail` / `head-tail` — positional slices.
+ * - `importance` — score each line (error/anomaly + query overlap + position) and
+ *   keep the highest-scoring lines up to budget; targets the preview-fidelity
+ *   failure where positional slices discard the lines the agent needs.
+ */
+export type PreviewMode = 'head' | 'tail' | 'head-tail' | 'importance'
 
 /** How the L1 transcript bounds its growth. */
 export type TranscriptEviction = 'after-extraction' | 'oldest-first' | 'never'

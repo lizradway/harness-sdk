@@ -10,6 +10,7 @@ import { Message, TextBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '..
 import type { ContentBlock, ToolResultContent } from '../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
 import type { PreviewMode } from './types.js'
+import { importancePreview } from './importance.js'
 
 /** Approximate characters per token, matching the heuristic used elsewhere in the SDK. */
 export const CHARS_PER_TOKEN = 4
@@ -93,10 +94,13 @@ export function messageText(message: Message): string {
  * - `head`: keep the first N tokens.
  * - `tail`: keep the last N tokens.
  * - `head-tail`: keep the first N/2 and last N/2 tokens, eliding the middle.
+ * - `importance`: keep the highest-scoring lines (error/anomaly + query overlap +
+ *   position), eliding the rest. Uses `query` for the overlap signal when given.
  */
-export function previewText(text: string, mode: PreviewMode, tokens: number): string {
+export function previewText(text: string, mode: PreviewMode, tokens: number, query?: string): string {
   const maxChars = Math.max(0, tokens) * CHARS_PER_TOKEN
   if (text.length <= maxChars) return text
+  if (mode === 'importance') return importancePreview(text, tokens, query)
   if (mode === 'head') return text.slice(0, maxChars)
   if (mode === 'tail') return text.slice(text.length - maxChars)
   const half = Math.floor(maxChars / 2)

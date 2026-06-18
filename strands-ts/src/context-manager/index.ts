@@ -46,6 +46,7 @@ export {
   type SchemaOnlyMethodConfig,
 } from './methods.js'
 export { Transcript, type TranscriptReader } from './transcript.js'
+export { importancePreview, queryTerms, DEFAULT_IMPORTANCE_WEIGHTS, type ImportanceWeights } from './importance.js'
 export type {
   CompressionMethod,
   TokenBudget,

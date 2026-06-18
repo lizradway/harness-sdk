@@ -26,6 +26,7 @@ import { resolveMethod, OffloadMethod, SummarizeMethod, DEFAULT_RECOVERY_HINT } 
 import { ContentRouter } from './content-router.js'
 import { Transcript, type TranscriptReader } from './transcript.js'
 import { scoreMessages } from './priority.js'
+import { messageText } from './content.js'
 
 /** Default proactive-compression threshold (fraction of the context window). */
 const DEFAULT_THRESHOLD = 0.85
@@ -254,6 +255,32 @@ export class ContextManager implements Plugin {
     }
   }
 
+  /** Recursively give every method that supports it the current task/query text. */
+  private _supplyQuery(method: CompressionMethod, query: string): void {
+    const settable = method as Partial<{ setQuery(query: string): void }>
+    if (typeof settable.setQuery === 'function') {
+      settable.setQuery(query)
+    }
+    if (method instanceof ContentRouter) {
+      for (const spec of method.methodSpecs()) {
+        if (typeof spec !== 'string') this._supplyQuery(spec, query)
+      }
+    }
+  }
+
+  /**
+   * Derive the task/query text used by the `importance` preview mode: the system
+   * prompt plus the text of the most recent user messages. This is what the agent
+   * is working on, so importance scoring keeps the lines relevant to it.
+   */
+  private _deriveQuery(agent: LocalAgent): string {
+    const parts: string[] = []
+    if (typeof agent.systemPrompt === 'string') parts.push(agent.systemPrompt)
+    const recentUser = agent.messages.filter((m) => m.role === 'user').slice(-3)
+    for (const m of recentUser) parts.push(messageText(m))
+    return parts.join('\n').slice(0, 4000)
+  }
+
   private _computeBudget(model: Model, projected: number | undefined): TokenBudget {
     let limit = model.getConfig().contextWindowLimit
     if (limit === undefined) {
@@ -306,6 +333,9 @@ export class ContextManager implements Plugin {
         preserved.map((c) => c.index)
       )
     }
+
+    // Give importance-mode methods the current task/query before they run.
+    this._supplyQuery(this._method, this._deriveQuery(agent))
 
     let transformed: Message[]
     try {
@@ -423,6 +453,7 @@ export class ContextManager implements Plugin {
     if (RETRIEVAL_TOOL_NAMES.has(event.toolUse.name)) return
     const offload = this._findOffloadMethod()
     if (!offload) return
+    this._supplyQuery(offload, this._deriveQuery(event.agent))
     const message = new Message({ role: 'user', content: [event.result] })
     const budget = this._lastBudget ?? this._computeBudget(event.agent.model, undefined)
     const [out] = await offload.compress([message], budget)

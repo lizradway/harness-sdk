@@ -152,6 +152,7 @@ export class TruncateMethod implements CompressionMethod {
   private readonly _tokens: number
   private readonly _keepRecent: number
   private _recoveryHint = ''
+  private _query: string | undefined
 
   constructor(config?: TruncateMethodConfig) {
     this._keep = config?.keep ?? 'head-tail'
@@ -164,10 +165,15 @@ export class TruncateMethod implements CompressionMethod {
     this._recoveryHint = hint
   }
 
+  /** Set the task/query text used by the `importance` preview mode. */
+  setQuery(query: string): void {
+    this._query = query
+  }
+
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
     const keepFrom = messages.length - this._keepRecent
     const truncated = messages.map((m, i) =>
-      i >= keepFrom ? m : transformMessageText(m, (text) => previewText(text, this._keep, this._tokens))
+      i >= keepFrom ? m : transformMessageText(m, (text) => previewText(text, this._keep, this._tokens, this._query))
     )
     return appendRecoveryHint(truncated, this._recoveryHint)
   }
@@ -208,6 +214,7 @@ export class OffloadMethod implements CompressionMethod {
   private readonly _fallback: MethodLike
   private _fallbackMethod: CompressionMethod | undefined
   private _recoveryHint = ''
+  private _query: string | undefined
 
   constructor(config?: OffloadMethodConfig) {
     this._preview = config?.preview ?? 'head-tail'
@@ -232,6 +239,11 @@ export class OffloadMethod implements CompressionMethod {
   /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
   setRecoveryHint(hint: string): void {
     this._recoveryHint = hint
+  }
+
+  /** Set the task/query text used by the `importance` preview mode (also propagated to the fallback). */
+  setQuery(query: string): void {
+    this._query = query
   }
 
   async compress(messages: Message[], budget: TokenBudget): Promise<Message[]> {
@@ -275,13 +287,19 @@ export class OffloadMethod implements CompressionMethod {
     return out
   }
 
-  /** Resolve and memoize the fallback method, propagating the recovery hint. */
+  /** Resolve and memoize the fallback method, propagating the recovery hint and query. */
   private _fallbackOf(): CompressionMethod {
     if (!this._fallbackMethod) {
       this._fallbackMethod = resolveMethod(this._fallback)
-      const settable = this._fallbackMethod as Partial<{ setRecoveryHint(hint: string): void }>
+      const settable = this._fallbackMethod as Partial<{
+        setRecoveryHint(hint: string): void
+        setQuery(query: string): void
+      }>
       if (this._recoveryHint && typeof settable.setRecoveryHint === 'function') {
         settable.setRecoveryHint(this._recoveryHint)
+      }
+      if (this._query && typeof settable.setQuery === 'function') {
+        settable.setQuery(this._query)
       }
     }
     return this._fallbackMethod
@@ -290,16 +308,16 @@ export class OffloadMethod implements CompressionMethod {
   private async _offloadOne(message: Message, text: string, tokens: number): Promise<Message> {
     if (!this._scratchpad) {
       // No backend to persist to — degrade to a preview-only truncation.
-      return transformMessageText(message, (t) => previewText(t, this._preview, this._previewTokens))
+      return transformMessageText(message, (t) => previewText(t, this._preview, this._previewTokens, this._query))
     }
     let reference: string
     try {
       reference = await this._scratchpad.store(`offload_${message.role}`, new TextEncoder().encode(text), 'text/plain')
     } catch (err) {
       logger.warn(`error=<${err}> | offload store failed, falling back to preview`)
-      return transformMessageText(message, (t) => previewText(t, this._preview, this._previewTokens))
+      return transformMessageText(message, (t) => previewText(t, this._preview, this._previewTokens, this._query))
     }
-    const preview = previewText(text, this._preview, this._previewTokens)
+    const preview = previewText(text, this._preview, this._previewTokens, this._query)
     const recovery = this._recoveryHint
       ? ` ${this._recoveryHint}`
       : ' The full original was preserved in the session transcript.'
