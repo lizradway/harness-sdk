@@ -31,8 +31,13 @@ import { scoreMessages } from './priority.js'
 const DEFAULT_THRESHOLD = 0.85
 /** Default number of leading messages to pin. */
 const DEFAULT_PROTECT_FIRST = 1
-/** Tool names whose results must never be re-compressed (they return recovered L1 content). */
-const RETRIEVAL_TOOL_NAMES = new Set(['get_history', 'search_history'])
+/**
+ * Tool names whose results must never be re-compressed: they return content the
+ * agent just recovered, so offloading them again would create a retrieve→offload
+ * loop. Covers this manager's own L1 tools plus the standalone ContextOffloader's
+ * `retrieve_offloaded_content`, in case both are composed on one agent.
+ */
+const RETRIEVAL_TOOL_NAMES = new Set(['get_history', 'search_history', 'retrieve_offloaded_content'])
 
 /** Build the method tree the `"auto"` preset resolves to. */
 function autoMethod(): ContentRouter {

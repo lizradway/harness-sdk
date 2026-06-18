@@ -54,6 +54,15 @@ describe('TruncateMethod', () => {
     const [out] = await new TruncateMethod({ tokens: 10 }).compress([userText('x'.repeat(1000))], BUDGET)
     expect((out!.content[0] as TextBlock).text).not.toContain('search_history')
   })
+
+  it('keeps the most recent keepRecent messages verbatim', async () => {
+    const method = new TruncateMethod({ tokens: 10, keepRecent: 1 })
+    const older = userText('o'.repeat(1000))
+    const recent = userText('r'.repeat(1000))
+    const out = await method.compress([older, recent], BUDGET)
+    expect((out[0]!.content[0] as TextBlock).text.length).toBeLessThan(1000) // older truncated
+    expect((out[1]!.content[0] as TextBlock).text).toBe('r'.repeat(1000)) // recent verbatim
+  })
 })
 
 describe('DropMethod', () => {
@@ -95,6 +104,23 @@ describe('OffloadMethod', () => {
     const text = (out!.content[0] as TextBlock).text
     expect(text.length).toBeLessThan(5000)
     expect(text).not.toContain('ref: mem_')
+  })
+
+  it('routes below-threshold older messages to the fallback method', async () => {
+    const storage = new InMemoryStorage()
+    // threshold ~2500 chars: the small message is below it, the big one above.
+    const method = new OffloadMethod({
+      scratchpad: storage,
+      threshold: 625,
+      previewTokens: 5,
+      fallback: new TruncateMethod({ tokens: 10 }),
+    })
+    const small = userText('s'.repeat(2000)) // below threshold -> truncated
+    const big = userText('B'.repeat(8000)) // above threshold -> offloaded
+    const [outSmall, outBig] = await method.compress([small, big], BUDGET)
+    expect((outSmall!.content[0] as TextBlock).text.length).toBeLessThan(2000) // truncated
+    expect((outSmall!.content[0] as TextBlock).text).not.toContain('Offloaded')
+    expect((outBig!.content[0] as TextBlock).text).toContain('Offloaded')
   })
 })
 

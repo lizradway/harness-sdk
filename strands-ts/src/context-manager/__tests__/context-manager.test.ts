@@ -218,21 +218,24 @@ describe('ContextManager eager tool-result offload (design §6.3)', () => {
     expect(JSON.stringify(recent[0]!.toJSON())).toContain('X'.repeat(8000))
   })
 
-  it('never re-compresses results from the L1 retrieval tools', async () => {
-    const { cm, agent } = await setup()
-    const retrieved = new ToolResultBlock({
-      toolUseId: 't2',
-      status: 'success',
-      content: [new TextBlock('Y'.repeat(8000))],
-    })
-    const event = makeEvent(agent, 'get_history', retrieved)
-    await (cm as unknown as { _maybeOffloadToolResult(e: AfterToolCallEvent): Promise<void> })._maybeOffloadToolResult(
-      event
-    )
-    // Untouched: same block, nothing written to L1.
-    expect(event.result).toBe(retrieved)
-    expect(await cm.transcript.getRecent(1)).toHaveLength(0)
-  })
+  it.each(['get_history', 'search_history', 'retrieve_offloaded_content'])(
+    'never re-compresses results from the %s retrieval tool',
+    async (toolName) => {
+      const { cm, agent } = await setup()
+      const retrieved = new ToolResultBlock({
+        toolUseId: 't2',
+        status: 'success',
+        content: [new TextBlock('Y'.repeat(8000))],
+      })
+      const event = makeEvent(agent, toolName, retrieved)
+      await (
+        cm as unknown as { _maybeOffloadToolResult(e: AfterToolCallEvent): Promise<void> }
+      )._maybeOffloadToolResult(event)
+      // Untouched: same block, nothing written to L1.
+      expect(event.result).toBe(retrieved)
+      expect(await cm.transcript.getRecent(1)).toHaveLength(0)
+    }
+  )
 })
 
 describe('ContextManager auto-preset summarize wiring', () => {

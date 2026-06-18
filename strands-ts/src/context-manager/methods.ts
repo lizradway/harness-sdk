@@ -137,21 +137,26 @@ export interface TruncateMethodConfig {
   keep?: PreviewMode
   /** Tokens of content to keep. Defaults to `750`. */
   tokens?: number
+  /** Never truncate the most recent N candidate messages. Defaults to `0`. */
+  keepRecent?: number
 }
 
 /**
  * Replace each candidate message's text with a head / tail / head-tail slice.
+ * The most recent `keepRecent` messages are left verbatim.
  */
 export class TruncateMethod implements CompressionMethod {
   readonly name = 'truncate'
 
   private readonly _keep: PreviewMode
   private readonly _tokens: number
+  private readonly _keepRecent: number
   private _recoveryHint = ''
 
   constructor(config?: TruncateMethodConfig) {
     this._keep = config?.keep ?? 'head-tail'
     this._tokens = config?.tokens ?? DEFAULT_PREVIEW_TOKENS
+    this._keepRecent = Math.max(0, config?.keepRecent ?? 0)
   }
 
   /** Set the recovery hint appended to output. The ContextManager calls this when L1 retrieval is on. */
@@ -160,8 +165,9 @@ export class TruncateMethod implements CompressionMethod {
   }
 
   async compress(messages: Message[], _budget?: TokenBudget): Promise<Message[]> {
-    const truncated = messages.map((m) =>
-      transformMessageText(m, (text) => previewText(text, this._keep, this._tokens))
+    const keepFrom = messages.length - this._keepRecent
+    const truncated = messages.map((m, i) =>
+      i >= keepFrom ? m : transformMessageText(m, (text) => previewText(text, this._keep, this._tokens))
     )
     return appendRecoveryHint(truncated, this._recoveryHint)
   }
@@ -200,6 +206,7 @@ export class OffloadMethod implements CompressionMethod {
   private readonly _keepRecent: number
   private _scratchpad: Storage | undefined
   private readonly _fallback: MethodLike
+  private _fallbackMethod: CompressionMethod | undefined
   private _recoveryHint = ''
 
   constructor(config?: OffloadMethodConfig) {
@@ -231,17 +238,53 @@ export class OffloadMethod implements CompressionMethod {
     const thresholdTokens = this._threshold ?? Math.ceil(budget.limit * this._thresholdRatio)
     const keepFrom = messages.length - this._keepRecent
     const out: Message[] = []
+    const belowThreshold: Array<{ index: number; message: Message }> = []
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i]!
-      const text = messageText(message)
-      const tokens = Math.ceil(text.length / CHARS_PER_TOKEN)
-      if (i >= keepFrom || tokens <= thresholdTokens) {
+      // Recent messages are kept verbatim and are never candidates for the fallback.
+      if (i >= keepFrom) {
         out.push(message)
         continue
       }
-      out.push(await this._offloadOne(message, text, tokens))
+      const text = messageText(message)
+      const tokens = Math.ceil(text.length / CHARS_PER_TOKEN)
+      if (tokens > thresholdTokens) {
+        out.push(await this._offloadOne(message, text, tokens))
+      } else {
+        // Defer below-threshold messages to the fallback method (e.g. truncate).
+        belowThreshold.push({ index: i, message })
+        out.push(message)
+      }
+    }
+    if (belowThreshold.length > 0) {
+      const compressed = await this._fallbackOf().compress(
+        belowThreshold.map((b) => b.message),
+        budget
+      )
+      // Replace deferred messages in place. The fallback is 1:1 (truncate/skeleton);
+      // if it ever changes the count, fall back to appending its output.
+      if (compressed.length === belowThreshold.length) {
+        belowThreshold.forEach((b, i) => {
+          out[b.index] = compressed[i]!
+        })
+      } else {
+        for (const b of belowThreshold) out.splice(out.indexOf(b.message), 1)
+        out.push(...compressed)
+      }
     }
     return out
+  }
+
+  /** Resolve and memoize the fallback method, propagating the recovery hint. */
+  private _fallbackOf(): CompressionMethod {
+    if (!this._fallbackMethod) {
+      this._fallbackMethod = resolveMethod(this._fallback)
+      const settable = this._fallbackMethod as Partial<{ setRecoveryHint(hint: string): void }>
+      if (this._recoveryHint && typeof settable.setRecoveryHint === 'function') {
+        settable.setRecoveryHint(this._recoveryHint)
+      }
+    }
+    return this._fallbackMethod
   }
 
   private async _offloadOne(message: Message, text: string, tokens: number): Promise<Message> {
