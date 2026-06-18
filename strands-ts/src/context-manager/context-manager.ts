@@ -25,7 +25,7 @@ import type { CompressionMethod, ContextManagerConfig, MethodLike, Scratchpad, T
 import { resolveMethod, OffloadMethod, SummarizeMethod, DEFAULT_RECOVERY_HINT } from './methods.js'
 import { ContentRouter } from './content-router.js'
 import { Transcript, type TranscriptReader } from './transcript.js'
-import { scoreMessages } from './priority.js'
+import { scoreMessages, extractFilePaths } from './priority.js'
 import { messageText } from './content.js'
 
 /** Default proactive-compression threshold (fraction of the context window). */
@@ -212,6 +212,7 @@ export class ContextManager implements Plugin {
 
     // Eager tool-result offload: shrink oversized results as soon as they arrive.
     agent.addHook(AfterToolCallEvent, async (event) => {
+      this._trackAccessedFiles(event)
       await this._maybeOffloadToolResult(event)
     })
   }
@@ -229,6 +230,30 @@ export class ContextManager implements Plugin {
   // ----- Internals -----------------------------------------------------------
 
   private _cycle = 0
+
+  /** Number of most-recently-accessed files whose messages are protected from eviction. */
+  private static readonly RECENT_FILES_LIMIT = 5
+
+  /** Recently-accessed file paths/basenames, most-recent last (the working set). */
+  private _recentFiles: string[] = []
+
+  /**
+   * Record the files a tool call touched so messages referencing the current
+   * working set survive eviction. Pulls path-like tokens from the tool input
+   * (e.g. a file_path argument) and keeps the most-recent {@link RECENT_FILES_LIMIT}.
+   */
+  private _trackAccessedFiles(event: AfterToolCallEvent): void {
+    const paths = extractFilePaths(JSON.stringify(event.toolUse.input ?? ''))
+    if (paths.size === 0) return
+    for (const p of paths) {
+      const existing = this._recentFiles.indexOf(p)
+      if (existing !== -1) this._recentFiles.splice(existing, 1)
+      this._recentFiles.push(p)
+    }
+    if (this._recentFiles.length > ContextManager.RECENT_FILES_LIMIT) {
+      this._recentFiles = this._recentFiles.slice(-ContextManager.RECENT_FILES_LIMIT)
+    }
+  }
 
   /** Recursively hand the scratchpad to any offload methods that lack one. */
   private _injectScratchpad(method: CompressionMethod): void {
@@ -397,7 +422,7 @@ export class ContextManager implements Plugin {
     budget: TokenBudget,
     reactive: boolean
   ): Array<{ index: number; message: Message }> {
-    const scored = scoreMessages(messages).filter((s) => Number.isFinite(s.priority))
+    const scored = scoreMessages(messages, new Set(this._recentFiles)).filter((s) => Number.isFinite(s.priority))
     if (scored.length === 0) return []
 
     // Lowest priority first; break ties by oldest-first so recency is respected.
