@@ -62,12 +62,16 @@ def search_content(
 
     if line_range is not None:
         start, end = line_range
+        if start < 1:
+            return f"Error: line_range.start ({start}) must be >= 1."
         if start > end:
             return f"Error: line_range.start ({start}) must be <= line_range.end ({end})."
         if start > total_lines:
             return f"Error: line_range.start ({start}) is beyond content length ({total_lines} lines)."
         scope_start = start - 1
         scope_end = min(end - 1, total_lines - 1)
+
+    context_lines = max(0, context_lines)
 
     if pattern:
         scope_label = f" in lines {line_range[0]}-{scope_end + 1}" if line_range else ""
@@ -112,10 +116,7 @@ def _search_by_pattern(
     scope_label: str,
 ) -> str:
     """Find lines matching a pattern, expand with context, and format with truncation."""
-    if len(pattern) > _MAX_PATTERN_LENGTH:
-        safe_input = re.escape(pattern[:_MAX_PATTERN_LENGTH])
-    else:
-        safe_input = pattern
+    safe_input = pattern[:_MAX_PATTERN_LENGTH] if len(pattern) > _MAX_PATTERN_LENGTH else pattern
 
     try:
         regex = re.compile(safe_input)

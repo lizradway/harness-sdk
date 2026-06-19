@@ -1,7 +1,5 @@
 """Tests for the search module."""
 
-import pytest
-
 from strands.vended_plugins.context_offloader.search import is_searchable_content, search_content
 
 
@@ -31,6 +29,14 @@ class TestSearchContentEmpty:
 
 class TestSearchContentLineRangeValidation:
     text = "line 1\nline 2\nline 3\nline 4\nline 5"
+
+    def test_start_less_than_one(self):
+        result = search_content(self.text, line_range=(0, 3), context_lines=5, max_chars=10_000)
+        assert "must be >= 1" in result
+
+    def test_negative_start(self):
+        result = search_content(self.text, line_range=(-2, 3), context_lines=5, max_chars=10_000)
+        assert "must be >= 1" in result
 
     def test_start_greater_than_end(self):
         result = search_content(self.text, line_range=(5, 2), context_lines=5, max_chars=10_000)
@@ -154,3 +160,31 @@ class TestSearchContentTruncation:
         text = "short\ncontent"
         result = search_content(text, line_range=(1, 2), context_lines=5, max_chars=10_000)
         assert "truncated" not in result
+
+
+class TestSearchContentEdgeCases:
+    def test_negative_context_lines_clamps_to_zero(self):
+        text = "\n".join(f"line {i + 1}" for i in range(10))
+        result = search_content(text, pattern="line 5", context_lines=-3, max_chars=10_000)
+        assert "1 match" in result
+        assert "> 5| line 5" in result
+        assert "line 4" not in result
+        assert "line 6" not in result
+
+    def test_long_valid_regex_is_truncated_but_still_matches(self):
+        text = "line 5\nother\nmore"
+        long_pattern = "(line 5)" + "|x" * 120
+        result = search_content(text, pattern=long_pattern, context_lines=0, max_chars=10_000)
+        assert "1 match" in result
+        assert "> 1| line 5" in result
+
+    def test_long_invalid_regex_falls_back_to_literal(self):
+        text = "foo(bar\nother\nfoo(bar again"
+        long_pattern = "foo(bar" + "z" * 200
+        result = search_content(text, pattern=long_pattern, context_lines=0, max_chars=10_000)
+        assert "No matches" in result
+
+    def test_empty_indices_format(self):
+        from strands.vended_plugins.context_offloader.search import _format_lines
+
+        assert _format_lines(["a", "b"], [], set()) == ""

@@ -35,7 +35,9 @@ from __future__ import annotations
 import json
 import logging
 import weakref
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
+
+from typing_extensions import TypedDict
 
 from ...hooks.events import AfterToolCallEvent, BeforeModelCallEvent
 from ...plugins import Plugin, hook
@@ -213,10 +215,10 @@ class ContextOffloader(Plugin):
           - Line numbers in results are 1-indexed and can be used in follow-up line_range calls.
 
         Examples:
-          { reference: "ref_1", pattern: "error" } -> lines containing "error" with 5 lines context
-          { reference: "ref_1", pattern: "error|warning", context_lines: 3 } -> regex, 3 lines context
-          { reference: "ref_1", line_range: { start: 10, end: 25 } } -> lines 10-25
-          { reference: "ref_1", pattern: "TODO", line_range: { start: 1, end: 50 } } -> search within range
+          {"reference": "ref_1", "pattern": "error"} -> lines containing "error" with 5 lines context
+          {"reference": "ref_1", "pattern": "error|warning", "context_lines": 3} -> regex, 3 lines context
+          {"reference": "ref_1", "line_range": {"start": 10, "end": 25}} -> lines 10-25
+          {"reference": "ref_1", "pattern": "TODO", "line_range": {"start": 1, "end": 50}} -> search within range
 
         Args:
             reference: The reference string from the offload placeholder (e.g. "mem_1_tool-123_0").
