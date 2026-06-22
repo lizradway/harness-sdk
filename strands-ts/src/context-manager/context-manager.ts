@@ -232,8 +232,9 @@ export class ContextManager implements Plugin {
 
   /** Recursively hand the scratchpad to any offload methods that lack one. */
   private _injectScratchpad(method: CompressionMethod): void {
-    if (method instanceof OffloadMethod) {
-      method.setScratchpad(this._scratchpad)
+    const settable = method as Partial<{ setScratchpad(s: Scratchpad): void }>
+    if (typeof settable.setScratchpad === 'function') {
+      settable.setScratchpad(this._scratchpad)
     }
     if (method instanceof ContentRouter) {
       for (const spec of method.methodSpecs()) {

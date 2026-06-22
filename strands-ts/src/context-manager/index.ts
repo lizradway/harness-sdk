@@ -47,6 +47,12 @@ export {
 } from './methods.js'
 export { Transcript, type TranscriptReader } from './transcript.js'
 export { importancePreview, queryTerms, DEFAULT_IMPORTANCE_WEIGHTS, type ImportanceWeights } from './importance.js'
+export {
+  StructuredOutlineMethod,
+  type StructuredOutlineConfig,
+  type DetectedContent,
+} from './structured-outline-method.js'
+export { detectContentType, grepOutline, treeOutline, tableOutline } from './outline.js'
 export type {
   CompressionMethod,
   TokenBudget,
