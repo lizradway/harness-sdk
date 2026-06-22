@@ -58,16 +58,18 @@ describe('detectContentType', () => {
 })
 
 describe('grepOutline', () => {
-  it('keeps file:line locations and drops matched content', () => {
+  it('keeps matched lines (location + content), drops only context lines', () => {
     const grep = [
       'src/app.ts:10:        const secret = computeThing()',
+      'src/app.ts-11-        // a context line from grep -C',
       'src/app.ts:42:        return secret',
       'lib/util.ts:7:        export function helper() {}',
     ].join('\n')
     const out = grepOutline(grep)
     expect(out).toContain('src/app.ts:10')
+    expect(out).toContain('computeThing') // matched content kept (less lossy)
     expect(out).toContain('lib/util.ts:7')
-    expect(out).not.toContain('computeThing')
+    expect(out).not.toContain('a context line from grep -C') // context dropped
     expect(out).toContain('3 matches across 2 file(s)')
   })
 

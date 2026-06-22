@@ -100,23 +100,24 @@ function capList(items: string[], max: number): string[] {
 }
 
 /**
- * Outline grep/ripgrep output: keep the `file:line` match locations, drop the
- * matched line content and surrounding context. Tells the agent *where* the
- * matches are so it can read the precise spans on demand.
+ * Outline grep/ripgrep output: keep each `file:line` location AND its matched
+ * line content (the high-value part), dropping only non-matching context lines
+ * (grep `-A/-B/-C` output) and `--` separators. The match text is what the agent
+ * actually needs; only surrounding context is elided.
  *
  * @param text - Raw grep output.
- * @param maxMatches - Maximum match locations to list. Defaults to 100.
+ * @param maxMatches - Maximum matches to keep. Defaults to 100.
  */
 export function grepOutline(text: string, maxMatches = 100): string {
-  const locs: string[] = []
+  const matches: string[] = []
   for (const line of text.split('\n')) {
-    const m = line.match(/^([\w./~-]+:\d+):/)
-    if (m) locs.push(m[1]!)
+    // `file:line:content` is a match; `file-line-content` is context (grep -C). Keep matches.
+    if (/^[\w./~-]+:\d+:/.test(line)) matches.push(line)
   }
-  if (locs.length === 0) return text
-  const files = new Set(locs.map((l) => l.slice(0, l.lastIndexOf(':'))))
-  const header = `[grep outline: ${locs.length} matches across ${files.size} file(s)]`
-  return [header, ...capList(locs, maxMatches)].join('\n')
+  if (matches.length === 0) return text
+  const files = new Set(matches.map((l) => l.slice(0, l.indexOf(':'))))
+  const header = `[grep outline: ${matches.length} matches across ${files.size} file(s); context lines elided]`
+  return [header, ...capList(matches, maxMatches)].join('\n')
 }
 
 /**

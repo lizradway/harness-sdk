@@ -18,15 +18,22 @@ function textOf(m: Message): string {
 }
 
 describe('StructuredOutlineMethod', () => {
-  it('routes grep output to the grep outline (locations, not content)', async () => {
-    const grep = Array.from({ length: 40 }, (_, i) => `src/app.ts:${i}:        const secret_${i} = compute()`).join(
-      '\n'
+  it('routes grep output to the grep outline (matches kept, context dropped)', async () => {
+    // Realistic grep: mostly matches, with the occasional -C context line.
+    const lines: string[] = []
+    for (let i = 0; i < 40; i++) {
+      lines.push(`src/app.ts:${i}:        const secret_${i} = compute()`)
+      if (i % 5 === 0) lines.push(`src/app.ts-${i + 1}-        // surrounding context line`)
+    }
+    const [out] = await new StructuredOutlineMethod({ threshold: 1 }).compress(
+      [toolResultMsg(lines.join('\n'))],
+      BUDGET
     )
-    const [out] = await new StructuredOutlineMethod({ threshold: 1 }).compress([toolResultMsg(grep)], BUDGET)
     const t = textOf(out!)
     expect(t).toContain('grep outline')
     expect(t).toContain('src/app.ts:0')
-    expect(t).not.toContain('secret_0 = compute')
+    expect(t).toContain('secret_0 = compute') // matched content kept
+    expect(t).not.toContain('surrounding context line') // context dropped
   })
 
   it('routes a directory listing to the tree outline', async () => {
