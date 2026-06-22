@@ -44,7 +44,7 @@ from ...plugins import Plugin, hook
 from ...tools.decorator import tool
 from ...types.content import Message
 from ...types.tools import ToolContext, ToolResult, ToolResultContent
-from .search import is_searchable_content, search_content
+from .search import _is_searchable_content, _search_content
 from .storage import FileStorage, InMemoryStorage, Storage
 
 if TYPE_CHECKING:
@@ -238,7 +238,7 @@ class ContextOffloader(Plugin):
         if pattern is None and line_range is None and context_lines is None:
             return self._decode_full_content(content_bytes, content_type, reference)
 
-        if not is_searchable_content(content_type):
+        if not _is_searchable_content(content_type):
             return (
                 f"Error: cannot search binary content ({content_type}). "
                 "Omit pattern/line_range/context_lines to retrieve the full content."
@@ -254,7 +254,7 @@ class ContextOffloader(Plugin):
         elif pattern is None:
             lr = (1, max(1, ctx_lines))
 
-        return search_content(text, pattern=pattern, line_range=lr, context_lines=ctx_lines, max_chars=max_chars)
+        return _search_content(text, pattern=pattern, line_range=lr, context_lines=ctx_lines, max_chars=max_chars)
 
     @staticmethod
     def _decode_full_content(content_bytes: bytes, content_type: str, reference: str) -> dict | str:

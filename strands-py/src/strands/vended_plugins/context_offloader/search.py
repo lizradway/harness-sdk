@@ -26,12 +26,12 @@ _TEXT_APPLICATION_TYPES = frozenset(
 )
 
 
-def is_searchable_content(content_type: str) -> bool:
+def _is_searchable_content(content_type: str) -> bool:
     """Return whether the given MIME content type can be searched as text."""
     return content_type.startswith("text/") or content_type in _TEXT_APPLICATION_TYPES
 
 
-def search_content(
+def _search_content(
     text: str,
     *,
     pattern: str | None = None,
