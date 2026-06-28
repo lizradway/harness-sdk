@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -475,18 +476,8 @@ class AnthropicModel(Model):
                 logger.debug("got response from model")
                 async for event in stream:
                     if event.type in AnthropicModel.EVENT_TYPES:
-                        if event.type == "message_stop":
-                            # Build dict directly to avoid Pydantic serialization warnings
-                            # when the message contains ParsedTextBlock objects (issue #1746)
-                            yield self.format_chunk(
-                                {
-                                    "type": "message_stop",
-                                    "message": {"stop_reason": event.message.stop_reason},
-                                }
-                            )
-                        elif event.type == "content_block_stop":
-                            yield self.format_chunk({"type": "content_block_stop", "index": event.index})
-                        else:
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings("ignore", message=".*PydanticSerializationUnexpectedValue.*")
                             yield self.format_chunk(event.model_dump())
 
                 try:
