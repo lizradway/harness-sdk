@@ -1154,6 +1154,83 @@ async def test_stream_content_block_stop_no_pydantic_warnings(anthropic_client, 
     assert {"contentBlockStop": {"contentBlockIndex": 0}} in events
 
 
+@pytest.mark.asyncio
+async def test_stream_all_events_no_pydantic_warnings(anthropic_client, model, alist):
+    """Verify no Pydantic serialization warnings for any event type during streaming.
+
+    Regression test for https://github.com/strands-agents/harness-sdk/issues/1865.
+    Covers message_start, content_block_start, content_block_delta, content_block_stop, and message_stop.
+    """
+
+    def make_model_dump_with_warning(return_value):
+        def model_dump_with_warning():
+            warnings.warn(
+                "PydanticSerializationUnexpectedValue(Expected `ParsedTextBlock[TypeVar]`)",
+                UserWarning,
+                stacklevel=2,
+            )
+            return return_value
+
+        return model_dump_with_warning
+
+    mock_message_start = unittest.mock.Mock()
+    mock_message_start.type = "message_start"
+    mock_message_start.model_dump = make_model_dump_with_warning({"type": "message_start"})
+
+    mock_content_block_start = unittest.mock.Mock()
+    mock_content_block_start.type = "content_block_start"
+    mock_content_block_start.model_dump = make_model_dump_with_warning(
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
+    )
+
+    mock_content_block_delta = unittest.mock.Mock()
+    mock_content_block_delta.type = "content_block_delta"
+    mock_content_block_delta.model_dump = make_model_dump_with_warning(
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+    )
+
+    mock_content_block_stop = unittest.mock.Mock()
+    mock_content_block_stop.type = "content_block_stop"
+    mock_content_block_stop.model_dump = make_model_dump_with_warning(
+        {"type": "content_block_stop", "index": 0}
+    )
+
+    mock_message_stop = unittest.mock.Mock()
+    mock_message_stop.type = "message_stop"
+    mock_message_stop.model_dump = make_model_dump_with_warning(
+        {"type": "message_stop", "message": {"stop_reason": "end_turn"}}
+    )
+
+    final_message = unittest.mock.Mock()
+    final_message.usage = unittest.mock.Mock(model_dump=lambda: {"input_tokens": 10, "output_tokens": 5})
+
+    mock_context = generate_mock_stream_context(
+        [
+            mock_message_start,
+            mock_content_block_start,
+            mock_content_block_delta,
+            mock_content_block_stop,
+            mock_message_stop,
+        ],
+        final_message=final_message,
+    )
+    anthropic_client.messages.stream.return_value = mock_context
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        response = model.stream([{"role": "user", "content": [{"text": "hello"}]}], None, None)
+        events = await alist(response)
+
+    pydantic_warnings = [w for w in caught_warnings if "PydanticSerializationUnexpectedValue" in str(w.message)]
+    assert len(pydantic_warnings) == 0, f"Unexpected Pydantic warnings: {pydantic_warnings}"
+
+    assert {"messageStart": {"role": "assistant"}} in events
+    assert {"contentBlockStart": {"contentBlockIndex": 0, "start": {}}} in events
+    assert {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "Hello"}}} in events
+    assert {"contentBlockStop": {"contentBlockIndex": 0}} in events
+    assert {"messageStop": {"stopReason": "end_turn"}} in events
+
+
 class TestCountTokens:
     """Tests for AnthropicModel.count_tokens native token counting."""
 
