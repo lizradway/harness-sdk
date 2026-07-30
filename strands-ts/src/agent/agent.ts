@@ -41,6 +41,16 @@ import type { Plugin } from '../plugins/plugin.js'
 import type { InterventionHandler } from '../interventions/handler.js'
 import { InterventionRegistry } from '../interventions/registry.js'
 import type { InterventionRegistryOptions } from '../interventions/registry.js'
+
+/**
+ * Configuration for the intervention system.
+ */
+export interface InterventionConfig {
+  /** Handlers evaluated in registration order at each lifecycle point. */
+  handlers: InterventionHandler[]
+  /** Called after every handler decision for audit logging and monitoring. */
+  onDecision?: InterventionRegistryOptions['onDecision']
+}
 import type { LifecycleObserver } from '../types/lifecycle-observer.js'
 import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
@@ -254,12 +264,9 @@ export type AgentConfig = {
   retryStrategy?: RetryStrategy | RetryStrategy[] | null
   /**
    * Intervention handlers evaluated in registration order at each lifecycle point.
+   * Pass an array of handlers, or a config object to include audit logging options.
    */
-  interventions?: InterventionHandler[]
-  /**
-   * Options for the intervention registry (e.g., audit logging callback).
-   */
-  interventionOptions?: InterventionRegistryOptions
+  interventions?: InterventionHandler[] | InterventionConfig
   /**
    * Zod schema for structured output validation.
    */
@@ -541,11 +548,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize hooks registry
     this._hooksRegistry = new HookRegistryImplementation()
 
-    this._interventionRegistry = new InterventionRegistry(
-      config?.interventions ?? [],
-      this._hooksRegistry,
-      config?.interventionOptions
-    )
+    const interventionsCfg = config?.interventions
+    const handlers = Array.isArray(interventionsCfg) ? interventionsCfg : interventionsCfg?.handlers ?? []
+    const interventionOptions =
+      !Array.isArray(interventionsCfg) && interventionsCfg?.onDecision
+        ? { onDecision: interventionsCfg.onDecision }
+        : undefined
+    this._interventionRegistry = new InterventionRegistry(handlers, this._hooksRegistry, interventionOptions)
 
     // Initialize middleware registry
     this._middlewareRegistry = new MiddlewareRegistry()

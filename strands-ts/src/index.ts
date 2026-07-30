@@ -239,7 +239,8 @@ export type { Plugin } from './plugins/index.js'
 
 // Intervention system
 export { InterventionHandler, InterventionActions } from './interventions/index.js'
-export type { OnError, InterventionDecision, InterventionRegistryOptions } from './interventions/index.js'
+export type { OnError, InterventionDecision } from './interventions/index.js'
+export type { InterventionConfig } from './agent/agent.js'
 
 // Retry
 export {
