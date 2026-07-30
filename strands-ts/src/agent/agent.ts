@@ -40,6 +40,7 @@ import { AgentPrinter, getDefaultAppender, type Printer } from './printer.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { InterventionHandler } from '../interventions/handler.js'
 import { InterventionRegistry } from '../interventions/registry.js'
+import type { InterventionRegistryOptions } from '../interventions/registry.js'
 import type { LifecycleObserver } from '../types/lifecycle-observer.js'
 import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
@@ -255,6 +256,10 @@ export type AgentConfig = {
    * Intervention handlers evaluated in registration order at each lifecycle point.
    */
   interventions?: InterventionHandler[]
+  /**
+   * Options for the intervention registry (e.g., audit logging callback).
+   */
+  interventionOptions?: InterventionRegistryOptions
   /**
    * Zod schema for structured output validation.
    */
@@ -536,7 +541,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize hooks registry
     this._hooksRegistry = new HookRegistryImplementation()
 
-    this._interventionRegistry = new InterventionRegistry(config?.interventions ?? [], this._hooksRegistry)
+    this._interventionRegistry = new InterventionRegistry(
+      config?.interventions ?? [],
+      this._hooksRegistry,
+      config?.interventionOptions
+    )
 
     // Initialize middleware registry
     this._middlewareRegistry = new MiddlewareRegistry()

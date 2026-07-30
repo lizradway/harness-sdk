@@ -169,7 +169,14 @@ export class CedarAuthorization extends InterventionHandler {
     const invocationState = event.invocationState as Record<string, unknown>
     const principal = this._principal ?? this._principalResolver!(invocationState)
     if (!principal || !principal.type || !principal.id) {
-      return deny('No principal identity found in invocation state')
+      return deny('No principal identity found in invocation state', {
+        metadata: {
+          principal: undefined,
+          action: { type: this._actionType, id: event.toolUse.name },
+          resource: { type: this._resourceType, id: this._resourceId },
+          policyReasons: ['No principal identity found in invocation state'],
+        },
+      })
     }
 
     const callCount = this._incrementCallCount(event.agent, event.toolUse.name)
@@ -195,7 +202,15 @@ export class CedarAuthorization extends InterventionHandler {
 
     if (result.type === 'failure') {
       this._decrementCallCount(event.agent, event.toolUse.name)
-      return deny(`Cedar evaluation failed: ${result.errors.map((e) => e.message).join(', ')}`)
+      const reasons = result.errors.map((e) => e.message)
+      return deny(`Cedar evaluation failed: ${reasons.join(', ')}`, {
+        metadata: {
+          principal,
+          action: { type: this._actionType, id: event.toolUse.name },
+          resource: { type: this._resourceType, id: this._resourceId },
+          policyReasons: reasons,
+        },
+      })
     }
 
     if (result.response.decision === 'deny') {
@@ -203,10 +218,23 @@ export class CedarAuthorization extends InterventionHandler {
       const reasons = result.response.diagnostics.reason
       const errors = result.response.diagnostics.errors.map((e) => e.error.message)
       const details = [...reasons, ...errors].filter(Boolean)
-      return deny(`Access denied by Cedar policy${details.length ? `: ${details.join(', ')}` : ''}`)
+      return deny(`Access denied by Cedar policy${details.length ? `: ${details.join(', ')}` : ''}`, {
+        metadata: {
+          principal,
+          action: { type: this._actionType, id: event.toolUse.name },
+          resource: { type: this._resourceType, id: this._resourceId },
+          policyReasons: details.length > 0 ? details : ['default deny (no matching permit policy)'],
+        },
+      })
     }
 
-    return proceed()
+    return proceed({
+      metadata: {
+        principal,
+        action: { type: this._actionType, id: event.toolUse.name },
+        resource: { type: this._resourceType, id: this._resourceId },
+      },
+    })
   }
 
   /** Clears rate-limit call counters. */

@@ -213,13 +213,19 @@ export class LLMSteeringHandler extends SteeringHandler {
     const prompt = this._promptBuilder(context, event.toolUse)
     const decision = await this._invoke(prompt)
 
+    const metadata = {
+      tool: event.toolUse.name,
+      steeringDecision: decision.type,
+      steeringReason: decision.reason,
+    }
+
     switch (decision.type) {
       case 'proceed':
-        return proceed({ reason: decision.reason })
+        return proceed({ reason: decision.reason, metadata })
       case 'guide':
-        return guide(decision.reason)
+        return guide(decision.reason, { metadata })
       case 'confirm':
-        return confirm(decision.reason, { reason: decision.reason })
+        return confirm(decision.reason, { reason: decision.reason, metadata })
     }
   }
 

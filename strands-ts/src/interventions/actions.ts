@@ -35,7 +35,7 @@ export type LifecycleEvent =
  * return { type: 'proceed' }
  * ```
  */
-export type Proceed = { type: 'proceed'; reason?: string }
+export type Proceed = { type: 'proceed'; reason?: string; metadata?: Record<string, unknown> }
 
 /**
  * Block the operation. On Before* events, sets event.cancel with the reason text.
@@ -53,7 +53,7 @@ export type Proceed = { type: 'proceed'; reason?: string }
  * }
  * ```
  */
-export type Deny = { type: 'deny'; reason: string }
+export type Deny = { type: 'deny'; reason: string; metadata?: Record<string, unknown> }
 
 /**
  * Provide feedback to steer behavior. On beforeToolCall/beforeInvocation, sets
@@ -75,7 +75,7 @@ export type Deny = { type: 'deny'; reason: string }
  * }
  * ```
  */
-export type Guide = { type: 'guide'; feedback: string; reason?: string }
+export type Guide = { type: 'guide'; feedback: string; reason?: string; metadata?: Record<string, unknown> }
 
 /**
  * Request human approval before proceeding. Only supported on beforeToolCall.
@@ -104,6 +104,7 @@ export type Confirm = {
   reason?: string
   response?: JSONValue
   evaluate?: (response: JSONValue) => boolean
+  metadata?: Record<string, unknown>
 }
 
 /**
@@ -128,7 +129,7 @@ export type Confirm = {
  * }
  * ```
  */
-export type Transform = { type: 'transform'; apply: (event: LifecycleEvent) => void; reason?: string }
+export type Transform = { type: 'transform'; apply: (event: LifecycleEvent) => void; reason?: string; metadata?: Record<string, unknown> }
 
 /**
  * Union of all intervention actions a handler can return.
@@ -153,26 +154,27 @@ export type InterventionAction = Proceed | Deny | Guide | Confirm | Transform
 
 /**
  * Allow the operation to continue.
- * @param options - Options: reason (debug metadata).
+ * @param options - Options: reason (debug metadata), metadata (structured audit context).
  */
-export function proceed(options?: { reason?: string }): Proceed {
+export function proceed(options?: { reason?: string; metadata?: Record<string, unknown> }): Proceed {
   return { type: 'proceed', ...options }
 }
 
 /**
  * Block the operation.
  * @param reason - Why the operation was blocked. Shown to the model.
+ * @param options - Options: metadata (structured audit context).
  */
-export function deny(reason: string): Deny {
-  return { type: 'deny', reason }
+export function deny(reason: string, options?: { metadata?: Record<string, unknown> }): Deny {
+  return { type: 'deny', reason, ...options }
 }
 
 /**
  * Provide feedback to steer behavior.
  * @param feedback - The guidance text shown to the model.
- * @param options - Options: reason (debug metadata).
+ * @param options - Options: reason (debug metadata), metadata (structured audit context).
  */
-export function guide(feedback: string, options?: { reason?: string }): Guide {
+export function guide(feedback: string, options?: { reason?: string; metadata?: Record<string, unknown> }): Guide {
   return { type: 'guide', feedback, ...options }
 }
 
@@ -181,7 +183,7 @@ export function guide(feedback: string, options?: { reason?: string }): Guide {
  * @param prompt - Message shown to the human. Not shown to the model.
  * @param options - Options: reason (debug metadata), evaluate (custom response
  * validator, defaults to accepting true or y/yes case-insensitive), response
- * (pre-collected value to skip pausing the agent).
+ * (pre-collected value to skip pausing the agent), metadata (structured audit context).
  */
 export function confirm(
   prompt: string,
@@ -189,6 +191,7 @@ export function confirm(
     reason?: string
     response?: JSONValue
     evaluate?: (response: JSONValue) => boolean
+    metadata?: Record<string, unknown>
   }
 ): Confirm {
   return { type: 'confirm', prompt, evaluate: defaultEvaluate, ...options }
@@ -197,8 +200,11 @@ export function confirm(
 /**
  * Modify event content in-place.
  * @param apply - Function that mutates the event.
- * @param options - Options: reason (debug metadata).
+ * @param options - Options: reason (debug metadata), metadata (structured audit context).
  */
-export function transform(apply: (event: LifecycleEvent) => void, options?: { reason?: string }): Transform {
+export function transform(
+  apply: (event: LifecycleEvent) => void,
+  options?: { reason?: string; metadata?: Record<string, unknown> }
+): Transform {
   return { type: 'transform', apply, ...options }
 }

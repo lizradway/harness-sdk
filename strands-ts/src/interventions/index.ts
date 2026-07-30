@@ -3,3 +3,4 @@ import { proceed, deny, guide, confirm, transform } from './actions.js'
 export const InterventionActions = { proceed, deny, guide, confirm, transform }
 export { InterventionHandler } from './handler.js'
 export type { OnError } from './handler.js'
+export type { InterventionDecision, InterventionRegistryOptions } from './registry.js'

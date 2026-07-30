@@ -146,12 +146,13 @@ export class HumanInTheLoop extends InterventionHandler {
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
     const toolName = event.toolUse.name
     if (!this._requiresApproval(event)) {
-      return proceed()
+      return proceed({ metadata: { tool: toolName, allowReason: this._getAllowReason(event) } })
     }
 
     const prompt = `Tool "${toolName}" requires human approval. Input: ${JSON.stringify(event.toolUse.input)}`
 
     const isNegated = this._allowedTools.has(`!${toolName}`)
+    const requireReason = isNegated ? 'negated' : 'default'
 
     const evaluate = (response: JSONValue): boolean => {
       if (!isNegated && this._enableTrust && this._evaluateTrust(response)) {
@@ -162,19 +163,20 @@ export class HumanInTheLoop extends InterventionHandler {
     }
 
     if (!this._ask) {
-      return confirm(prompt, { evaluate })
+      return confirm(prompt, { evaluate, metadata: { tool: toolName, requireReason } })
     }
 
     const response = await this._ask(prompt)
 
     if (!isNegated && this._enableTrust && this._evaluateTrust(response)) {
       this._trustTool(event, toolName)
-      return proceed()
+      return proceed({ metadata: { tool: toolName, allowReason: 'trusted' } })
     }
 
     return confirm(prompt, {
       response,
       evaluate: this._evaluate ?? defaultEvaluate,
+      metadata: { tool: toolName, requireReason },
     })
   }
 
@@ -194,6 +196,14 @@ export class HumanInTheLoop extends InterventionHandler {
     if (this._allowedTools.has('*')) return false
     if (this._allowedTools.has(toolName)) return false
     return true
+  }
+
+  private _getAllowReason(event: BeforeToolCallEvent): string {
+    const toolName = event.toolUse.name
+    const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
+    if (trusted.includes(toolName)) return 'trusted'
+    if (this._allowedTools.has('*')) return 'wildcard'
+    return 'allowedTools'
   }
 
   private _trustTool(event: BeforeToolCallEvent, toolName: string): void {
