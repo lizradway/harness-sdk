@@ -128,6 +128,10 @@
       "types": "./dist/src/vended-interventions/cedar/index.d.ts",
       "default": "./dist/src/vended-interventions/cedar/index.js"
     },
+    "./vended-interventions/verified-code-guard": {
+      "types": "./dist/src/vended-interventions/verified-code-guard/index.d.ts",
+      "default": "./dist/src/vended-interventions/verified-code-guard/index.js"
+    },
     "./vended-tools": {
       "types": "./dist/src/vended-tools/index.d.ts",
       "default": "./dist/src/vended-tools/index.js"
