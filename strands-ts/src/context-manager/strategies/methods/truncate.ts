@@ -6,7 +6,8 @@
  * @internal
  */
 
-import { TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import type { ToolResultContent } from '../../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 export const DROPPED_MARKER = '[Dropped]'
@@ -115,18 +116,30 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
 }
 
 /**
- * Creates a replacement ToolResultBlock with content truncated.
- * Text blocks are collected and replaced with a preview. Non-text blocks (JsonBlock, ImageBlock, etc.)
- * are serialized into the preview text so that JSON-only tool results can still be truncated.
+ * Creates a replacement ToolResultBlock with textual content truncated.
+ * Text and JSON blocks are serialized into a preview. Opaque blocks (images, video, documents)
+ * are preserved untouched — their payloads cannot be meaningfully previewed as text.
  */
 export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): ToolResultBlock {
-  const fullText = extractBlockText(block)
-  if (!fullText) {
+  const textual: string[] = []
+  const opaque: ToolResultContent[] = []
+
+  for (const content of block.content) {
+    if (content instanceof TextBlock) {
+      textual.push(content.text)
+    } else if (content instanceof JsonBlock) {
+      textual.push(JSON.stringify(content.toJSON()))
+    } else {
+      opaque.push(content)
+    }
+  }
+
+  if (textual.length === 0) {
     return block
   }
 
-  const blockCount = block.content.length
-  const preview = buildPreview(fullText, blockCount, config)
+  const fullText = textual.join('\n')
+  const preview = buildPreview(fullText, textual.length, config)
 
   if (preview === fullText) {
     return block
@@ -135,7 +148,7 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   return new ToolResultBlock({
     toolUseId: block.toolUseId,
     status: block.status,
-    content: [new TextBlock(preview)],
+    content: [new TextBlock(preview), ...opaque],
   })
 }
 
