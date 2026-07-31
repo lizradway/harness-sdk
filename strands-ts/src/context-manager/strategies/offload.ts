@@ -5,25 +5,28 @@
  * The builder composes a target, a reduction method (truncate, drop, or summarize),
  * and optional conditions into a strategy that implements `ContextStrategy`.
  *
+ * Conditions determine granularity:
+ * - `threshold` → per-block (act on individual blocks above this size)
+ * - `utilization` without `threshold` → message-level batch (sliding window or batched summary)
+ * - Both → per-block, gated by utilization
+ *
  * @example
  * ```typescript
  * import { ContextManager, Offload } from '@strands-agents/sdk'
  *
  * const cm = new ContextManager({
  *   strategies: [
- *     // Replace tool results over 1500 tokens with a 750-token head-tail preview
+ *     // Per-block: truncate individual tool results over 2500 tokens, eagerly on arrival
  *     Offload.truncate("toolResults", { previewTokens: 750 })
  *       .when({ threshold: 1500 }),
  *
- *     // Aggressively truncate noisy tools — small preview, low threshold
- *     Offload.truncate(["bash", "list_files"], { previewTokens: 200 })
- *       .when({ threshold: 500 }),
+ *     // Message-level: sliding window — remove oldest tool result messages when 90% full
+ *     Offload.truncate("toolResults").when({ utilization: 0.9, preserveRecent: 4 }),
  *
- *     // LLM-summarize all large blocks when context is 85% full, keep last 2 messages intact
- *     Offload.summarize()
- *       .when({ utilization: 0.85, preserveRecent: 2 }),
+ *     // Message-level: one LLM call summarizing oldest messages on overflow
+ *     Offload.summarize().when({ utilization: 1, preserveRecent: 4 }),
  *
- *     // Drop error tool results over 500 tokens
+ *     // Per-block: drop error tool results over 500 tokens
  *     Offload("toolResultErrors").when({ threshold: 500 }),
  *   ],
  * })
@@ -32,8 +35,7 @@
 
 import { logger } from '../../logging/logger.js'
 import { MessageAddedEvent } from '../../hooks/events.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
-import type { Message } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import type { LocalAgent } from '../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../types.js'
@@ -48,6 +50,7 @@ import {
   type TruncateConfig,
 } from './methods/truncate.js'
 import { summarizeText, type SummarizeConfig } from './methods/summarize.js'
+import { adjustSplitPointForToolPairs } from '../../conversation-manager/compression/context-compression.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -65,19 +68,19 @@ export type OffloadTarget = 'toolResults' | 'toolResultErrors' | 'assistantMessa
 /**
  * Conditions that determine when an offload strategy fires.
  *
- * All fields are optional. Omitting a condition means that dimension is not gated:
- * - No `threshold` → process blocks at any size
- * - No `utilization` → don't gate on context fullness
- * - No `preserveRecent` → don't protect any messages
+ * Granularity is determined by which conditions are set:
+ * - `threshold` only → per-block (act on each block above this size, eagerly)
+ * - `utilization` without `threshold` → message-level (act on matched set as a whole)
+ * - Both → per-block, gated by utilization
  */
 export interface OffloadConditions {
-  /** Token threshold above which individual blocks are offloaded. Omit to process at any size. */
+  /** Token threshold above which individual blocks are offloaded. */
   threshold?: number
 
-  /** Context utilization ratio (0-1) above which the strategy fires. Omit to always fire. */
+  /** Context utilization ratio (0-1+) above which the strategy fires. */
   utilization?: number
 
-  /** Number of most recent matching messages to leave untouched. Omit to protect nothing. */
+  /** Number of most recent matching messages to leave untouched. */
   preserveRecent?: number
 }
 
@@ -122,7 +125,8 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   abstract readonly name: string
 
   protected readonly _target: OffloadTarget | undefined
-  protected readonly _threshold: number
+  protected readonly _threshold: number | undefined
+  protected readonly _utilization: number | undefined
   protected readonly _preserveRecent: number
   protected readonly _toolFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
@@ -132,7 +136,11 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     this._threshold =
       typeof conditions?.threshold === 'number' && Number.isFinite(conditions.threshold)
         ? Math.max(0, conditions.threshold)
-        : 0
+        : undefined
+    this._utilization =
+      typeof conditions?.utilization === 'number' && Number.isFinite(conditions.utilization)
+        ? conditions.utilization
+        : undefined
     this._preserveRecent =
       typeof conditions?.preserveRecent === 'number' && Number.isFinite(conditions.preserveRecent)
         ? Math.max(0, Math.floor(conditions.preserveRecent))
@@ -143,7 +151,13 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     this._excludeFilter = resolved.exclude
   }
 
+  /** Whether this strategy operates at message-level (batch) vs per-block. */
+  protected get _isMessageLevel(): boolean {
+    return this._threshold === undefined && this._utilization !== undefined
+  }
+
   init(agent: LocalAgent): void {
+    if (this._isMessageLevel) return
     if (this._preserveRecent > 0) return
     if (!this._shouldRegisterEagerHook()) return
     agent.addHook(MessageAddedEvent, async (event) => {
@@ -156,7 +170,17 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   async apply(context: ContextState): Promise<boolean> {
     if (!this._shouldApply(context)) return false
 
+    if (this._isMessageLevel) {
+      return this._applyMessageLevel(context)
+    }
+
+    return this._applyPerBlock(context)
+  }
+
+  /** Per-block execution: walk each message, transform individual blocks above threshold. */
+  private async _applyPerBlock(context: ContextState): Promise<boolean> {
     const { messages } = context
+    const threshold = this._threshold ?? 0
     const eligible =
       this._preserveRecent > 0
         ? excludeRecentMatches(messages, this._target, this._preserveRecent, this._toolFilter, this._excludeFilter)
@@ -164,7 +188,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     let acted = false
 
     for (const message of eligible) {
-      if (await this._processMessage(message, messages)) {
+      if (await this._processMessage(message, messages, threshold)) {
         acted = true
       }
     }
@@ -172,49 +196,55 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Override to add extra gates (e.g. utilization check for summarize). */
-  protected _shouldApply(_context: ContextState): boolean {
+  /** Message-level execution: act on the matched set as a whole. Subclasses implement. */
+  protected abstract _applyMessageLevel(context: ContextState): Promise<boolean>
+
+  /** Override to add extra gates (e.g. model availability for summarize). */
+  protected _shouldApply(context: ContextState): boolean {
+    if (this._utilization !== undefined && context.utilization < this._utilization) {
+      return false
+    }
     return true
   }
 
-  /** Override to disable eager hook registration (e.g. when utilization is set). */
+  /** Override to disable eager hook registration. */
   protected _shouldRegisterEagerHook(): boolean {
     return this._target !== 'assistantMessages' && this._target !== 'userMessages'
   }
 
   /** Routes a single message to text block or tool result handlers based on target. */
-  private async _processMessage(message: Message, messages: Message[]): Promise<boolean> {
+  private async _processMessage(message: Message, messages: Message[], threshold: number): Promise<boolean> {
     if (this._target === 'assistantMessages') {
       if (message.role !== 'assistant') return false
-      return this._transformTextBlocks(message)
+      return this._transformTextBlocks(message, threshold)
     }
 
     if (this._target === 'userMessages') {
       if (message.role !== 'user') return false
-      return this._transformTextBlocks(message)
+      return this._transformTextBlocks(message, threshold)
     }
 
     if (this._target === undefined) {
-      let acted = await this._transformTextBlocks(message)
+      let acted = await this._transformTextBlocks(message, threshold)
       if (message.role === 'user') {
-        if (await this._transformToolResultBlocks(message, messages)) acted = true
+        if (await this._transformToolResultBlocks(message, messages, threshold)) acted = true
       }
       return acted
     }
 
     // Tool result targets
     if (message.role !== 'user') return false
-    return this._transformToolResultBlocks(message, messages)
+    return this._transformToolResultBlocks(message, messages, threshold)
   }
 
-  /** Process text blocks in a message. Subclasses implement the transformation. */
-  private async _transformTextBlocks(message: Message): Promise<boolean> {
+  /** Process text blocks in a message. */
+  private async _transformTextBlocks(message: Message, threshold: number): Promise<boolean> {
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (!(block instanceof TextBlock)) continue
       const tokens = estimateTextBlockTokens(block)
-      if (tokens <= this._threshold) continue
+      if (tokens <= threshold) continue
 
       const replacement = await this._replaceTextBlock(block, tokens, message)
       if (replacement && replacement.text !== block.text) {
@@ -225,8 +255,9 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Process tool result blocks in a message. Subclasses implement the transformation. */
-  protected async _transformToolResultBlocks(message: Message, messages: Message[]): Promise<boolean> {
+  /** Process tool result blocks in a message. */
+  protected async _transformToolResultBlocks(message: Message, messages: Message[], threshold?: number): Promise<boolean> {
+    const effectiveThreshold = threshold ?? this._threshold ?? 0
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
@@ -238,7 +269,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
         continue
 
       const tokens = estimateBlockTokens(block)
-      if (tokens <= this._threshold) continue
+      if (tokens <= effectiveThreshold) continue
 
       const replacement = await this._replaceToolResultBlock(block, tokens)
       if (replacement && replacement !== block) {
@@ -247,6 +278,15 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
       }
     }
     return acted
+  }
+
+  /** Collect eligible messages for message-level operations, respecting preserveRecent. */
+  protected _getEligibleMessages(context: ContextState): Message[] {
+    const { messages } = context
+    if (this._preserveRecent > 0) {
+      return excludeRecentMatches(messages, this._target, this._preserveRecent, this._toolFilter, this._excludeFilter)
+    }
+    return messages.filter((message) => messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter))
   }
 
   /** Transform a text block. Return the replacement, or null to skip. */
@@ -260,6 +300,25 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
 class OffloadDropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
+
+  protected async _applyMessageLevel(context: ContextState): Promise<boolean> {
+    const eligible = this._getEligibleMessages(context)
+    if (eligible.length === 0) return false
+
+    const { messages } = context
+    let removed = 0
+    for (const message of eligible) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
+      messages.splice(index, 1)
+      removed++
+    }
+
+    if (removed > 0) {
+      logger.debug(`removed=<${removed}> | dropped messages from L0 (message-level)`)
+    }
+    return removed > 0
+  }
 
   protected async _replaceTextBlock(block: TextBlock, _tokens: number, message: Message): Promise<TextBlock | null> {
     logger.debug(`trackingId=<${message.trackingId}> | dropped text block from L0`)
@@ -302,6 +361,31 @@ class OffloadTruncateStrategy extends BaseOffloadStrategy {
     }
   }
 
+  protected async _applyMessageLevel(context: ContextState): Promise<boolean> {
+    const { messages } = context
+    if (messages.length <= 1) return false
+
+    const eligible = this._getEligibleMessages(context)
+    if (eligible.length === 0) return false
+
+    const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
+    const toRemove = eligible.slice(0, targetRemoval)
+
+    let removed = 0
+    for (const message of toRemove) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
+      if (wouldOrphanToolPair(messages, index)) continue
+      messages.splice(index, 1)
+      removed++
+    }
+
+    if (removed > 0) {
+      logger.debug(`removed=<${removed}> | truncated oldest messages from L0 (sliding window)`)
+    }
+    return removed > 0
+  }
+
   protected async _replaceTextBlock(block: TextBlock, tokens: number, message: Message): Promise<TextBlock | null> {
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
     return truncateTextBlock(block, this._truncateConfig)
@@ -319,16 +403,13 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
 
   private readonly _config: SummarizeConfig
-  private readonly _utilization: number | undefined
   private _model: Model | undefined
+  private _agent: LocalAgent | undefined
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
     super(target, conditions)
     this._config = config ?? {}
-    this._utilization = conditions?.utilization
   }
-
-  private _agent: LocalAgent | undefined
 
   override init(agent: LocalAgent): void {
     this._agent = agent
@@ -339,20 +420,15 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
     return this._utilization === undefined && super._shouldRegisterEagerHook()
   }
 
-  protected override async _transformToolResultBlocks(message: Message, messages: Message[]): Promise<boolean> {
+  protected override async _transformToolResultBlocks(message: Message, messages: Message[], threshold?: number): Promise<boolean> {
     if (!this._model && this._agent) {
       this._model = this._resolveModel(this._agent)
     }
-    return super._transformToolResultBlocks(message, messages)
+    return super._transformToolResultBlocks(message, messages, threshold)
   }
 
   protected override _shouldApply(context: ContextState): boolean {
-    if (this._utilization !== undefined && context.utilization < this._utilization) {
-      logger.debug(
-        `utilization=<${context.utilization}>, threshold=<${this._utilization}> | skipping summarization, below threshold`
-      )
-      return false
-    }
+    if (!super._shouldApply(context)) return false
 
     const model = this._resolveModel(context.agent)
     if (!model) {
@@ -367,6 +443,54 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
   override async apply(context: ContextState): Promise<boolean> {
     this._model = this._resolveModel(context.agent)
     return super.apply(context)
+  }
+
+  protected async _applyMessageLevel(context: ContextState): Promise<boolean> {
+    if (!this._model) return false
+
+    const { messages } = context
+    const eligible = this._getEligibleMessages(context)
+    if (eligible.length === 0) return false
+
+    let summarizeCount = Math.max(1, Math.floor(eligible.length * 0.3))
+
+    const toSummarize = eligible.slice(0, summarizeCount)
+    const firstIndex = messages.indexOf(toSummarize[0]!)
+    if (firstIndex === -1) return false
+
+    let lastIndex = messages.indexOf(toSummarize[toSummarize.length - 1]!)
+    if (lastIndex === -1) lastIndex = firstIndex + summarizeCount
+
+    const endIndex = lastIndex + 1
+    try {
+      lastIndex = adjustSplitPointForToolPairs(messages, endIndex)
+    } catch {
+      lastIndex = endIndex
+    }
+
+    const rangeToSummarize = messages.slice(firstIndex, lastIndex)
+    if (rangeToSummarize.length === 0) return false
+
+    const text = rangeToSummarize
+      .map((message) => {
+        const firstBlock = message.content[0]
+        if (firstBlock instanceof ToolResultBlock) return extractBlockText(firstBlock)
+        return messageToText(message)
+      })
+      .join('\n\n---\n\n')
+
+    const summary = await summarizeText(text, this._model, this._config)
+    if (!summary) return false
+
+    const totalTokens = Math.ceil(text.length / 4)
+    const summaryMessage = new Message({
+      role: 'user',
+      content: [new TextBlock(`${SUMMARIZED_PREFIX} ${rangeToSummarize.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`)],
+    })
+
+    messages.splice(firstIndex, rangeToSummarize.length, summaryMessage)
+    logger.debug(`summarized=<${rangeToSummarize.length}>, tokens=<${totalTokens}> | batched summarization complete`)
+    return true
   }
 
   protected async _replaceTextBlock(block: TextBlock, tokens: number, message: Message): Promise<TextBlock | null> {
@@ -450,6 +574,49 @@ function messageMatchesTarget(
     }
   }
   return false
+}
+
+/**
+ * Checks if removing a message at the given index would orphan a tool-use/tool-result pair.
+ */
+function wouldOrphanToolPair(messages: Message[], index: number): boolean {
+  const message = messages[index]
+  if (!message) return false
+
+  const hasToolResult = message.content.some((block) => block.type === 'toolResultBlock')
+  if (hasToolResult && index > 0) {
+    const prev = messages[index - 1]
+    if (prev && prev.content.some((block) => block.type === 'toolUseBlock')) {
+      return true
+    }
+  }
+
+  const hasToolUse = message.content.some((block) => block.type === 'toolUseBlock')
+  if (hasToolUse && index < messages.length - 1) {
+    const next = messages[index + 1]
+    if (next && next.content.some((block) => block.type === 'toolResultBlock')) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Extracts a text representation from a message for summarization.
+ */
+function messageToText(message: Message): string {
+  const parts: string[] = [`[${message.role}]`]
+  for (const block of message.content) {
+    if (block instanceof TextBlock) {
+      parts.push(block.text)
+    } else if (block instanceof ToolResultBlock) {
+      parts.push(extractBlockText(block))
+    } else if ('name' in block && 'input' in block) {
+      parts.push(`[tool_use: ${(block as { name: string }).name}]`)
+    }
+  }
+  return parts.join('\n')
 }
 
 // --- Builder ---
@@ -556,8 +723,13 @@ offloadFn.summarize = function summarize(
  *
  * @example
  * ```typescript
+ * // Per-block: truncate each result over 2500 tokens, eagerly
  * Offload.truncate("toolResults", { previewTokens: 750 }).when({ threshold: 1500 })
- * Offload.summarize().when({ utilization: 0.85, preserveRecent: 2 })
+ * // Message-level: summarize oldest messages on overflow
+ * Offload.summarize().when({ utilization: 1, preserveRecent: 4 })
+ * // Message-level: sliding window when 90% full
+ * Offload.truncate("toolResults").when({ utilization: 0.9, preserveRecent: 2 })
+ * // Per-block: drop errors over 500 tokens
  * Offload("toolResultErrors").when({ threshold: 500 })
  * ```
  */

@@ -7,7 +7,7 @@
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
-import { AfterModelCallEvent } from '../hooks/events.js'
+import { AfterModelCallEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { logger } from '../logging/logger.js'
 import { adjustSplitPointForToolPairs } from '../conversation-manager/compression/context-compression.js'
@@ -62,6 +62,14 @@ export class ContextManager implements Plugin {
     for (const strategy of strategies) {
       strategy.init?.(agent)
     }
+
+    agent.addHook(BeforeModelCallEvent, async () => {
+      try {
+        await this._runStrategies()
+      } catch (error) {
+        logger.warn(`agentId=<${this._agentId}>, error=<${error}> | proactive strategy pipeline failed`)
+      }
+    })
 
     let overflowRetries = 0
     agent.addHook(AfterModelCallEvent, async (event) => {
