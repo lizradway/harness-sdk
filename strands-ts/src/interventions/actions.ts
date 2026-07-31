@@ -133,13 +133,13 @@ export type Transform = { type: 'transform'; apply: (event: LifecycleEvent) => v
 /**
  * Union of all intervention actions a handler can return.
  *
- * | Action    | beforeInvocation | beforeToolCall | beforeModelCall | afterToolCall | afterModelCall |
- * |-----------|------------------|----------------|-----------------|---------------|----------------|
- * | Proceed   | —                | —              | —               | —             | —              |
- * | Deny      | cancel           | cancel         | cancel          | —             | —              |
- * | Guide     | cancel+          | cancel+        | inject          | —             | inject + retry |
- * | Confirm   | —                | confirm        | —               | —             | —              |
- * | Transform | apply            | apply          | apply           | apply         | apply          |
+ * | Action    | beforeInvocation | beforeToolCall | beforeModelCall | afterToolCall   | afterModelCall |
+ * |-----------|------------------|----------------|-----------------|-----------------|----------------|
+ * | Proceed   | —                | —              | —               | —               | —              |
+ * | Deny      | cancel           | cancel         | cancel          | error result    | —              |
+ * | Guide     | cancel+          | cancel+        | inject          | error result+   | inject + retry |
+ * | Confirm   | —                | confirm        | —               | —               | —              |
+ * | Transform | apply            | apply          | apply           | apply           | apply          |
  *
  * — = no-op (logged in audit trail, warns at runtime)
  * cancel = sets event.cancel, short-circuits (remaining handlers skipped)
@@ -147,6 +147,8 @@ export type Transform = { type: 'transform'; apply: (event: LifecycleEvent) => v
  * confirm = uses preemptive response or interrupt, checks with evaluate, sets cancel if denied
  * inject = appends accumulated feedback as a user message so the model sees it on this call
  * inject + retry = appends accumulated feedback and retries so the model sees guidance
+ * error result = replaces event.result with an error-status ToolResultBlock, short-circuits
+ * error result+ = replaces event.result with an error-status ToolResultBlock containing feedback
  * apply = calls action.apply(event) for in-place mutation, later handlers see the change
  */
 export type InterventionAction = Proceed | Deny | Guide | Confirm | Transform

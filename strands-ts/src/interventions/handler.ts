@@ -53,7 +53,7 @@ export abstract class InterventionHandler {
     return { type: 'proceed' }
   }
 
-  afterToolCall(_event: AfterToolCallEvent): Awaitable<Proceed | Transform> {
+  afterToolCall(_event: AfterToolCallEvent): Awaitable<Proceed | Deny | Guide | Transform> {
     return { type: 'proceed' }
   }
 

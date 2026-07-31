@@ -8,7 +8,7 @@ import {
 } from '../hooks/events.js'
 import type { HookRegistry } from '../hooks/registry.js'
 import { HookOrder } from '../hooks/types.js'
-import { Message, TextBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
 import type { Guide, InterventionAction } from './actions.js'
 import { defaultEvaluate } from './actions.js'
 import { InterventionHandler } from './handler.js'
@@ -138,6 +138,20 @@ export class InterventionRegistry {
   private async _onAfterToolCall(event: AfterToolCallEvent): Promise<void> {
     return this._dispatch(event, 'afterToolCall', (action, handlerName) => {
       switch (action.type) {
+        case 'deny':
+          event.result = new ToolResultBlock({
+            toolUseId: event.result.toolUseId,
+            status: 'error',
+            content: [new TextBlock(`DENIED: ${action.reason}`)],
+          })
+          return true
+        case 'guide':
+          event.result = new ToolResultBlock({
+            toolUseId: event.result.toolUseId,
+            status: 'error',
+            content: [new TextBlock(`GUIDANCE: ${action.feedback}`)],
+          })
+          return false
         case 'transform':
           action.apply(event)
           return false
