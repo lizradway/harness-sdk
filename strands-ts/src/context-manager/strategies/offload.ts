@@ -703,58 +703,6 @@ interface OffloadNamespace {
   summarize(config: SummarizeConfig): OffloadStrategyBuilder
 }
 
-function offloadFn(): never {
-  throw new Error('Use Offload.drop(), Offload.truncate(), or Offload.summarize()')
-}
-
-offloadFn.drop = function drop(target?: OffloadTarget): OffloadStrategyBuilder {
-  return wrapAsBuilder(new DropStrategy(target), (c) => new DropStrategy(target, c))
-}
-
-offloadFn.truncate = function truncate(
-  targetOrConfig?: OffloadTarget | TruncateConfig,
-  config?: TruncateConfig
-): OffloadStrategyBuilder {
-  let target: OffloadTarget | undefined
-  let truncateConfig: TruncateConfig | undefined
-
-  if (targetOrConfig === undefined) {
-    truncateConfig = config
-  } else if (isConfigObject(targetOrConfig, ['previewTokens', 'preview'])) {
-    truncateConfig = targetOrConfig as TruncateConfig
-  } else {
-    target = targetOrConfig as OffloadTarget
-    truncateConfig = config
-  }
-
-  return wrapAsBuilder(
-    new TruncateStrategy(target, truncateConfig),
-    (c) => new TruncateStrategy(target, truncateConfig, c)
-  )
-}
-
-offloadFn.summarize = function summarize(
-  targetOrConfig?: OffloadTarget | SummarizeConfig,
-  config?: SummarizeConfig
-): OffloadStrategyBuilder {
-  let target: OffloadTarget | undefined
-  let summarizeConfig: SummarizeConfig | undefined
-
-  if (targetOrConfig === undefined) {
-    summarizeConfig = config
-  } else if (isConfigObject(targetOrConfig, ['model', 'systemPrompt'])) {
-    summarizeConfig = targetOrConfig as SummarizeConfig
-  } else {
-    target = targetOrConfig as OffloadTarget
-    summarizeConfig = config
-  }
-
-  return wrapAsBuilder(
-    new SummarizeStrategy(target, summarizeConfig),
-    (c) => new SummarizeStrategy(target, summarizeConfig, c)
-  )
-}
-
 /**
  * Builder for offload strategies — reduces content in L0.
  *
@@ -770,7 +718,49 @@ offloadFn.summarize = function summarize(
  * Offload.drop("toolResultErrors").when({ threshold: 500 })
  * ```
  */
-export const Offload: OffloadNamespace = offloadFn as unknown as OffloadNamespace
+export const Offload: OffloadNamespace = {
+  drop(target?: OffloadTarget): OffloadStrategyBuilder {
+    return wrapAsBuilder(new DropStrategy(target), (c) => new DropStrategy(target, c))
+  },
+
+  truncate(targetOrConfig?: OffloadTarget | TruncateConfig, config?: TruncateConfig): OffloadStrategyBuilder {
+    let target: OffloadTarget | undefined
+    let truncateConfig: TruncateConfig | undefined
+
+    if (targetOrConfig === undefined) {
+      truncateConfig = config
+    } else if (isConfigObject(targetOrConfig, ['previewTokens', 'preview'])) {
+      truncateConfig = targetOrConfig as TruncateConfig
+    } else {
+      target = targetOrConfig as OffloadTarget
+      truncateConfig = config
+    }
+
+    return wrapAsBuilder(
+      new TruncateStrategy(target, truncateConfig),
+      (c) => new TruncateStrategy(target, truncateConfig, c)
+    )
+  },
+
+  summarize(targetOrConfig?: OffloadTarget | SummarizeConfig, config?: SummarizeConfig): OffloadStrategyBuilder {
+    let target: OffloadTarget | undefined
+    let summarizeConfig: SummarizeConfig | undefined
+
+    if (targetOrConfig === undefined) {
+      summarizeConfig = config
+    } else if (isConfigObject(targetOrConfig, ['model', 'systemPrompt'])) {
+      summarizeConfig = targetOrConfig as SummarizeConfig
+    } else {
+      target = targetOrConfig as OffloadTarget
+      summarizeConfig = config
+    }
+
+    return wrapAsBuilder(
+      new SummarizeStrategy(target, summarizeConfig),
+      (c) => new SummarizeStrategy(target, summarizeConfig, c)
+    )
+  },
+}
 
 // --- Helpers ---
 
