@@ -349,9 +349,6 @@ function resolveConversationManager(
     return conversationManager ?? new NullConversationManager()
   }
   if (contextManager instanceof ContextManager) {
-    if (conversationManager) {
-      logger.warn('contextManager instance provided alongside conversationManager, conversationManager will be ignored')
-    }
     return new NullConversationManager()
   }
   if (contextManager === 'agentic') {

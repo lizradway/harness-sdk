@@ -14,6 +14,8 @@ import { adjustSplitPointForToolPairs } from '../conversation-manager/compressio
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { Offload } from './strategies/offload.js'
 
+const DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
+
 /**
  * Manages context reduction for an agent's conversation.
  *
@@ -137,10 +139,9 @@ export class ContextManager implements Plugin {
     if (!this._agent) return 0
     const model = this._agent.model
     const config = model.getConfig()
-    if (!config.contextWindowLimit) return 0
-
+    const limit = config.contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
     const tokens = await model.countTokens(this._agent.messages)
-    return tokens / config.contextWindowLimit
+    return tokens / limit
   }
 
   /**

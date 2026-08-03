@@ -97,7 +97,7 @@ export async function summarizeContent(
   if (result !== undefined) return result
 
   const textOnly = content.filter((block) => block instanceof TextBlock)
-  if (textOnly.length === content.length) return null
+  if (textOnly.length === 0 || textOnly.length === content.length) return null
 
   logger.debug('multimodal summarization failed, retrying with text-only content')
   const textResult = await callSummarizer(textOnly, model, config)

@@ -131,7 +131,9 @@ describe('Offload.summarize', () => {
 
     it('fires when utilization exceeds threshold', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
-      const messages = [makeToolResultMessage(largeText)]
+      const firstMessage = new Message({ role: 'user', content: [new TextBlock('initial question')] })
+      const toolResultMessage = makeToolResultMessage(largeText)
+      const messages = [firstMessage, toolResultMessage]
       const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
       const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
       const context = makeContext(messages, 0.9, mockModel)

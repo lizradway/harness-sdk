@@ -51,7 +51,6 @@ import {
   type TruncateConfig,
 } from './methods/truncate.js'
 import { summarizeContent, summarizeText, type SummarizeConfig } from './methods/summarize.js'
-import { adjustSplitPointForToolPairs } from '../../conversation-manager/compression/context-compression.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -318,14 +317,21 @@ class DropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
 
   protected async _applyMessageLevel(context: ContextState): Promise<boolean> {
+    const { messages } = context
+    if (messages.length <= 1) return false
+
     const eligible = this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    const { messages } = context
+    const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
+    const toRemove = eligible.slice(0, targetRemoval)
+
     let removed = 0
-    for (const message of eligible) {
+    for (const message of toRemove) {
       const index = messages.indexOf(message)
       if (index === -1) continue
+      if (index === 0) continue
+      if (wouldOrphanToolPair(messages, index)) continue
       messages.splice(index, 1)
       removed++
     }
@@ -391,6 +397,7 @@ class TruncateStrategy extends BaseOffloadStrategy {
     for (const message of toRemove) {
       const index = messages.indexOf(message)
       if (index === -1) continue
+      if (index === 0) continue
       if (wouldOrphanToolPair(messages, index)) continue
       messages.splice(index, 1)
       removed++
@@ -469,44 +476,51 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     if (!this._model) return false
 
     const { messages } = context
+    if (messages.length <= 1) return false
+
     const eligible = this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    let summarizeCount = Math.max(1, Math.floor(eligible.length * 0.3))
-
+    const summarizeCount = Math.max(1, Math.floor(eligible.length * 0.3))
     const toSummarize = eligible.slice(0, summarizeCount)
-    const firstIndex = messages.indexOf(toSummarize[0]!)
-    if (firstIndex === -1) return false
 
-    let lastIndex = messages.indexOf(toSummarize[toSummarize.length - 1]!)
-    if (lastIndex === -1) lastIndex = firstIndex + summarizeCount
+    // Filter out messages[0] and messages that would orphan tool pairs
+    const safe = toSummarize.filter((message) => {
+      const index = messages.indexOf(message)
+      if (index <= 0) return false
+      if (wouldOrphanToolPair(messages, index)) return false
+      return true
+    })
+    if (safe.length === 0) return false
 
-    const endIndex = lastIndex + 1
-    try {
-      lastIndex = adjustSplitPointForToolPairs(messages, endIndex)
-    } catch {
-      lastIndex = endIndex
-    }
-
-    const rangeToSummarize = messages.slice(firstIndex, lastIndex)
-    if (rangeToSummarize.length === 0) return false
-
-    const contentBlocks = flattenMessagesToContent(rangeToSummarize)
+    const contentBlocks = flattenMessagesToContent(safe)
     const summary = await summarizeContent(contentBlocks, this._model, this._config)
     if (!summary) return false
 
-    const totalTokens = await this._model.countTokens(rangeToSummarize)
+    const totalTokens = await this._model.countTokens(safe)
     const summaryMessage = new Message({
       role: 'user',
       content: [
         new TextBlock(
-          `${SUMMARIZED_PREFIX} ${rangeToSummarize.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`
+          `${SUMMARIZED_PREFIX} ${safe.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`
         ),
       ],
     })
 
-    messages.splice(firstIndex, rangeToSummarize.length, summaryMessage)
-    logger.debug(`summarized=<${rangeToSummarize.length}>, tokens=<${totalTokens}> | batched summarization complete`)
+    // Record insertion point before removing (position of the first summarized message)
+    const insertIndex = Math.max(1, messages.indexOf(safe[0]!))
+
+    // Remove summarized messages individually (they may not be contiguous)
+    for (const message of safe) {
+      const index = messages.indexOf(message)
+      if (index !== -1) messages.splice(index, 1)
+    }
+
+    // Insert summary where the first summarized message was
+    const clampedInsert = Math.min(insertIndex, messages.length)
+    messages.splice(clampedInsert, 0, summaryMessage)
+
+    logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
     return true
   }
 
@@ -542,8 +556,8 @@ class SummarizeStrategy extends BaseOffloadStrategy {
 // --- preserveRecent helper ---
 
 /**
- * Returns messages excluding the N most recent that match the target.
- * Walks messages from newest to oldest, counting matches, and excludes the first `count` matches.
+ * Returns target-matching messages excluding the N most recent matches.
+ * First filters to only messages that match the target, then removes the last N from that set.
  */
 function excludeRecentMatches(
   messages: Message[],
@@ -552,18 +566,11 @@ function excludeRecentMatches(
   toolFilter: Set<string> | undefined,
   excludeFilter: Set<string> | undefined
 ): Message[] {
-  const excluded = new Set<Message>()
-  let remaining = count
-
-  for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
-    const message = messages[index]!
-    if (messageMatchesTarget(message, target, messages, toolFilter, excludeFilter)) {
-      excluded.add(message)
-      remaining--
-    }
-  }
-
-  return messages.filter((message) => !excluded.has(message))
+  const matching = messages.filter((message) =>
+    messageMatchesTarget(message, target, messages, toolFilter, excludeFilter)
+  )
+  if (count >= matching.length) return []
+  return matching.slice(0, -count)
 }
 
 /**
