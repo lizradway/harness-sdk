@@ -27,7 +27,7 @@
  *     Offload.summarize().when({ utilization: 1, preserveRecent: 4 }),
  *
  *     // Per-block: drop error tool results over 500 tokens
- *     Offload("toolResultErrors").when({ threshold: 500 }),
+ *     Offload.drop("toolResultErrors").when({ threshold: 500 }),
  *   ],
  * })
  * ```
@@ -682,13 +682,13 @@ function isConfigObject(value: unknown, configKeys: string[]): boolean {
 /**
  * Offload strategy builder namespace.
  *
- * - `Offload(target)` — drop matching content from L0 entirely
+ * - `Offload.drop(target)` — drop matching content from L0 entirely
  * - `Offload.truncate(target, config)` — replace with a preview
  * - `Offload.summarize(target, config)` — replace with LLM-generated summary
  */
 interface OffloadNamespace {
   /** Drop matching content from L0 entirely. */
-  (target?: OffloadTarget): OffloadStrategyBuilder
+  drop(target?: OffloadTarget): OffloadStrategyBuilder
 
   /** Replace oversized content with a preview. */
   truncate(target?: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder
@@ -703,7 +703,11 @@ interface OffloadNamespace {
   summarize(config: SummarizeConfig): OffloadStrategyBuilder
 }
 
-function offloadFn(target?: OffloadTarget): OffloadStrategyBuilder {
+function offloadFn(): never {
+  throw new Error('Use Offload.drop(), Offload.truncate(), or Offload.summarize()')
+}
+
+offloadFn.drop = function drop(target?: OffloadTarget): OffloadStrategyBuilder {
   return wrapAsBuilder(new DropStrategy(target), (c) => new DropStrategy(target, c))
 }
 
@@ -763,10 +767,10 @@ offloadFn.summarize = function summarize(
  * // Message-level: sliding window when 90% full
  * Offload.truncate("toolResults").when({ utilization: 0.9, preserveRecent: 2 })
  * // Per-block: drop errors over 500 tokens
- * Offload("toolResultErrors").when({ threshold: 500 })
+ * Offload.drop("toolResultErrors").when({ threshold: 500 })
  * ```
  */
-export const Offload: OffloadNamespace = offloadFn as OffloadNamespace
+export const Offload: OffloadNamespace = offloadFn as unknown as OffloadNamespace
 
 // --- Helpers ---
 

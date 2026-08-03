@@ -188,17 +188,17 @@ describe('Offload.truncate', () => {
 })
 
 describe('Offload builder', () => {
-  it('Offload() bare call creates a drop strategy', () => {
-    const strategy = Offload('toolResults')
+  it('Offload.drop() creates a drop strategy', () => {
+    const strategy = Offload.drop('toolResults')
     expect(strategy.name).toBe('offload:drop')
     expect(strategy.init).toBeDefined()
     expect(strategy.apply).toBeDefined()
   })
 
-  it('Offload() drops tool result content from L0 entirely', async () => {
+  it('Offload.drop() drops tool result content from L0 entirely', async () => {
     const largeText = 'x'.repeat(100)
     const messages = [makeToolResultMessage(largeText)]
-    const strategy = Offload('toolResults')
+    const strategy = Offload.drop('toolResults')
     const context = makeContext(messages)
 
     const result = await strategy.apply(context)
@@ -208,12 +208,12 @@ describe('Offload builder', () => {
     expect((block.content[0] as TextBlock).text).toBe('[Dropped]')
   })
 
-  it('Offload() drops assistant text blocks', async () => {
+  it('Offload.drop() drops assistant text blocks', async () => {
     const message = new Message({
       role: 'assistant',
       content: [new TextBlock('some assistant response')],
     })
-    const strategy = Offload('assistantMessages')
+    const strategy = Offload.drop('assistantMessages')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -223,12 +223,12 @@ describe('Offload builder', () => {
     expect(block.text).toBe('[Dropped]')
   })
 
-  it('Offload() drops user text blocks', async () => {
+  it('Offload.drop() drops user text blocks', async () => {
     const message = new Message({
       role: 'user',
       content: [new TextBlock('some user message')],
     })
-    const strategy = Offload('userMessages')
+    const strategy = Offload.drop('userMessages')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -311,7 +311,7 @@ describe('Offload builder', () => {
 })
 
 describe('Offload with no target (fires on everything)', () => {
-  it('Offload() with no target drops all content', async () => {
+  it('Offload.drop() with no target drops all content', async () => {
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant text')],
@@ -327,7 +327,7 @@ describe('Offload with no target (fires on everything)', () => {
         }),
       ],
     })
-    const strategy = Offload()
+    const strategy = Offload.drop()
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
