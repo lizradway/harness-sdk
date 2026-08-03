@@ -45,8 +45,10 @@ export interface ContextState {
  */
 export interface ContextManagerConfig {
   /**
-   * Strategies for context reduction. Applied in order during `apply()`.
-   * When omitted, uses the default pipeline: offload tool results → summarize oldest.
+   * Strategies for context reduction. Applied as an ordered pipeline: each strategy
+   * sees the output of the previous. Order determines priority — if two strategies
+   * target the same content, the first one to shrink it below the next strategy's
+   * threshold wins. When omitted, uses the default pipeline.
    */
   strategies?: ContextStrategy[]
 }

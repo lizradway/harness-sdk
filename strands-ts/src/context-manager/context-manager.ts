@@ -38,14 +38,12 @@ export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
 
   private readonly _strategies: ContextStrategy[]
-  private readonly _defaultStrategies: ContextStrategy[]
 
   private _agent: LocalAgent | undefined
   private _agentId: string | undefined
 
   constructor(config?: ContextManagerConfig) {
-    this._strategies = config?.strategies ?? []
-    this._defaultStrategies = [
+    this._strategies = config?.strategies ?? [
       Offload.truncate('toolResults').when({ threshold: 2500 }),
       Offload.summarize('toolResults').when({ threshold: 2500, utilization: 0.85 }),
     ]
@@ -58,8 +56,7 @@ export class ContextManager implements Plugin {
     this._agent = agent
     this._agentId = agent.id
 
-    const strategies = this._strategies.length > 0 ? this._strategies : this._defaultStrategies
-    for (const strategy of strategies) {
+    for (const strategy of this._strategies) {
       strategy.init?.(agent)
     }
 
@@ -128,9 +125,7 @@ export class ContextManager implements Plugin {
       utilization,
     }
 
-    const strategies = this._strategies.length > 0 ? this._strategies : this._defaultStrategies
-
-    for (const strategy of strategies) {
+    for (const strategy of this._strategies) {
       const acted = await strategy.apply(strategyContext)
       if (acted) {
         logger.debug(`strategy=<${strategy.name}>, agentId=<${this._agentId}> | strategy applied`)

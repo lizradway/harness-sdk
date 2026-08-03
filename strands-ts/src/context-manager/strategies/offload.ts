@@ -35,7 +35,8 @@
 
 import { logger } from '../../logging/logger.js'
 import { MessageAddedEvent } from '../../hooks/events.js'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import type { LocalAgent } from '../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../types.js'
@@ -44,12 +45,11 @@ import {
   SUMMARIZED_PREFIX,
   estimateBlockTokens,
   estimateTextBlockTokens,
-  extractBlockText,
   truncateToolResultBlock,
   truncateTextBlock,
   type TruncateConfig,
 } from './methods/truncate.js'
-import { summarizeText, type SummarizeConfig } from './methods/summarize.js'
+import { summarizeContent, summarizeText, type SummarizeConfig } from './methods/summarize.js'
 import { adjustSplitPointForToolPairs } from '../../conversation-manager/compression/context-compression.js'
 
 /**
@@ -72,6 +72,14 @@ export type OffloadTarget = 'toolResults' | 'toolResultErrors' | 'assistantMessa
  * - `threshold` only → per-block (act on each block above this size, eagerly)
  * - `utilization` without `threshold` → message-level (act on matched set as a whole)
  * - Both → per-block, gated by utilization
+ *
+ * The two conditions serve different roles:
+ * - `utilization` gates whether the strategy runs at all (skip if context isn't full enough)
+ * - `threshold` filters which individual blocks to act on (skip blocks smaller than this)
+ *
+ * When multiple strategies target the same content, they don't conflict — strategies
+ * run as an ordered pipeline, and once an earlier strategy shrinks a block, it falls
+ * below the next strategy's threshold and gets skipped automatically.
  */
 export interface OffloadConditions {
   /** Token threshold above which individual blocks are offloaded. */
@@ -256,7 +264,11 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   /** Process tool result blocks in a message. */
-  protected async _transformToolResultBlocks(message: Message, messages: Message[], threshold?: number): Promise<boolean> {
+  protected async _transformToolResultBlocks(
+    message: Message,
+    messages: Message[],
+    threshold?: number
+  ): Promise<boolean> {
     const effectiveThreshold = threshold ?? this._threshold ?? 0
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
@@ -286,7 +298,9 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     if (this._preserveRecent > 0) {
       return excludeRecentMatches(messages, this._target, this._preserveRecent, this._toolFilter, this._excludeFilter)
     }
-    return messages.filter((message) => messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter))
+    return messages.filter((message) =>
+      messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter)
+    )
   }
 
   /** Transform a text block. Return the replacement, or null to skip. */
@@ -298,7 +312,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
 // --- Drop strategy ---
 
-class OffloadDropStrategy extends BaseOffloadStrategy {
+class DropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
 
   protected async _applyMessageLevel(context: ContextState): Promise<boolean> {
@@ -337,7 +351,7 @@ class OffloadDropStrategy extends BaseOffloadStrategy {
 
 // --- Truncate strategy ---
 
-class OffloadTruncateStrategy extends BaseOffloadStrategy {
+class TruncateStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:truncate'
 
   private readonly _truncateConfig: TruncateConfig
@@ -399,7 +413,7 @@ class OffloadTruncateStrategy extends BaseOffloadStrategy {
 
 // --- Summarize strategy ---
 
-class OffloadSummarizeStrategy extends BaseOffloadStrategy {
+class SummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
 
   private readonly _config: SummarizeConfig
@@ -420,7 +434,11 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
     return this._utilization === undefined && super._shouldRegisterEagerHook()
   }
 
-  protected override async _transformToolResultBlocks(message: Message, messages: Message[], threshold?: number): Promise<boolean> {
+  protected override async _transformToolResultBlocks(
+    message: Message,
+    messages: Message[],
+    threshold?: number
+  ): Promise<boolean> {
     if (!this._model && this._agent) {
       this._model = this._resolveModel(this._agent)
     }
@@ -471,21 +489,18 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
     const rangeToSummarize = messages.slice(firstIndex, lastIndex)
     if (rangeToSummarize.length === 0) return false
 
-    const text = rangeToSummarize
-      .map((message) => {
-        const firstBlock = message.content[0]
-        if (firstBlock instanceof ToolResultBlock) return extractBlockText(firstBlock)
-        return messageToText(message)
-      })
-      .join('\n\n---\n\n')
-
-    const summary = await summarizeText(text, this._model, this._config)
+    const contentBlocks = flattenMessagesToContent(rangeToSummarize)
+    const summary = await summarizeContent(contentBlocks, this._model, this._config)
     if (!summary) return false
 
-    const totalTokens = Math.ceil(text.length / 4)
+    const totalTokens = await this._model.countTokens(rangeToSummarize)
     const summaryMessage = new Message({
       role: 'user',
-      content: [new TextBlock(`${SUMMARIZED_PREFIX} ${rangeToSummarize.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`)],
+      content: [
+        new TextBlock(
+          `${SUMMARIZED_PREFIX} ${rangeToSummarize.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`
+        ),
+      ],
     })
 
     messages.splice(firstIndex, rangeToSummarize.length, summaryMessage)
@@ -506,8 +521,7 @@ class OffloadSummarizeStrategy extends BaseOffloadStrategy {
   protected async _replaceToolResultBlock(block: ToolResultBlock, tokens: number): Promise<ToolResultBlock | null> {
     if (!this._model) return null
 
-    const fullText = extractBlockText(block)
-    const summary = await summarizeText(fullText, this._model, this._config)
+    const summary = await summarizeContent(toolResultToContentBlocks(block.content), this._model, this._config)
     if (!summary) return null
 
     logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
@@ -603,20 +617,39 @@ function wouldOrphanToolPair(messages: Message[], index: number): boolean {
 }
 
 /**
- * Extracts a text representation from a message for summarization.
+ * Flattens a range of messages into a single ContentBlock array for multimodal summarization.
+ * Inserts role markers and separators so the summarizer understands message boundaries.
  */
-function messageToText(message: Message): string {
-  const parts: string[] = [`[${message.role}]`]
-  for (const block of message.content) {
-    if (block instanceof TextBlock) {
-      parts.push(block.text)
-    } else if (block instanceof ToolResultBlock) {
-      parts.push(extractBlockText(block))
-    } else if ('name' in block && 'input' in block) {
-      parts.push(`[tool_use: ${(block as { name: string }).name}]`)
+/**
+ * Converts ToolResultContent[] to ContentBlock[] for model consumption.
+ * JsonBlock is not a valid ContentBlock, so it's serialized to a TextBlock.
+ */
+function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
+  return content.map((block) => {
+    if (block instanceof JsonBlock) {
+      return new TextBlock(JSON.stringify(block.json, null, 2))
+    }
+    return block as ContentBlock
+  })
+}
+
+/**
+ * Flattens a range of messages into a single ContentBlock array for multimodal summarization.
+ * Inserts role markers and separators so the summarizer understands message boundaries.
+ */
+function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
+  const blocks: ContentBlock[] = []
+  for (const message of messages) {
+    blocks.push(new TextBlock(`\n---\n[${message.role}]`))
+    for (const block of message.content) {
+      if (block instanceof ToolResultBlock) {
+        blocks.push(...toolResultToContentBlocks(block.content))
+      } else {
+        blocks.push(block)
+      }
     }
   }
-  return parts.join('\n')
+  return blocks
 }
 
 // --- Builder ---
@@ -671,7 +704,7 @@ interface OffloadNamespace {
 }
 
 function offloadFn(target?: OffloadTarget): OffloadStrategyBuilder {
-  return wrapAsBuilder(new OffloadDropStrategy(target), (c) => new OffloadDropStrategy(target, c))
+  return wrapAsBuilder(new DropStrategy(target), (c) => new DropStrategy(target, c))
 }
 
 offloadFn.truncate = function truncate(
@@ -691,8 +724,8 @@ offloadFn.truncate = function truncate(
   }
 
   return wrapAsBuilder(
-    new OffloadTruncateStrategy(target, truncateConfig),
-    (c) => new OffloadTruncateStrategy(target, truncateConfig, c)
+    new TruncateStrategy(target, truncateConfig),
+    (c) => new TruncateStrategy(target, truncateConfig, c)
   )
 }
 
@@ -713,8 +746,8 @@ offloadFn.summarize = function summarize(
   }
 
   return wrapAsBuilder(
-    new OffloadSummarizeStrategy(target, summarizeConfig),
-    (c) => new OffloadSummarizeStrategy(target, summarizeConfig, c)
+    new SummarizeStrategy(target, summarizeConfig),
+    (c) => new SummarizeStrategy(target, summarizeConfig, c)
   )
 }
 

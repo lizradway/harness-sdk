@@ -6,6 +6,7 @@ import type { ContextState } from '../../types.js'
 
 vi.mock('../methods/summarize.js', () => ({
   summarizeText: vi.fn(async (text: string) => `Summary of: ${text.slice(0, 20)}`),
+  summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
 }))
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
@@ -131,7 +132,7 @@ describe('Offload.summarize', () => {
     it('fires when utilization exceeds threshold', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
-      const mockModel = { stream: vi.fn() }
+      const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
       const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
       const context = makeContext(messages, 0.9, mockModel)
 

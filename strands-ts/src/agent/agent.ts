@@ -346,9 +346,6 @@ function resolveConversationManager(
   conversationManager: ConversationManager | undefined
 ): ConversationManager {
   if (contextManager === false) {
-    if (conversationManager) {
-      logger.warn('contextManager=<false> | conversationManager was also provided and remains active')
-    }
     return conversationManager ?? new NullConversationManager()
   }
   if (contextManager instanceof ContextManager) {

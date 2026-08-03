@@ -10,6 +10,7 @@
 
 import type { Model } from '../../../models/model.js'
 import { Message, TextBlock } from '../../../types/messages.js'
+import type { ContentBlock } from '../../../types/messages.js'
 import { logger } from '../../../logging/logger.js'
 
 // Subject to change as we benchmark summarization quality.
@@ -77,5 +78,70 @@ export async function summarizeText(text: string, model: Model, config?: Summari
   } catch (error) {
     logger.warn(`error=<${error}> | summarization failed`)
     return null
+  }
+}
+
+/**
+ * Summarizes multimodal content (text, images, JSON, etc.) via an LLM call.
+ * Passes content blocks directly to the model so it can reason about all modalities.
+ * If the model doesn't support multimodal input, retries with text-only blocks.
+ *
+ * @returns The summarized text, or null if summarization failed.
+ */
+export async function summarizeContent(
+  content: ContentBlock[],
+  model: Model,
+  config?: SummarizeConfig
+): Promise<string | null> {
+  const result = await callSummarizer(content, model, config)
+  if (result !== undefined) return result
+
+  const textOnly = content.filter((block) => block instanceof TextBlock)
+  if (textOnly.length === content.length) return null
+
+  logger.debug('multimodal summarization failed, retrying with text-only content')
+  const textResult = await callSummarizer(textOnly, model, config)
+  return textResult ?? null
+}
+
+async function callSummarizer(
+  content: ContentBlock[],
+  model: Model,
+  config?: SummarizeConfig
+): Promise<string | null | undefined> {
+  const messages = [
+    new Message({
+      role: 'user',
+      content: [new TextBlock('Please summarize the following content:'), ...content] as ContentBlock[],
+    }),
+  ]
+
+  try {
+    const stream = model.streamAggregated(messages, {
+      systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    })
+
+    let result: Awaited<ReturnType<typeof stream.next>> | undefined
+    for (;;) {
+      result = await stream.next()
+      if (result.done) break
+    }
+
+    if (!result?.done || !result.value) {
+      logger.warn('summarization produced no response')
+      return null
+    }
+
+    const outputBlocks = result.value.message.content
+    const parts: string[] = []
+    for (const block of outputBlocks) {
+      if (block instanceof TextBlock) {
+        parts.push(block.text)
+      }
+    }
+
+    return parts.join('\n') || null
+  } catch {
+    return undefined
   }
 }
