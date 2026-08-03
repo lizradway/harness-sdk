@@ -172,25 +172,39 @@ export class ContextManager implements Plugin {
   }
 
   /**
-   * Finds a safe start index for truncation that doesn't orphan tool-use/tool-result pairs
-   * anchored in the preserved head messages.
+   * Finds a safe start index for truncation that doesn't orphan tool-use/tool-result pairs.
+   * Walks forward from index 1, skipping any message whose tool results pair with a tool-use
+   * in the preceding preserved messages.
    */
   private _findSafeStartIndex(messages: Message[]): number {
     let startIndex = 1
-    const headMessage = messages[0]
-    if (!headMessage) return startIndex
 
-    const headHasToolUse = headMessage.content.some((block) => 'toolUseId' in block && 'name' in block)
-    if (headHasToolUse) {
-      // Skip past the tool result message that pairs with the head's tool use
-      while (startIndex < messages.length) {
-        const message = messages[startIndex]!
-        const hasToolResult = message.content.some((block) => block.type === 'toolResultBlock')
-        if (!hasToolResult) break
-        startIndex++
-      }
+    while (startIndex < messages.length - 1) {
+      const message = messages[startIndex]!
+      if (!this._messageHasToolResultPairedWithPreceding(messages, startIndex)) break
+      startIndex++
     }
 
     return startIndex
+  }
+
+  private _messageHasToolResultPairedWithPreceding(messages: Message[], index: number): boolean {
+    const message = messages[index]!
+    const toolResultIds = new Set<string>()
+    for (const block of message.content) {
+      if (block.type === 'toolResultBlock' && 'toolUseId' in block) {
+        toolResultIds.add((block as { toolUseId: string }).toolUseId)
+      }
+    }
+    if (toolResultIds.size === 0) return false
+
+    for (let preceding = 0; preceding < index; preceding++) {
+      for (const block of messages[preceding]!.content) {
+        if ('toolUseId' in block && 'name' in block) {
+          if (toolResultIds.has((block as { toolUseId: string }).toolUseId)) return true
+        }
+      }
+    }
+    return false
   }
 }
