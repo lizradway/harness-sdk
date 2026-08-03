@@ -6,7 +6,8 @@
  *
  * @example
  * ```typescript
- * import { Agent, ContextManager, Offload } from '@strands-agents/sdk'
+ * import { ContextManager } from '@strands-agents/sdk'
+ * import { Offload } from '@strands-agents/sdk/context-manager'
  *
  * const agent = new Agent({
  *   model,
@@ -17,6 +18,8 @@
  *       Offload.summarize("toolResults")
  *         .when({ threshold: 2000, utilization: 0.85 }),
  *       Offload.drop("toolResultErrors").when({ threshold: 500 }),
+ *       Offload.truncate(["tool::bash", "tool::read_file"])
+ *         .when({ threshold: 2000 }),
  *     ],
  *   }),
  * })

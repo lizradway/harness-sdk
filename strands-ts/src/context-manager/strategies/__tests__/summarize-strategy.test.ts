@@ -90,7 +90,7 @@ describe('Offload.summarize', () => {
         content: [new TextBlock(largeText)],
       })
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('assistantMessages')
+      const strategy = Offload.summarize('assistantText')
       const context = makeContext([message], 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -107,7 +107,7 @@ describe('Offload.summarize', () => {
         content: [new TextBlock(largeText)],
       })
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('userMessages')
+      const strategy = Offload.summarize('userText')
       const context = makeContext([message], 0.9, mockModel)
 
       const result = await strategy.apply(context)

@@ -12,7 +12,8 @@
  *
  * @example
  * ```typescript
- * import { ContextManager, Offload } from '@strands-agents/sdk'
+ * import { ContextManager } from '@strands-agents/sdk'
+ * import { Offload } from '@strands-agents/sdk/context-manager'
  *
  * const cm = new ContextManager({
  *   strategies: [
@@ -20,11 +21,11 @@
  *     Offload.truncate("toolResults", { previewTokens: 750 })
  *       .when({ threshold: 1500 }),
  *
- *     // Message-level: sliding window — remove oldest tool result messages when 90% full
- *     Offload.truncate("toolResults").when({ utilization: 0.9, preserveRecent: 4 }),
+ *     // Per-block: truncate specific tools
+ *     Offload.truncate(["tool::bash", "tool::read_file"]).when({ threshold: 2000 }),
  *
  *     // Message-level: one LLM call summarizing oldest messages on overflow
- *     Offload.summarize().when({ utilization: 1, preserveRecent: 4 }),
+ *     Offload.summarize("*").when({ utilization: 1, preserveRecent: 4 }),
  *
  *     // Per-block: drop error tool results over 500 tokens
  *     Offload.drop("toolResultErrors").when({ threshold: 500 }),
@@ -58,12 +59,13 @@ import { adjustSplitPointForToolPairs } from '../../conversation-manager/compres
  *
  * - `"toolResults"` — all successful tool result blocks
  * - `"toolResultErrors"` — all failed tool result blocks
- * - `"assistantMessages"` — text blocks in assistant messages
- * - `"userMessages"` — text blocks in user messages (excluding tool results)
- * - `string[]` — tool results from specific tools; prefix with `!` to exclude
- * - `undefined` — all content in the context window (tool results + text blocks)
+ * - `"assistantText"` — text blocks in assistant messages
+ * - `"userText"` — text blocks in user messages (excluding tool results)
+ * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
+ * - `"*"` — all content in the context window (tool results + text blocks)
  */
-export type OffloadTarget = 'toolResults' | 'toolResultErrors' | 'assistantMessages' | 'userMessages' | string[]
+export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
+
 
 /**
  * Conditions that determine when an offload strategy fires.
@@ -217,22 +219,22 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Override to disable eager hook registration. */
   protected _shouldRegisterEagerHook(): boolean {
-    return this._target !== 'assistantMessages' && this._target !== 'userMessages'
+    return this._target !== 'assistantText' && this._target !== 'userText'
   }
 
   /** Routes a single message to text block or tool result handlers based on target. */
   private async _processMessage(message: Message, messages: Message[], threshold: number): Promise<boolean> {
-    if (this._target === 'assistantMessages') {
+    if (this._target === 'assistantText') {
       if (message.role !== 'assistant') return false
       return this._transformTextBlocks(message, threshold)
     }
 
-    if (this._target === 'userMessages') {
+    if (this._target === 'userText') {
       if (message.role !== 'user') return false
       return this._transformTextBlocks(message, threshold)
     }
 
-    if (this._target === undefined) {
+    if (this._target === undefined || this._target === '*') {
       let acted = await this._transformTextBlocks(message, threshold)
       if (message.role === 'user') {
         if (await this._transformToolResultBlocks(message, messages, threshold)) acted = true
@@ -575,10 +577,10 @@ function messageMatchesTarget(
   toolFilter: Set<string> | undefined,
   excludeFilter: Set<string> | undefined
 ): boolean {
-  if (target === undefined) return true
+  if (target === undefined || target === '*') return true
 
-  if (target === 'assistantMessages') return message.role === 'assistant'
-  if (target === 'userMessages') return message.role === 'user'
+  if (target === 'assistantText') return message.role === 'assistant'
+  if (target === 'userText') return message.role === 'user'
 
   // Tool result targets — must be a user message with a matching tool result
   if (message.role !== 'user') return false
@@ -688,16 +690,16 @@ function isConfigObject(value: unknown, configKeys: string[]): boolean {
  */
 interface OffloadNamespace {
   /** Drop matching content from L0 entirely. */
-  drop(target?: OffloadTarget): OffloadStrategyBuilder
+  drop(target: OffloadTarget): OffloadStrategyBuilder
 
   /** Replace oversized content with a preview. */
-  truncate(target?: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder
+  truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder
 
   /** Replace oversized content with a preview (config-only, targets everything). */
   truncate(config: TruncateConfig): OffloadStrategyBuilder
 
   /** Replace oversized content with an LLM-generated summary. */
-  summarize(target?: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder
+  summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder
 
   /** Replace oversized content with an LLM-generated summary (config-only, targets everything). */
   summarize(config: SummarizeConfig): OffloadStrategyBuilder
@@ -710,26 +712,24 @@ interface OffloadNamespace {
  * ```typescript
  * // Per-block: truncate each result over 2500 tokens, eagerly
  * Offload.truncate("toolResults", { previewTokens: 750 }).when({ threshold: 1500 })
+ * // Per-block: truncate specific tools
+ * Offload.truncate(["tool::bash", "tool::read_file"]).when({ threshold: 2000 })
  * // Message-level: summarize oldest messages on overflow
- * Offload.summarize().when({ utilization: 1, preserveRecent: 4 })
- * // Message-level: sliding window when 90% full
- * Offload.truncate("toolResults").when({ utilization: 0.9, preserveRecent: 2 })
+ * Offload.summarize("*").when({ utilization: 1, preserveRecent: 4 })
  * // Per-block: drop errors over 500 tokens
  * Offload.drop("toolResultErrors").when({ threshold: 500 })
  * ```
  */
 export const Offload: OffloadNamespace = {
-  drop(target?: OffloadTarget): OffloadStrategyBuilder {
+  drop(target: OffloadTarget): OffloadStrategyBuilder {
     return wrapAsBuilder(new DropStrategy(target), (c) => new DropStrategy(target, c))
   },
 
-  truncate(targetOrConfig?: OffloadTarget | TruncateConfig, config?: TruncateConfig): OffloadStrategyBuilder {
+  truncate(targetOrConfig: OffloadTarget | TruncateConfig, config?: TruncateConfig): OffloadStrategyBuilder {
     let target: OffloadTarget | undefined
     let truncateConfig: TruncateConfig | undefined
 
-    if (targetOrConfig === undefined) {
-      truncateConfig = config
-    } else if (isConfigObject(targetOrConfig, ['previewTokens', 'preview'])) {
+    if (isConfigObject(targetOrConfig, ['previewTokens', 'preview'])) {
       truncateConfig = targetOrConfig as TruncateConfig
     } else {
       target = targetOrConfig as OffloadTarget
@@ -742,13 +742,11 @@ export const Offload: OffloadNamespace = {
     )
   },
 
-  summarize(targetOrConfig?: OffloadTarget | SummarizeConfig, config?: SummarizeConfig): OffloadStrategyBuilder {
+  summarize(targetOrConfig: OffloadTarget | SummarizeConfig, config?: SummarizeConfig): OffloadStrategyBuilder {
     let target: OffloadTarget | undefined
     let summarizeConfig: SummarizeConfig | undefined
 
-    if (targetOrConfig === undefined) {
-      summarizeConfig = config
-    } else if (isConfigObject(targetOrConfig, ['model', 'systemPrompt'])) {
+    if (isConfigObject(targetOrConfig, ['model', 'systemPrompt'])) {
       summarizeConfig = targetOrConfig as SummarizeConfig
     } else {
       target = targetOrConfig as OffloadTarget
@@ -786,21 +784,24 @@ function resolveToolName(block: ToolResultBlock, messages: Message[]): string | 
 
 /**
  * Parses a string[] target into include/exclude filter sets.
- * Entries prefixed with `!` become excludes; all others become includes.
+ * Entries must be prefixed with `tool::` (e.g. `'tool::bash'`).
+ * An additional `!` prefix excludes (e.g. `'!tool::bash'`).
  */
 function resolveToolFilter(target: OffloadTarget | undefined): { include?: Set<string>; exclude?: Set<string> } {
-  if (target === undefined) return {}
+  if (target === undefined || target === '*') return {}
   if (typeof target === 'string') return {}
   if (!Array.isArray(target)) return {}
 
+  const TOOL_PREFIX = 'tool::'
   const includes: string[] = []
   const excludes: string[] = []
 
   for (const entry of target) {
     if (entry.startsWith('!')) {
-      excludes.push(entry.slice(1))
+      const name = entry.slice(1)
+      excludes.push(name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name)
     } else {
-      includes.push(entry)
+      includes.push(entry.startsWith(TOOL_PREFIX) ? entry.slice(TOOL_PREFIX.length) : entry)
     }
   }
 

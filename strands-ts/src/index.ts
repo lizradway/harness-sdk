@@ -307,7 +307,6 @@ export { FileStorage } from './session/file-storage.js'
 
 // Context management
 export { ContextManager } from './context-manager/context-manager.js'
-export { Offload } from './context-manager/strategies/offload.js'
 
 // Local Traces
 export { AgentTrace } from './telemetry/tracer.js'

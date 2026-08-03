@@ -117,13 +117,13 @@ describe('Offload.truncate', () => {
     expect(result).toBe(false)
   })
 
-  it('truncates assistant text blocks with assistantMessages target', async () => {
+  it('truncates assistant text blocks with assistantText target', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const message = new Message({
       role: 'assistant',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('assistantMessages')
+    const strategy = Offload.truncate('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -133,13 +133,13 @@ describe('Offload.truncate', () => {
     expect(block.text).toContain('[Truncated:')
   })
 
-  it('truncates user text blocks with userMessages target', async () => {
+  it('truncates user text blocks with userText target', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const message = new Message({
       role: 'user',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('userMessages')
+    const strategy = Offload.truncate('userText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -149,13 +149,13 @@ describe('Offload.truncate', () => {
     expect(block.text).toContain('[Truncated:')
   })
 
-  it('does not truncate user messages with assistantMessages target', async () => {
+  it('does not truncate user messages with assistantText target', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const message = new Message({
       role: 'user',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('assistantMessages')
+    const strategy = Offload.truncate('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -213,7 +213,7 @@ describe('Offload builder', () => {
       role: 'assistant',
       content: [new TextBlock('some assistant response')],
     })
-    const strategy = Offload.drop('assistantMessages')
+    const strategy = Offload.drop('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -228,7 +228,7 @@ describe('Offload builder', () => {
       role: 'user',
       content: [new TextBlock('some user message')],
     })
-    const strategy = Offload.drop('userMessages')
+    const strategy = Offload.drop('userText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -254,7 +254,7 @@ describe('Offload builder', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate(['bash'])
+    const strategy = Offload.truncate(['tool::bash'])
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -280,7 +280,7 @@ describe('Offload builder', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate(['bash'])
+    const strategy = Offload.truncate(['tool::bash'])
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -310,8 +310,8 @@ describe('Offload builder', () => {
   })
 })
 
-describe('Offload with no target (fires on everything)', () => {
-  it('Offload.drop() with no target drops all content', async () => {
+describe('Offload with * target (fires on everything)', () => {
+  it('Offload.drop("*") drops all content', async () => {
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant text')],
@@ -327,7 +327,7 @@ describe('Offload with no target (fires on everything)', () => {
         }),
       ],
     })
-    const strategy = Offload.drop()
+    const strategy = Offload.drop('*')
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -339,7 +339,7 @@ describe('Offload with no target (fires on everything)', () => {
     expect((toolBlock.content[0] as TextBlock).text).toBe('[Dropped]')
   })
 
-  it('Offload.truncate() with no target truncates all large content', async () => {
+  it('Offload.truncate("*") truncates all large content', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const assistantMsg = new Message({
       role: 'assistant',
@@ -356,7 +356,7 @@ describe('Offload with no target (fires on everything)', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate()
+    const strategy = Offload.truncate('*')
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -368,13 +368,13 @@ describe('Offload with no target (fires on everything)', () => {
     expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
   })
 
-  it('Offload.truncate() with no target and threshold skips small content', async () => {
+  it('Offload.truncate("*") with threshold skips small content', async () => {
     const smallText = 'short'
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock(smallText)],
     })
-    const strategy = Offload.truncate().when({ threshold: 2500 })
+    const strategy = Offload.truncate('*').when({ threshold: 2500 })
     const context = makeContext([assistantMsg])
 
     const result = await strategy.apply(context)
