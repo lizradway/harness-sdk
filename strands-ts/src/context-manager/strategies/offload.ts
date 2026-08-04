@@ -65,7 +65,6 @@ import { summarizeContent, summarizeText, type SummarizeConfig } from './methods
  */
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
 
-
 /**
  * Conditions that determine when an offload strategy fires.
  *
@@ -326,12 +325,19 @@ class DropStrategy extends BaseOffloadStrategy {
     const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
     const toRemove = eligible.slice(0, targetRemoval)
 
-    let removed = 0
+    const toSplice = new Set<Message>()
     for (const message of toRemove) {
       const index = messages.indexOf(message)
       if (index === -1) continue
-      if (index === 0) continue
-      if (wouldOrphanToolPair(messages, index)) continue
+      for (const removable of collectRemovableWithPair(messages, index)) {
+        toSplice.add(removable)
+      }
+    }
+
+    let removed = 0
+    for (const message of toSplice) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
       messages.splice(index, 1)
       removed++
     }
@@ -393,12 +399,19 @@ class TruncateStrategy extends BaseOffloadStrategy {
     const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
     const toRemove = eligible.slice(0, targetRemoval)
 
-    let removed = 0
+    const toSplice = new Set<Message>()
     for (const message of toRemove) {
       const index = messages.indexOf(message)
       if (index === -1) continue
-      if (index === 0) continue
-      if (wouldOrphanToolPair(messages, index)) continue
+      for (const removable of collectRemovableWithPair(messages, index)) {
+        toSplice.add(removable)
+      }
+    }
+
+    let removed = 0
+    for (const message of toSplice) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
       messages.splice(index, 1)
       removed++
     }
@@ -484,13 +497,16 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     const summarizeCount = Math.max(1, Math.floor(eligible.length * 0.3))
     const toSummarize = eligible.slice(0, summarizeCount)
 
-    // Filter out messages[0] and messages that would orphan tool pairs
-    const safe = toSummarize.filter((message) => {
+    // Expand to include paired messages so we don't orphan tool pairs
+    const safeSet = new Set<Message>()
+    for (const message of toSummarize) {
       const index = messages.indexOf(message)
-      if (index <= 0) return false
-      if (wouldOrphanToolPair(messages, index)) return false
-      return true
-    })
+      if (index === -1) continue
+      for (const removable of collectRemovableWithPair(messages, index)) {
+        safeSet.add(removable)
+      }
+    }
+    const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
     const contentBlocks = flattenMessagesToContent(safe)
@@ -600,17 +616,23 @@ function messageMatchesTarget(
 }
 
 /**
- * Checks if removing a message at the given index would orphan a tool-use/tool-result pair.
+ * Collects a message and its paired partner (if any) for safe removal.
+ * If removing a message would orphan a tool-use/tool-result pair, includes the partner
+ * so the pair is removed together. Skips messages[0] (head-pin).
  */
-function wouldOrphanToolPair(messages: Message[], index: number): boolean {
+function collectRemovableWithPair(messages: Message[], index: number): Message[] {
   const message = messages[index]
-  if (!message) return false
+  if (!message) return []
+  if (index === 0) return []
+
+  const result: Message[] = [message]
 
   const hasToolResult = message.content.some((block) => block.type === 'toolResultBlock')
   if (hasToolResult && index > 0) {
     const prev = messages[index - 1]
     if (prev && prev.content.some((block) => block.type === 'toolUseBlock')) {
-      return true
+      if (index - 1 > 0) result.push(prev)
+      else return []
     }
   }
 
@@ -618,11 +640,11 @@ function wouldOrphanToolPair(messages: Message[], index: number): boolean {
   if (hasToolUse && index < messages.length - 1) {
     const next = messages[index + 1]
     if (next && next.content.some((block) => block.type === 'toolResultBlock')) {
-      return true
+      result.push(next)
     }
   }
 
-  return false
+  return result
 }
 
 /**

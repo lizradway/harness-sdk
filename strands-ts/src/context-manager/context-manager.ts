@@ -181,7 +181,6 @@ export class ContextManager implements Plugin {
     let startIndex = 1
 
     while (startIndex < messages.length - 1) {
-      const message = messages[startIndex]!
       if (!this._messageHasToolResultPairedWithPreceding(messages, startIndex)) break
       startIndex++
     }
