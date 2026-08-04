@@ -292,14 +292,21 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Collect eligible messages for message-level operations, respecting preserveRecent. */
+  /** Collect eligible messages for message-level operations, respecting preserveRecent and head-pin. */
   protected _getEligibleMessages(context: ContextState): Message[] {
     const { messages } = context
     if (this._preserveRecent > 0) {
-      return excludeRecentMatches(messages, this._target, this._preserveRecent, this._toolFilter, this._excludeFilter)
+      return excludeRecentMatches(
+        messages,
+        this._target,
+        this._preserveRecent,
+        this._toolFilter,
+        this._excludeFilter
+      ).filter((message) => messages.indexOf(message) > 0)
     }
-    return messages.filter((message) =>
-      messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter)
+    return messages.filter(
+      (message, index) =>
+        index > 0 && messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter)
     )
   }
 

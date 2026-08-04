@@ -414,6 +414,22 @@ describe('Offload message-level with role alternation', () => {
     }
   })
 
+  it('drop("userText") is not a no-op when messages[0] is the only front candidate', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.drop('userText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    const result = await strategy.apply(context)
+
+    expect(result).toBe(true)
+    expect(messages.length).toBeLessThan(4)
+  })
+
   it('message-level starts with user message after operation', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('q1')] }),
