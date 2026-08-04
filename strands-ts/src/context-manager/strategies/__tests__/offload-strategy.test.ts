@@ -310,6 +310,128 @@ describe('Offload builder', () => {
   })
 })
 
+describe('Offload message-level with role alternation', () => {
+  it('drop("assistantText") repairs alternation after removing assistant messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
+    }
+  })
+
+  it('drop("userText") repairs alternation after removing user messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('userText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
+    }
+  })
+
+  it('drop("*") message-level repairs alternation', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
+    }
+  })
+
+  it('drop("assistantText") message-level with tool pairs preserves tool pair integrity', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'bash', toolUseId: 'tu-1', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('result')] })],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
+    }
+
+    // Verify no orphaned tool results: every toolResult must have its toolUse present
+    const toolUseIds = new Set<string>()
+    const toolResultIds = new Set<string>()
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block instanceof ToolUseBlock) toolUseIds.add(block.toolUseId)
+        if (block instanceof ToolResultBlock) toolResultIds.add(block.toolUseId)
+      }
+    }
+    for (const resultId of toolResultIds) {
+      expect(toolUseIds.has(resultId)).toBe(true)
+    }
+  })
+
+  it('message-level starts with user message after operation', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    expect(messages[0]!.role).toBe('user')
+  })
+})
+
 describe('Offload with * target (fires on everything)', () => {
   it('Offload.drop("*") drops all content', async () => {
     const assistantMsg = new Message({
