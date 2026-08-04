@@ -878,61 +878,6 @@ describe('InterventionRegistry', () => {
   })
 
   describe('audit logging', () => {
-    it('calls onDecision with correct structure on deny', async () => {
-      const decisions: unknown[] = []
-      new InterventionRegistry([new DenyHandler()], hookRegistry, {
-        onDecision: (decision) => decisions.push(decision),
-      })
-
-      await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
-
-      expect(decisions).toHaveLength(1)
-      expect(decisions[0]).toMatchObject({
-        handler: 'deny-handler',
-        event: 'beforeToolCall',
-        action: 'deny',
-        reason: 'not authorized',
-      })
-      expect((decisions[0] as { timestamp: string }).timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    })
-
-    it('calls onDecision on proceed', async () => {
-      const decisions: unknown[] = []
-      new InterventionRegistry([new ProceedHandler()], hookRegistry, {
-        onDecision: (decision) => decisions.push(decision),
-      })
-
-      await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
-
-      expect(decisions).toHaveLength(1)
-      expect(decisions[0]).toMatchObject({
-        handler: 'proceed-handler',
-        event: 'beforeToolCall',
-        action: 'proceed',
-        reason: 'all good',
-      })
-    })
-
-    it('receives metadata when handler attaches it', async () => {
-      class MetadataHandler extends InterventionHandler {
-        readonly name = 'metadata-handler'
-        override beforeToolCall(): InterventionAction {
-          return { type: 'deny', reason: 'blocked', metadata: { principal: 'alice', tool: 'delete' } }
-        }
-      }
-
-      const decisions: unknown[] = []
-      new InterventionRegistry([new MetadataHandler()], hookRegistry, {
-        onDecision: (decision) => decisions.push(decision),
-      })
-
-      await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
-
-      expect(decisions[0]).toMatchObject({
-        metadata: { principal: 'alice', tool: 'delete' },
-      })
-    })
-
     it('emits logger.warn on deny with structured format', async () => {
       const { logger } = await import('../../logging/logger.js')
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
@@ -941,45 +886,57 @@ describe('InterventionRegistry', () => {
       await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('handler=<deny-handler>, event=<beforeToolCall>, decision=<deny>')
+        expect.stringContaining('handler=<deny-handler>, event=<beforeToolCall>, decision=<deny>, reason=<not authorized>')
       )
 
       warnSpy.mockRestore()
     })
 
-    it('does not crash when onDecision is not provided', async () => {
-      new InterventionRegistry([new DenyHandler()], hookRegistry)
-      await expect(hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())).resolves.not.toThrow()
-    })
+    it('includes metadata in warn log when handler attaches it', async () => {
+      class MetadataHandler extends InterventionHandler {
+        readonly name = 'metadata-handler'
+        override beforeToolCall(): InterventionAction {
+          return { type: 'deny', reason: 'blocked', metadata: { principal: 'alice', tool: 'delete' } }
+        }
+      }
 
-    it('emits decision for error-path deny', async () => {
-      const decisions: unknown[] = []
-      new InterventionRegistry([new ThrowingDenyHandler()], hookRegistry, {
-        onDecision: (decision) => decisions.push(decision),
-      })
+      const { logger } = await import('../../logging/logger.js')
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
+      new InterventionRegistry([new MetadataHandler()], hookRegistry)
       await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
 
-      expect(decisions).toHaveLength(1)
-      expect(decisions[0]).toMatchObject({
-        handler: 'throwing-deny',
-        event: 'beforeToolCall',
-        action: 'deny',
-        reason: 'Handler threw: handler crashed',
-      })
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('"principal":"alice"')
+      )
+
+      warnSpy.mockRestore()
     })
 
-    it('emits decisions for all handlers in order', async () => {
-      const decisions: unknown[] = []
-      new InterventionRegistry([new ProceedHandler(), new DenyHandler()], hookRegistry, {
-        onDecision: (decision) => decisions.push(decision),
-      })
+    it('does not emit logger.warn on proceed', async () => {
+      const { logger } = await import('../../logging/logger.js')
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
+      new InterventionRegistry([new ProceedHandler()], hookRegistry)
       await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
 
-      expect(decisions).toHaveLength(2)
-      expect((decisions[0] as { handler: string }).handler).toBe('proceed-handler')
-      expect((decisions[1] as { handler: string }).handler).toBe('deny-handler')
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('intervention denied'))
+
+      warnSpy.mockRestore()
+    })
+
+    it('emits logger.warn for error-path deny', async () => {
+      const { logger } = await import('../../logging/logger.js')
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      new InterventionRegistry([new ThrowingDenyHandler()], hookRegistry)
+      await hookRegistry.invokeCallbacks(makeBeforeToolCallEvent())
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('handler=<throwing-deny>, event=<beforeToolCall>, decision=<deny>')
+      )
+
+      warnSpy.mockRestore()
     })
   })
 })

@@ -19,32 +19,6 @@ import type { JSONValue } from '../types/json.js'
 type LifecycleMethod = 'beforeInvocation' | 'beforeToolCall' | 'afterToolCall' | 'beforeModelCall' | 'afterModelCall'
 
 /**
- * Structured audit record emitted for every intervention handler decision.
- */
-export interface InterventionDecision {
-  /** ISO 8601 timestamp of the decision. */
-  timestamp: string
-  /** Name of the handler that produced the decision. */
-  handler: string
-  /** Lifecycle event the decision was made on. */
-  event: LifecycleMethod
-  /** The action type returned by the handler. */
-  action: InterventionAction['type']
-  /** Reason for the decision (from deny/guide reason or confirm prompt). */
-  reason: string | undefined
-  /** Handler-specific structured context (e.g., principal, resource, policy). */
-  metadata: Record<string, unknown> | undefined
-}
-
-/**
- * Options for configuring the intervention registry.
- */
-export interface InterventionRegistryOptions {
-  /** Called after every handler decision for audit logging and monitoring. */
-  onDecision?: (decision: InterventionDecision) => void
-}
-
-/**
  * Bridges {@link InterventionHandler} instances and the Strands hook system.
  *
  * Registers one hook callback per lifecycle event type, then dispatches to
@@ -55,9 +29,8 @@ export interface InterventionRegistryOptions {
  */
 export class InterventionRegistry {
   private readonly _handlers: InterventionHandler[]
-  private readonly _onDecision: ((decision: InterventionDecision) => void) | undefined
 
-  constructor(handlers: InterventionHandler[], hookRegistry: HookRegistry, options?: InterventionRegistryOptions) {
+  constructor(handlers: InterventionHandler[], hookRegistry: HookRegistry) {
     const seen = new Set<string>()
     for (const h of handlers) {
       if (seen.has(h.name)) {
@@ -66,7 +39,6 @@ export class InterventionRegistry {
       seen.add(h.name)
     }
     this._handlers = handlers
-    this._onDecision = options?.onDecision
     this._registerHooks(hookRegistry)
   }
 
@@ -295,24 +267,12 @@ export class InterventionRegistry {
   }
 
   private _emitDecision(handlerName: string, method: LifecycleMethod, action: InterventionAction): void {
-    const reason = 'reason' in action ? action.reason : 'feedback' in action ? action.feedback : undefined
-    const metadata = 'metadata' in action ? (action.metadata as Record<string, unknown> | undefined) : undefined
-
     if (action.type === 'deny') {
+      const reason = action.reason
+      const metadata = action.metadata ? `, metadata=<${JSON.stringify(action.metadata)}>` : ''
       logger.warn(
-        `handler=<${handlerName}>, event=<${method}>, decision=<deny>, reason=<${reason}> | intervention denied`
+        `handler=<${handlerName}>, event=<${method}>, decision=<deny>, reason=<${reason}>${metadata} | intervention denied`
       )
-    }
-
-    if (this._onDecision) {
-      this._onDecision({
-        timestamp: new Date().toISOString(),
-        handler: handlerName,
-        event: method,
-        action: action.type,
-        reason,
-        metadata,
-      })
     }
   }
 
