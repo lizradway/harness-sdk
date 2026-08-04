@@ -30,7 +30,7 @@ export interface ContextStrategy {
  * State passed to strategies during apply().
  */
 export interface ContextState {
-  /** The agent's current message array (L0). Strategies mutate this in place. */
+  /** The agent's current message array (the context window). Strategies mutate this in place. */
   messages: import('../types/messages.js').Message[]
 
   /** The agent instance. */

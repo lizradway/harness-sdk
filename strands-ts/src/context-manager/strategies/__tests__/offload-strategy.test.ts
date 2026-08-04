@@ -218,7 +218,7 @@ describe('Offload builder', () => {
     expect(strategy.apply).toBeDefined()
   })
 
-  it('Offload.drop() drops tool result content from L0 entirely', async () => {
+  it('Offload.drop() drops tool result content from context window entirely', async () => {
     const largeText = 'x'.repeat(100)
     const messages = [makeToolResultMessage(largeText)]
     const strategy = Offload.drop('toolResults')
@@ -323,12 +323,12 @@ describe('Offload builder', () => {
   })
 
   it('Offload.summarize(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.summarize({ systemPrompt: 'summarize briefly' }).when({ utilization: 0.85 })
+    const strategy = Offload.summarize('*', { systemPrompt: 'summarize briefly' }).when({ utilization: 0.85 })
     expect(strategy.name).toBe('offload:summarize')
   })
 
   it('Offload.truncate(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.truncate({ previewTokens: 200 }).when({ threshold: 1000 })
+    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ threshold: 1000 })
     expect(strategy.name).toBe('offload:truncate')
   })
 })

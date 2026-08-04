@@ -4,10 +4,14 @@ import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { ContextState } from '../../types.js'
 
-vi.mock('../methods/summarize.js', () => ({
-  summarizeText: vi.fn(async (text: string) => `Summary of: ${text.slice(0, 20)}`),
-  summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
-}))
+vi.mock('../methods/summarize.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    summarizeText: vi.fn(async (text: string) => `Summary of: ${text.slice(0, 20)}`),
+    summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
+  }
+})
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({

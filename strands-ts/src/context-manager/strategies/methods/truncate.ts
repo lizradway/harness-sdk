@@ -61,25 +61,14 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
     return fullText
   }
 
-  let preview: string
-  if (previewMode === 'head') {
-    const headChars = Math.max(0, previewChars)
-    const head = headChars > 0 ? fullText.slice(0, headChars) : ''
-    const elided = totalChars - headChars
-    preview = `${head}\n\n[... ${elided.toLocaleString()} chars elided ...]`
-  } else if (previewMode === 'tail') {
-    const tailChars = Math.max(0, previewChars)
-    const tail = tailChars > 0 ? fullText.slice(-tailChars) : ''
-    const elided = totalChars - tailChars
-    preview = `[... ${elided.toLocaleString()} chars elided ...]\n\n${tail}`
-  } else {
-    const headChars = Math.max(0, Math.floor(previewChars * 0.6))
-    const tailChars = Math.max(0, previewChars - headChars)
-    const head = headChars > 0 ? fullText.slice(0, headChars) : ''
-    const tail = tailChars > 0 ? fullText.slice(-tailChars) : ''
-    const elided = totalChars - headChars - tailChars
-    preview = `${head}\n\n[... ${elided.toLocaleString()} chars elided ...]\n\n${tail}`
-  }
+  const headShare = { head: 1, tail: 0, headTail: 0.6 }[previewMode]
+  const headChars = Math.floor(previewChars * headShare)
+  const tailChars = previewChars - headChars
+  const head = fullText.slice(0, headChars)
+  const tail = tailChars > 0 ? fullText.slice(-tailChars) : ''
+  const elided = totalChars - headChars - tailChars
+  const marker = `[... ${elided.toLocaleString()} chars elided ...]`
+  const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
   const result =
     `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString()} tokens]\n\n` +

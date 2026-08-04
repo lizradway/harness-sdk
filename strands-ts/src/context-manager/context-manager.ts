@@ -10,11 +10,8 @@ import type { Message } from '../types/messages.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { logger } from '../logging/logger.js'
-import { warnOnce } from '../logging/warn-once.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { Offload } from './strategies/offload.js'
-
-const DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
 
 /**
  * Manages context reduction for an agent's conversation.
@@ -119,7 +116,7 @@ export class ContextManager implements Plugin {
     if (!this._agent) return
 
     const messages = this._agent.messages
-    const utilization = await this._estimateUtilization()
+    const utilization = await this._agent.model.estimateUtilization(messages)
 
     const strategyContext: ContextState = {
       messages,
@@ -135,20 +132,7 @@ export class ContextManager implements Plugin {
     }
   }
 
-  private async _estimateUtilization(): Promise<number> {
-    if (!this._agent) return 0
-    const model = this._agent.model
-    const config = model.getConfig()
-    if (config.contextWindowLimit === undefined) {
-      warnOnce(
-        logger,
-        `agentId=<${this._agentId}> | contextWindowLimit is not set on the model, using default of ${DEFAULT_CONTEXT_WINDOW_LIMIT} | set contextWindowLimit in your model config for accurate context management`
-      )
-    }
-    const limit = config.contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
-    const tokens = await model.countTokens(this._agent.messages)
-    return tokens / limit
-  }
+
 
   /**
    * Unconditional truncation: drop the oldest messages (preserving the first message
