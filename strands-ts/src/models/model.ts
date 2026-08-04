@@ -167,6 +167,7 @@ export interface CountTokensOptions {
    * Array of tool specifications to include in the count.
    */
   toolSpecs?: ToolSpec[]
+
 }
 
 /**
@@ -263,6 +264,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
    * for improved accuracy, falling back to `super.countTokens()` on API failure.
+   *
+   * When `options.heuristic` is true, the character-based estimate is returned directly
+   * without calling the provider's native tokenizer.
    *
    * @param messages - Array of conversation messages to count tokens for
    * @param options - Optional options containing system prompt and tool specs

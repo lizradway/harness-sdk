@@ -17,10 +17,33 @@ function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   })
 }
 
+function heuristicCountTokens(messages: Message[]): number {
+  let total = 0
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block instanceof TextBlock) {
+        total += Math.ceil(block.text.length / 4)
+      } else if (block instanceof ToolResultBlock) {
+        for (const content of block.content) {
+          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
+          else total += Math.ceil(JSON.stringify(content).length / 2)
+        }
+      } else {
+        total += Math.ceil(JSON.stringify(block).length / 2)
+      }
+    }
+  }
+  return total
+}
+
 function makeContext(messages: Message[], utilization = 0.5): ContextState {
+  const agent = createMockAgent({
+    messages,
+    extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } },
+  })
   return {
     messages,
-    agent: createMockAgent({ messages }),
+    agent,
     utilization,
   }
 }

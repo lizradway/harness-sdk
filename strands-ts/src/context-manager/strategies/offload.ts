@@ -44,8 +44,6 @@ import type { ContextStrategy, ContextState } from '../types.js'
 import {
   DROPPED_MARKER,
   SUMMARIZED_PREFIX,
-  estimateBlockTokens,
-  estimateTextBlockTokens,
   truncateToolResultBlock,
   truncateTextBlock,
   type TruncateConfig,
@@ -138,6 +136,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _preserveRecent: number
   protected readonly _toolFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
+  protected _baseAgent: LocalAgent | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     this._target = target
@@ -165,6 +164,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   init(agent: LocalAgent): void {
+    this._baseAgent = agent
     if (this._isMessageLevel) return
     if (this._preserveRecent > 0) return
     if (!this._shouldRegisterEagerHook()) return
@@ -176,6 +176,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   async apply(context: ContextState): Promise<boolean> {
+    if (!this._baseAgent) this._baseAgent = context.agent
     if (!this._shouldApply(context)) return false
 
     if (this._isMessageLevel) {
@@ -251,7 +252,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (!(block instanceof TextBlock)) continue
-      const tokens = estimateTextBlockTokens(block)
+      const tokens = await this._countBlockTokens(new Message({ role: message.role, content: [block] }))
       if (tokens <= threshold) continue
 
       const replacement = await this._replaceTextBlock(block, tokens, message)
@@ -280,7 +281,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
       )
         continue
 
-      const tokens = estimateBlockTokens(block)
+      const tokens = await this._countBlockTokens(new Message({ role: 'user', content: [block] }))
       if (tokens <= effectiveThreshold) continue
 
       const replacement = await this._replaceToolResultBlock(block, tokens)
@@ -308,6 +309,12 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
       (message, index) =>
         index > 0 && messageMatchesTarget(message, this._target, messages, this._toolFilter, this._excludeFilter)
     )
+  }
+
+  /** Count tokens for a single-block wrapper message using the model's countTokens. */
+  protected async _countBlockTokens(message: Message): Promise<number> {
+    if (!this._baseAgent) return 0
+    return this._baseAgent.model.countTokens([message])
   }
 
   /** Transform a text block. Return the replacement, or null to skip. */

@@ -28,29 +28,6 @@ export interface TruncateConfig {
 }
 
 /**
- * Estimates token count for all content in a tool result block.
- * Text blocks use character length; non-text blocks use their JSON serialization size.
- */
-export function estimateBlockTokens(block: ToolResultBlock): number {
-  let chars = 0
-  for (const content of block.content) {
-    if (content instanceof TextBlock) {
-      chars += content.text.length
-    } else {
-      chars += JSON.stringify(content.toJSON()).length
-    }
-  }
-  return Math.ceil(chars / CHARS_PER_TOKEN)
-}
-
-/**
- * Estimates token count for a text block.
- */
-export function estimateTextBlockTokens(block: TextBlock): number {
-  return Math.ceil(block.text.length / CHARS_PER_TOKEN)
-}
-
-/**
  * Extracts a text representation from a tool result block.
  * Text blocks contribute their text directly; non-text blocks contribute their JSON serialization.
  */
