@@ -10,7 +10,7 @@ import type { Message } from '../types/messages.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { logger } from '../logging/logger.js'
-import { adjustSplitPointForToolPairs } from '../conversation-manager/compression/context-compression.js'
+import { warnOnce } from '../logging/warn-once.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { Offload } from './strategies/offload.js'
 
@@ -139,6 +139,12 @@ export class ContextManager implements Plugin {
     if (!this._agent) return 0
     const model = this._agent.model
     const config = model.getConfig()
+    if (config.contextWindowLimit === undefined) {
+      warnOnce(
+        logger,
+        `agentId=<${this._agentId}> | contextWindowLimit is not set on the model, using default of ${DEFAULT_CONTEXT_WINDOW_LIMIT} | set contextWindowLimit in your model config for accurate context management`
+      )
+    }
     const limit = config.contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
     const tokens = await model.countTokens(this._agent.messages)
     return tokens / limit
@@ -157,15 +163,10 @@ export class ContextManager implements Plugin {
     const targetRemoval = Math.max(2, Math.floor(messages.length * 0.2))
     const targetSplitIndex = Math.min(startIndex + targetRemoval, messages.length - 1)
 
-    let validSplitIndex: number
-    try {
-      validSplitIndex = adjustSplitPointForToolPairs(messages, targetSplitIndex)
-    } catch {
-      logger.warn(`agentId=<${this._agentId}> | no valid split point found, skipping truncation`)
-      return
-    }
+    const validSplitIndex = findValidTrimPoint(messages, targetSplitIndex)
+    const splitIndex = validSplitIndex < messages.length ? validSplitIndex : targetSplitIndex
 
-    const removeCount = validSplitIndex - startIndex
+    const removeCount = splitIndex - startIndex
     if (removeCount <= 0) return
 
     messages.splice(startIndex, removeCount)
@@ -178,7 +179,7 @@ export class ContextManager implements Plugin {
    * in the preceding preserved messages.
    */
   private _findSafeStartIndex(messages: Message[]): number {
-    let startIndex = 1
+    let startIndex = 2
 
     while (startIndex < messages.length - 1) {
       if (!this._messageHasToolResultPairedWithPreceding(messages, startIndex)) break
@@ -207,4 +208,44 @@ export class ContextManager implements Plugin {
     }
     return false
   }
+}
+
+// --- Truncation helpers (inlined to avoid depending on conversation-manager) ---
+
+/**
+ * Finds a valid trim point: a user message that isn't an orphaned tool result.
+ * Returns `messages.length` if no valid point exists.
+ */
+function findValidTrimPoint(messages: Message[], startIndex: number): number {
+  let trimIndex = startIndex
+
+  while (trimIndex < messages.length) {
+    const message = messages[trimIndex]
+    if (!message) break
+
+    if (message.role !== 'user') {
+      trimIndex++
+      continue
+    }
+
+    const hasToolResult = message.content.some((block) => block.type === 'toolResultBlock')
+    if (hasToolResult) {
+      trimIndex++
+      continue
+    }
+
+    const hasToolUse = message.content.some((block) => block.type === 'toolUseBlock')
+    if (hasToolUse) {
+      const nextMessage = messages[trimIndex + 1]
+      const nextHasToolResult = nextMessage?.content.some((block) => block.type === 'toolResultBlock')
+      if (!nextHasToolResult) {
+        trimIndex++
+        continue
+      }
+    }
+
+    break
+  }
+
+  return trimIndex
 }
