@@ -343,6 +343,7 @@ class DropStrategy extends BaseOffloadStrategy {
     }
 
     if (removed > 0) {
+      repairAlternation(messages)
       logger.debug(`removed=<${removed}> | dropped messages from L0 (message-level)`)
     }
     return removed > 0
@@ -417,6 +418,7 @@ class TruncateStrategy extends BaseOffloadStrategy {
     }
 
     if (removed > 0) {
+      repairAlternation(messages)
       logger.debug(`removed=<${removed}> | truncated oldest messages from L0 (sliding window)`)
     }
     return removed > 0
@@ -536,6 +538,7 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     const clampedInsert = Math.min(insertIndex, messages.length)
     messages.splice(clampedInsert, 0, summaryMessage)
 
+    repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
     return true
   }
@@ -787,6 +790,28 @@ export const Offload: OffloadNamespace = {
       (c) => new SummarizeStrategy(target, summarizeConfig, c)
     )
   },
+}
+
+// --- Role alternation repair ---
+
+/**
+ * Merges consecutive same-role messages to restore the user/assistant alternation
+ * that Anthropic/Bedrock APIs require. Called after message-level operations that
+ * may leave gaps.
+ */
+function repairAlternation(messages: Message[]): void {
+  let writeIndex = 0
+  for (let readIndex = 0; readIndex < messages.length; readIndex++) {
+    const current = messages[readIndex]!
+    if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
+      const prev = messages[writeIndex - 1]!
+      ;(prev.content as ContentBlock[]).push(...current.content)
+    } else {
+      messages[writeIndex] = current
+      writeIndex++
+    }
+  }
+  messages.length = writeIndex
 }
 
 // --- Helpers ---
