@@ -8,7 +8,6 @@ vi.mock('../methods/summarize.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
-    summarizeText: vi.fn(async (text: string) => `Summary of: ${text.slice(0, 20)}`),
     summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
   }
 })

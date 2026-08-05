@@ -38,18 +38,7 @@ export interface SummarizeConfig {
 }
 
 /**
- * Summarizes arbitrary text into a shorter form via an LLM call.
- *
- * @returns The summarized text, or null if summarization failed.
- */
-export async function summarizeText(text: string, model: Model, config?: SummarizeConfig): Promise<string | null> {
-  const content = [new TextBlock(`<content>\n${text}\n</content>`)]
-  const result = await callSummarizer(content, model, config)
-  return result ?? null
-}
-
-/**
- * Summarizes multimodal content (text, images, JSON, etc.) via an LLM call.
+ * Summarizes content (text, images, JSON, etc.) via an LLM call.
  * Passes content blocks directly to the model so it can reason about all modalities.
  * If the model doesn't support multimodal input, retries with text-only blocks.
  *

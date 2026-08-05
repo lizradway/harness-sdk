@@ -51,7 +51,6 @@ import {
 import {
   flattenMessagesToContent,
   summarizeContent,
-  summarizeText,
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from './methods/summarize.js'
@@ -456,7 +455,7 @@ class SummarizeStrategy extends BaseOffloadStrategy {
       })
     }
 
-    const summary = await summarizeText(block.text, this._model, this._config)
+    const summary = await summarizeContent([new TextBlock(`<content>\n${block.text}\n</content>`)], this._model, this._config)
     if (!summary) return null
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
