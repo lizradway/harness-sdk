@@ -40,10 +40,12 @@ import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import type { LocalAgent } from '../../types/agent.js'
+import type { Stash } from '../stash.js'
 import type { ContextStrategy, ContextState } from '../types.js'
 import {
   DROPPED_MARKER,
   SUMMARIZED_PREFIX,
+  extractBlockText,
   truncateToolResultBlock,
   truncateTextBlock,
   type TruncateConfig,
@@ -142,6 +144,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _toolFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _baseAgent: LocalAgent | undefined
+  protected _stash: Stash | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     this._target = target
@@ -159,8 +162,9 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._threshold === undefined && this._utilization !== undefined
   }
 
-  init(agent: LocalAgent): void {
+  init(agent: LocalAgent, stash?: Stash): void {
     this._baseAgent = agent
+    this._stash = stash
     if (this._isMessageLevel) return
     if (this._preserveRecent > 0) return
     agent.addHook(MessageAddedEvent, async (event) => {
@@ -171,6 +175,7 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
   async apply(context: ContextState): Promise<boolean> {
     if (!this._baseAgent) this._baseAgent = context.agent
+    if (context.stash) this._stash = context.stash
     if (this._utilization !== undefined && context.utilization < this._utilization) return false
 
     if (this._isMessageLevel) {
@@ -234,7 +239,8 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await this._baseAgent!.model.countTokens([new Message({ role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const replacement = await this._replaceBlock(block, tokens, message)
+      const stashRef = block instanceof ToolResultBlock ? await this._stashBlock(block) : undefined
+      const replacement = await this._replaceBlock(block, tokens, message, stashRef)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -268,11 +274,28 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     )
   }
 
+  /**
+   * Persist the original tool result content to L1 stash before replacing.
+   * Returns the stash reference, or undefined if no stash is configured.
+   */
+  private async _stashBlock(block: ToolResultBlock): Promise<string | undefined> {
+    if (!this._stash) return undefined
+    const text = extractBlockText(block)
+    if (!text) return undefined
+    try {
+      return await this._stash.store(block.toolUseId, 0, new TextEncoder().encode(text), 'text/plain')
+    } catch (error) {
+      logger.warn(`toolUseId=<${block.toolUseId}>, error=<${error}> | failed to stash content, continuing without`)
+      return undefined
+    }
+  }
+
   /** Transform a block. Return the replacement, or null to skip. */
   protected abstract _replaceBlock(
     block: TextBlock | ToolResultBlock,
     tokens: number,
-    message: Message
+    message: Message,
+    stashRef?: string
   ): Promise<ContentBlock | null>
 }
 
@@ -284,14 +307,16 @@ class DropStrategy extends BaseOffloadStrategy {
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
     _tokens: number,
-    message: Message
+    message: Message,
+    stashRef?: string
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
+      const marker = stashRef ? `${DROPPED_MARKER} ref: ${stashRef}` : DROPPED_MARKER
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [new TextBlock(DROPPED_MARKER)],
+        content: [new TextBlock(marker)],
       })
     }
     logger.debug(`trackingId=<${message.trackingId}> | dropped text block from context window`)
@@ -328,11 +353,16 @@ class TruncateStrategy extends BaseOffloadStrategy {
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
     tokens: number,
-    message: Message
+    message: Message,
+    stashRef?: string
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return truncateToolResultBlock(block, this._truncateConfig)
+      const truncated = truncateToolResultBlock(block, this._truncateConfig)
+      if (stashRef && truncated !== block) {
+        return appendStashRef(truncated, stashRef)
+      }
+      return truncated
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
     return truncateTextBlock(block, this._truncateConfig)
@@ -352,10 +382,11 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     this._config = config ?? {}
   }
 
-  override init(agent: LocalAgent): void {
+  override init(agent: LocalAgent, stash?: Stash): void {
     this._baseAgent = agent
+    this._stash = stash
     if (this._utilization !== undefined) return
-    super.init(agent)
+    super.init(agent, stash)
   }
 
   protected override async _transformBlocks(
@@ -439,7 +470,8 @@ class SummarizeStrategy extends BaseOffloadStrategy {
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
     tokens: number,
-    message: Message
+    message: Message,
+    stashRef?: string
   ): Promise<ContentBlock | null> {
     if (!this._model) return null
 
@@ -448,10 +480,11 @@ class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
+      const refSuffix = stashRef ? ` ref: ${stashRef}` : ''
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens]\n\n${summary}`)],
+        content: [new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${refSuffix}]\n\n${summary}`)],
       })
     }
 
@@ -664,6 +697,25 @@ function repairAlternation(messages: Message[]): void {
 }
 
 // --- Helpers ---
+
+/**
+ * Appends a stash reference line to the first TextBlock in a ToolResultBlock.
+ */
+function appendStashRef(block: ToolResultBlock, stashRef: string): ToolResultBlock {
+  const content = [...block.content]
+  for (let index = 0; index < content.length; index++) {
+    const item = content[index]!
+    if (item instanceof TextBlock) {
+      content[index] = new TextBlock(`${item.text}\n\n[Stashed: ref=${stashRef}]`)
+      return new ToolResultBlock({
+        toolUseId: block.toolUseId,
+        status: block.status,
+        content,
+      })
+    }
+  }
+  return block
+}
 
 /**
  * Resolves the tool name for a ToolResultBlock by finding the corresponding ToolUseBlock
