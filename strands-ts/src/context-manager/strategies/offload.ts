@@ -1,7 +1,7 @@
 /**
  * Builder API for offload strategies.
  *
- * Offload strategies reduce content in the context window (the context window).
+ * Offload strategies reduce content in the context window.
  * The builder composes a target, a reduction method (truncate, drop, or summarize),
  * and optional conditions into a strategy that implements `ContextStrategy`.
  *
@@ -103,10 +103,8 @@ export interface OffloadStrategyBuilder extends ContextStrategy {
 
 // --- Shared helpers ---
 
-function finiteOrDefault(value: number | undefined, fallback: number): number
-function finiteOrDefault(value: number | undefined, fallback: undefined): number | undefined
-function finiteOrDefault(value: number | undefined, fallback: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback
+function finiteOrUndefined(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined
 }
 
 /**
@@ -148,9 +146,9 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     this._target = target
-    this._threshold = finiteOrDefault(conditions?.threshold, undefined)
-    this._utilization = finiteOrDefault(conditions?.utilization, undefined)
-    this._preserveRecent = Math.floor(finiteOrDefault(conditions?.preserveRecent, 0))
+    this._threshold = finiteOrUndefined(conditions?.threshold)
+    this._utilization = finiteOrUndefined(conditions?.utilization)
+    this._preserveRecent = Math.floor(finiteOrUndefined(conditions?.preserveRecent) ?? 0)
 
     const resolved = resolveToolFilter(target)
     this._toolFilter = resolved.include
@@ -202,12 +200,21 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Message-level execution: act on the matched set as a whole. Subclasses implement. */
-  protected abstract _applyPerMessage(context: ContextState): Promise<boolean>
+  /** Message-level execution: remove oldest 30% of eligible messages with pair safety. */
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    const { messages } = context
+    if (messages.length <= 1) return false
 
-  /** Override to add extra gates (e.g. model availability for summarize). */
+    const eligible = this._getEligibleMessages(context)
+    if (eligible.length === 0) return false
 
+    const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
+    const toRemove = eligible.slice(0, targetRemoval)
 
+    const removed = spliceWithPairs(messages, toRemove)
+    if (removed > 0) repairAlternation(messages)
+    return removed > 0
+  }
 
   /** Process eligible blocks in a message. */
   protected async _transformBlocks(message: Message, messages: Message[], threshold?: number): Promise<boolean> {
@@ -218,24 +225,20 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
       if (block instanceof TextBlock) {
         if (!this._targetIncludesText(message)) continue
-        const tokens = await this._baseAgent!.model.countTokens([new Message({ role: message.role, content: [block] })])
-        if (tokens <= effectiveThreshold) continue
-
-        const replacement = await this._replaceBlock(block, tokens, message)
-        if (replacement && replacement !== block) {
-          ;(message.content as unknown[])[blockIndex] = replacement
-          acted = true
-        }
       } else if (block instanceof ToolResultBlock) {
         if (this._target !== undefined && !matchesToolTarget(block, this._target, messages, this._toolFilter, this._excludeFilter)) continue
-        const tokens = await this._baseAgent!.model.countTokens([new Message({ role: 'user', content: [block] })])
-        if (tokens <= effectiveThreshold) continue
+      } else {
+        continue
+      }
 
-        const replacement = await this._replaceBlock(block, tokens, message)
-        if (replacement && replacement !== block) {
-          ;(message.content as unknown[])[blockIndex] = replacement
-          acted = true
-        }
+      const role = block instanceof ToolResultBlock ? 'user' : message.role
+      const tokens = await this._baseAgent!.model.countTokens([new Message({ role, content: [block] })])
+      if (tokens <= effectiveThreshold) continue
+
+      const replacement = await this._replaceBlock(block, tokens, message)
+      if (replacement && replacement !== block) {
+        ;(message.content as unknown[])[blockIndex] = replacement
+        acted = true
       }
     }
     return acted
@@ -266,7 +269,6 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     )
   }
 
-
   /** Transform a block. Return the replacement, or null to skip. */
   protected abstract _replaceBlock(
     block: TextBlock | ToolResultBlock,
@@ -279,24 +281,6 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 
 class DropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
-
-  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
-
-    const eligible = this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
-    const toRemove = eligible.slice(0, targetRemoval)
-
-    const removed = spliceWithPairs(messages, toRemove)
-    if (removed > 0) {
-      repairAlternation(messages)
-      logger.debug(`removed=<${removed}> | dropped messages from context window (message-level)`)
-    }
-    return removed > 0
-  }
 
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
@@ -342,24 +326,6 @@ class TruncateStrategy extends BaseOffloadStrategy {
     }
   }
 
-  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
-
-    const eligible = this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
-    const toRemove = eligible.slice(0, targetRemoval)
-
-    const removed = spliceWithPairs(messages, toRemove)
-    if (removed > 0) {
-      repairAlternation(messages)
-      logger.debug(`removed=<${removed}> | truncated oldest messages from context window (sliding window)`)
-    }
-    return removed > 0
-  }
-
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
     tokens: number,
@@ -381,7 +347,6 @@ class SummarizeStrategy extends BaseOffloadStrategy {
 
   private readonly _config: SummarizeConfig
   private _model: Model | undefined
-  private _agent: LocalAgent | undefined
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
     super(target, conditions)
@@ -389,7 +354,6 @@ class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   override init(agent: LocalAgent): void {
-    this._agent = agent
     this._baseAgent = agent
     if (this._utilization !== undefined) return
     super.init(agent)
@@ -400,8 +364,8 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     messages: Message[],
     threshold?: number
   ): Promise<boolean> {
-    if (!this._model && this._agent) {
-      this._model = this._resolveModel(this._agent)
+    if (!this._model && this._baseAgent) {
+      this._model = this._resolveModel(this._baseAgent)
     }
     return super._transformBlocks(message, messages, threshold)
   }
@@ -624,7 +588,6 @@ function wrapAsBuilder(
     },
   }
 }
-
 
 /**
  * Offload strategy builder namespace.
