@@ -116,7 +116,8 @@ export class ContextManager implements Plugin {
     if (!this._agent) return
 
     const messages = this._agent.messages
-    const utilization = await this._agent.model.estimateUtilization(messages)
+    const inputTokens = await this._agent.model.countTokens(messages)
+    const utilization = this._agent.model.estimateUtilization(inputTokens)
 
     const strategyContext: ContextState = {
       messages,
