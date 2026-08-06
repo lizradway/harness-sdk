@@ -3,7 +3,6 @@ import { proceed, deny } from '../../interventions/actions.js'
 import type { InterventionAction } from '../../interventions/actions.js'
 import type { BeforeToolCallEvent, AfterToolCallEvent } from '../../hooks/events.js'
 import type { OnError } from '../../interventions/handler.js'
-import type { Awaitable } from '../../interventions/handler.js'
 import type { Proceed, Transform } from '../../interventions/actions.js'
 
 /**
@@ -71,13 +70,64 @@ export interface BudgetConstraint {
 }
 
 /**
+ * Evidence accumulated for a candidate constraint before it can enforce.
+ */
+export interface ConstraintEvidence {
+  failures: number
+  successes: number
+  overrides: number
+}
+
+/**
+ * A constraint with its evidence and enforcement status.
+ */
+export interface ConstraintRecord {
+  constraint: Constraint
+  evidence: ConstraintEvidence
+  status: 'candidate' | 'enforcing' | 'advisory' | 'retired'
+  source: 'authored' | 'discovered'
+}
+
+/**
+ * Storage interface for persisting discovered constraints across agents.
+ */
+export interface VigilStorage {
+  load(): Promise<ConstraintRecord[]>
+  save(records: ConstraintRecord[]): Promise<void>
+}
+
+/**
+ * In-memory storage for single-process use. Does not survive restarts.
+ */
+export class InMemoryVigilStorage implements VigilStorage {
+  private _records: ConstraintRecord[] = []
+
+  async load(): Promise<ConstraintRecord[]> {
+    return [...this._records]
+  }
+
+  async save(records: ConstraintRecord[]): Promise<void> {
+    this._records = [...records]
+  }
+}
+
+/**
  * Configuration for the {@link Vigil} intervention handler.
  *
  * @see {@link https://github.com/dogwood-policy/dogwood | Dogwood Policy Language}
  */
 export interface VigilConfig {
   /** Temporal constraints to enforce, in compiled typed JSON form. */
-  constraints: Constraint[]
+  constraints?: Constraint[]
+
+  /** Enable constraint discovery from observed failure patterns. */
+  discover?: boolean
+
+  /** Minimum failure count before a discovered constraint can enforce. Default: 3. */
+  minEvidence?: number
+
+  /** Storage backend for persisting discovered constraints across agents. */
+  storage?: VigilStorage
 
   /**
    * Error handling: `'throw'` (default), `'deny'` (fail-closed), `'proceed'` (fail-open).
@@ -87,8 +137,6 @@ export interface VigilConfig {
 
 /**
  * Execution trajectory tracked during a single agent invocation.
- * Records completed tools, call counts, failed tools, and per-tool input hashes
- * for loop detection.
  *
  * @internal
  */
@@ -100,25 +148,44 @@ interface Trajectory {
 }
 
 /**
+ * A single observation of a tool call outcome.
+ *
+ * @internal
+ */
+interface Observation {
+  tool: string
+  inputHash: string
+  success: boolean
+  precedingTools: string[]
+}
+
+/**
  * Vigil: Dogwood temporal policy intervention handler.
  *
  * Evaluates compiled Dogwood temporal constraints against the agent's execution
  * trajectory on every `beforeToolCall`. Records tool outcomes on `afterToolCall`
  * to advance the trajectory state.
  *
- * Constraints evaluate as set membership checks and counter comparisons (microseconds).
- * No LLM in the enforcement path.
+ * When `discover: true`, the handler observes failure patterns and discovers new
+ * constraints automatically. Discovered constraints enforce within the same session
+ * once evidence thresholds are met.
  *
  * @see {@link https://github.com/dogwood-policy/dogwood | Dogwood Policy Language}
  *
  * @example
  * ```typescript
+ * // Enforcement only (authored constraints)
  * const vigil = new Vigil({
  *   constraints: [
  *     { type: 'requires', tool: 'charge', condition: 'authenticate' },
  *     { type: 'budget', tool: 'charge', maxCalls: 5 },
- *     { type: 'cascade', trigger: 'deploy', blocks: ['promote'] },
  *   ],
+ * })
+ *
+ * // With discovery enabled
+ * const vigil = new Vigil({
+ *   discover: true,
+ *   storage: new InMemoryVigilStorage(),
  * })
  *
  * const agent = new Agent({
@@ -131,22 +198,40 @@ export class Vigil extends InterventionHandler {
   readonly name = 'vigil'
   override readonly onError: OnError
 
-  private readonly _constraints: Constraint[]
+  private readonly _records: ConstraintRecord[]
+  private readonly _discover: boolean
+  private readonly _minEvidence: number
+  private readonly _storage: VigilStorage | undefined
   private _trajectory: Trajectory
+  private readonly _observations: Observation[] = []
+  private readonly _toolSequence: string[] = []
+  private _loaded = false
 
   constructor(config: VigilConfig) {
     super()
-    this._constraints = config.constraints
     this.onError = config.onError ?? 'throw'
+    this._discover = config.discover ?? false
+    this._minEvidence = config.minEvidence ?? 3
+    this._storage = config.storage
     this._trajectory = createTrajectory()
+
+    this._records = (config.constraints ?? []).map((constraint) => ({
+      constraint,
+      evidence: { failures: 0, successes: 0, overrides: 0 },
+      status: 'enforcing' as const,
+      source: 'authored' as const,
+    }))
   }
 
-  override beforeToolCall(event: BeforeToolCallEvent): InterventionAction {
+  override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
+    await this._ensureLoaded()
+
     const toolName = event.toolUse.name
     const inputHash = hashInput(event.toolUse.input)
 
-    for (const constraint of this._constraints) {
-      const violation = this._evaluate(constraint, toolName, inputHash)
+    for (const record of this._records) {
+      if (record.status !== 'enforcing') continue
+      const violation = this._evaluate(record.constraint, toolName, inputHash)
       if (violation) {
         return deny(violation)
       }
@@ -155,11 +240,12 @@ export class Vigil extends InterventionHandler {
     return proceed()
   }
 
-  override afterToolCall(event: AfterToolCallEvent): Awaitable<Proceed | Transform> {
+  override async afterToolCall(event: AfterToolCallEvent): Promise<Proceed | Transform> {
     const toolName = event.toolUse.name
     const inputHash = hashInput(event.toolUse.input)
+    const failed = !!(event.error || event.result.status === 'error')
 
-    if (event.error || event.result.status === 'error') {
+    if (failed) {
       this._trajectory.failed.add(toolName)
     } else {
       this._trajectory.completed.add(toolName)
@@ -173,17 +259,214 @@ export class Vigil extends InterventionHandler {
     toolInputs.set(inputHash, repeatCount)
     this._trajectory.inputHashes.set(toolName, toolInputs)
 
+    if (this._discover) {
+      this._observations.push({
+        tool: toolName,
+        inputHash,
+        success: !failed,
+        precedingTools: [...this._toolSequence],
+      })
+      this._toolSequence.push(toolName)
+      this._detectPatterns(toolName, failed)
+    }
+
     return proceed()
   }
 
-  /** Returns the currently enforced constraints. */
-  getConstraints(): ReadonlyArray<Constraint> {
-    return this._constraints
+  /** Returns all constraint records (authored + discovered). */
+  getConstraintRecords(): ReadonlyArray<ConstraintRecord> {
+    return this._records
+  }
+
+  /** Returns only actively enforcing constraints. */
+  getEnforcingConstraints(): ReadonlyArray<ConstraintRecord> {
+    return this._records.filter((record) => record.status === 'enforcing')
   }
 
   /** Resets the trajectory state. Call between invocations if reusing the handler. */
   resetTrajectory(): void {
     this._trajectory = createTrajectory()
+    this._toolSequence.length = 0
+  }
+
+  /** Persists current constraint records to storage. */
+  async persist(): Promise<void> {
+    if (this._storage) {
+      await this._storage.save([...this._records])
+    }
+  }
+
+  private async _ensureLoaded(): Promise<void> {
+    if (this._loaded || !this._storage) return
+    this._loaded = true
+    const stored = await this._storage.load()
+    for (const record of stored) {
+      if (!this._hasConstraint(record.constraint)) {
+        this._records.push(record)
+      }
+    }
+  }
+
+  private _hasConstraint(constraint: Constraint): boolean {
+    return this._records.some((record) => constraintKey(record.constraint) === constraintKey(constraint))
+  }
+
+  private _detectPatterns(toolName: string, failed: boolean): void {
+    if (failed) {
+      this._detectCascadeCandidate(toolName)
+    } else {
+      this._detectPrerequisiteFromSuccess(toolName)
+    }
+    this._detectBudgetCandidate(toolName)
+    this._detectLoopCandidate(toolName)
+  }
+
+  private _detectPrerequisiteFromSuccess(successTool: string): void {
+    const failureObs = this._observations.filter(
+      (obs) => obs.tool === successTool && !obs.success
+    )
+    const successObs = this._observations.filter(
+      (obs) => obs.tool === successTool && obs.success
+    )
+
+    if (failureObs.length < this._minEvidence || successObs.length === 0) return
+
+    const potentialPrereqs = new Set<string>()
+    for (const success of successObs) {
+      for (const preceding of success.precedingTools) {
+        if (preceding !== successTool) {
+          potentialPrereqs.add(preceding)
+        }
+      }
+    }
+
+    for (const prereq of potentialPrereqs) {
+      const failuresWithout = failureObs.filter(
+        (obs) => !obs.precedingTools.includes(prereq)
+      ).length
+      const successesWith = successObs.filter(
+        (obs) => obs.precedingTools.includes(prereq)
+      ).length
+
+      if (failuresWithout >= this._minEvidence && successesWith >= 1) {
+        this._promoteConstraint({
+          type: 'requires',
+          tool: successTool,
+          condition: prereq,
+        }, { failures: failuresWithout, successes: successesWith, overrides: 0 })
+      }
+    }
+  }
+
+  private _detectCascadeCandidate(failedTool: string): void {
+    const recentFailures = this._observations
+      .filter((obs) => !obs.success && obs.tool !== failedTool)
+      .map((obs) => obs.tool)
+
+    const precedingFailure = [...new Set(recentFailures)].find((trigger) => {
+      const triggerObs = this._observations.filter(
+        (obs) => obs.tool === trigger && !obs.success
+      )
+      const postTriggerFailures = this._observations.filter(
+        (obs) => obs.tool === failedTool && !obs.success &&
+        obs.precedingTools.some(() => {
+          const triggerIdx = this._toolSequence.lastIndexOf(trigger)
+          return triggerIdx >= 0
+        })
+      )
+      return triggerObs.length >= 1 && postTriggerFailures.length >= this._minEvidence
+    })
+
+    if (!precedingFailure) return
+
+    const key = `cascade:${precedingFailure}:${failedTool}`
+    if (this._records.some((record) => constraintKey(record.constraint) === key)) return
+
+    const existing = this._records.find(
+      (record) => record.constraint.type === 'cascade' && record.constraint.trigger === precedingFailure
+    )
+    if (existing && existing.constraint.type === 'cascade') {
+      if (!existing.constraint.blocks.includes(failedTool)) {
+        existing.constraint.blocks.push(failedTool)
+      }
+    }
+  }
+
+  private _detectBudgetCandidate(toolName: string): void {
+    const toolObs = this._observations.filter((obs) => obs.tool === toolName)
+    const failures = toolObs.filter((obs) => !obs.success)
+    const successes = toolObs.filter((obs) => obs.success)
+
+    if (failures.length < this._minEvidence || successes.length === 0) return
+
+    const successCounts = successes.map((_, index) => index + 1)
+    const maxSuccessCount = Math.max(...successCounts, 0)
+
+    if (maxSuccessCount === 0) return
+
+    const failuresAfterMax = failures.filter((failObs) => {
+      const failIdx = toolObs.indexOf(failObs)
+      const callNumber = failIdx + 1
+      return callNumber > maxSuccessCount
+    })
+
+    if (failuresAfterMax.length < this._minEvidence) return
+
+    const budgetConstraint: BudgetConstraint = {
+      type: 'budget',
+      tool: toolName,
+      maxCalls: maxSuccessCount,
+    }
+
+    if (!this._hasConstraint(budgetConstraint)) {
+      this._promoteConstraint(budgetConstraint, {
+        failures: failuresAfterMax.length,
+        successes: successes.length,
+        overrides: 0,
+      })
+    }
+  }
+
+  private _detectLoopCandidate(toolName: string): void {
+    const toolObs = this._observations.filter((obs) => obs.tool === toolName)
+
+    const inputCounts = new Map<string, { total: number; failures: number }>()
+    for (const obs of toolObs) {
+      const entry = inputCounts.get(obs.inputHash) ?? { total: 0, failures: 0 }
+      entry.total++
+      if (!obs.success) entry.failures++
+      inputCounts.set(obs.inputHash, entry)
+    }
+
+    for (const [, counts] of inputCounts) {
+      if (counts.failures >= this._minEvidence && counts.total > counts.failures) {
+        const maxRepeats = counts.total - counts.failures
+        const loopConstraint: LoopConstraint = {
+          type: 'loop',
+          tool: toolName,
+          maxRepeats,
+        }
+        if (!this._hasConstraint(loopConstraint)) {
+          this._promoteConstraint(loopConstraint, {
+            failures: counts.failures,
+            successes: counts.total - counts.failures,
+            overrides: 0,
+          })
+        }
+      }
+    }
+  }
+
+  private _promoteConstraint(constraint: Constraint, evidence: ConstraintEvidence): void {
+    if (this._hasConstraint(constraint)) return
+
+    const hasConfirmation = evidence.successes >= 1
+    this._records.push({
+      constraint,
+      evidence,
+      status: hasConfirmation ? 'enforcing' : 'candidate',
+      source: 'discovered',
+    })
   }
 
   private _evaluate(constraint: Constraint, toolName: string, inputHash: string): string | undefined {
@@ -241,4 +524,19 @@ function createTrajectory(): Trajectory {
 
 function hashInput(input: unknown): string {
   return JSON.stringify(input ?? {})
+}
+
+function constraintKey(constraint: Constraint): string {
+  switch (constraint.type) {
+    case 'forbid':
+      return `forbid:${constraint.tool}`
+    case 'requires':
+      return `requires:${constraint.tool}:${constraint.condition}`
+    case 'loop':
+      return `loop:${constraint.tool}:${constraint.maxRepeats}`
+    case 'cascade':
+      return `cascade:${constraint.trigger}:${constraint.blocks.join(',')}`
+    case 'budget':
+      return `budget:${constraint.tool}:${constraint.maxCalls}`
+  }
 }

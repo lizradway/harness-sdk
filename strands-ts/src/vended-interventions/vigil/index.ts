@@ -1,7 +1,10 @@
-export { Vigil } from './vigil.js'
+export { Vigil, InMemoryVigilStorage } from './vigil.js'
 export type {
   VigilConfig,
+  VigilStorage,
   Constraint,
+  ConstraintRecord,
+  ConstraintEvidence,
   ForbidConstraint,
   RequiresConstraint,
   LoopConstraint,
