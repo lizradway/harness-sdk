@@ -132,6 +132,10 @@
       "types": "./dist/src/vended-interventions/lean/index.d.ts",
       "default": "./dist/src/vended-interventions/lean/index.js"
     },
+    "./vended-interventions/vigil": {
+      "types": "./dist/src/vended-interventions/vigil/index.d.ts",
+      "default": "./dist/src/vended-interventions/vigil/index.js"
+    },
     "./vended-interventions/contracts": {
       "types": "./dist/src/vended-interventions/contracts/index.d.ts",
       "default": "./dist/src/vended-interventions/contracts/index.js"
