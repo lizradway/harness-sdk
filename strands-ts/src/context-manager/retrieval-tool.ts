@@ -41,9 +41,10 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
   return tool({
     name: RETRIEVAL_TOOL_NAME,
     description:
-      'Retrieve content that was offloaded from context to save space.\n\n' +
-      'When a tool result was too large, it was replaced with a preview and a reference key. ' +
-      'Use this tool with that reference to access the original content.\n\n' +
+      'Retrieve content that was offloaded from context.\n\n' +
+      'When content is offloaded (truncated, dropped, or summarized), the original is ' +
+      'persisted and a reference key is left in its place. Use this tool with that ' +
+      'reference to access the original content.\n\n' +
       'Options:\n' +
       '  - pattern: regex/keyword to find matching lines with context\n' +
       '  - line_range: { start, end } to read a specific span\n' +
