@@ -1,5 +1,7 @@
 # Trellis: Temporal Constraint Mining from Agent Execution
 
+<img src="assets/trellis.png" width="300" alt="A wooden trellis with climbing plants" />
+
 **Status**: Proposed
 
 **Date**: 2026-07-29
