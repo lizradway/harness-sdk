@@ -164,7 +164,18 @@ A single `InterventionHandler` with two responsibilities:
 | **Cascades** | When A fails, B always fails after | `forbid ... when temporal { formerly A::resolution{error} }` | `{ type: 'cascade', trigger, blocks }` |
 | **Budgets** | Tool exceeds max calls | `forbid ... when temporal { count(...) >= N }` | `{ type: 'budget', tool, maxCalls }` |
 
-Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
+Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. The temporal observation stream is what enables mining *all* constraint types — it provides the data to distinguish "always fails" (stateless) from "fails without X" (temporal). Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
+
+**Future mining targets** (not yet implemented):
+
+| Pattern | Signal | Dogwood policy | Temporal? |
+|---------|--------|----------------|-----------|
+| **Input-value** | Tool fails when `amount > N` | `forbid ... when context.input.amount > N` | No — Cedar `when` clause |
+| **Resource-specific** | Tool fails on resource Y but succeeds on others | `forbid(principal, action, Resource::"Y")` | No — Cedar resource scope |
+| **Temporal + value** | Tool fails after N calls *with same input* | `forbid ... when temporal { count(same input) >= N }` | Yes — already `loop` type |
+| **Sequence** | Tool C fails unless A then B in order | `forbid ... unless temporal { formerly B after formerly A }` | Yes — ordered `formerly` |
+
+The temporal awareness is the *mechanism* that enables mining — it sees ordering, counts, and causal relationships — but the constraints it produces span the full Dogwood/Cedar expressiveness, from stateless authz to multi-step temporal ordering.
 
 ### The mining algorithm
 
