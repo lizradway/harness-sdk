@@ -13,7 +13,7 @@
 
 | Term | Definition |
 |------|-----------|
-| **Trellis** | A wooden framework that guides growth. Like a garden trellis shapes what grows through it, Trellis shapes agent behavior by mining constraints from execution and enforcing them deterministically. The name connects the Cedar/Dogwood lineage (it's made of wood), the growth metaphor (constraints grow from observed failures), and the structural guidance role (shapes without killing). |
+| **Trellis** | A wooden framework that guides plant growth. |
 | **Constraint mining** | Discovering temporal constraints from observed execution patterns — the same technique as Declare mining (process mining, Maggi et al. 2012) applied to agent tool calls instead of business process events. |
 | **Intervention Handler** | The Strands SDK's first-class control primitive (design 0007). Intercepts lifecycle events, evaluates against rules, returns Proceed/Deny/Guide/Transform/Confirm. |
 | **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. The enforcement language for mined constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
