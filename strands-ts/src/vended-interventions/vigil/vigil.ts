@@ -117,16 +117,19 @@ export class InMemoryVigilStorage implements VigilStorage {
  * @see {@link https://github.com/dogwood-policy/dogwood | Dogwood Policy Language}
  */
 export interface VigilConfig {
-  /** Temporal constraints to enforce, in compiled typed JSON form. */
-  constraints?: Constraint[]
+  /** Dogwood policy text — the authoring surface for temporal constraints. Requires a Dogwood parser. */
+  policies?: string
 
-  /** Enable constraint discovery from observed failure patterns. */
+  /** Compiled constraints in typed JSON form — programmatic escape hatch when a parser isn't available. */
+  compiledConstraints?: Constraint[]
+
+  /** Enable constraint mining from observed failure patterns. */
   discover?: boolean
 
-  /** Minimum failure count before a discovered constraint can enforce. Default: 3. */
+  /** Minimum failure count before a mined constraint can enforce. Default: 3. */
   minEvidence?: number
 
-  /** Storage backend for persisting discovered constraints across agents. */
+  /** Storage backend for persisting mined constraints across agents. */
   storage?: VigilStorage
 
   /**
@@ -215,7 +218,14 @@ export class Vigil extends InterventionHandler {
     this._storage = config.storage
     this._trajectory = createTrajectory()
 
-    this._records = (config.constraints ?? []).map((constraint) => ({
+    if (config.policies) {
+      throw new Error(
+        'Dogwood policy text requires a parser (WASM module). ' +
+        'Use compiledConstraints for now, or provide a parser when available.'
+      )
+    }
+
+    this._records = (config.compiledConstraints ?? []).map((constraint) => ({
       constraint,
       evidence: { failures: 0, successes: 0, overrides: 0 },
       status: 'enforcing' as const,

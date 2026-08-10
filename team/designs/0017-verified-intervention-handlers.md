@@ -114,12 +114,15 @@ const vigil = new Vigil({
   storage: new DynamoDBStorage({ table: 'agent-constraints' }),
 })
 
-// Can also enforce authored constraints (the Dogwood handler baseline)
+// Authored policies — Dogwood text (like CedarAuthorization takes Cedar text)
 const vigil = new Vigil({
-  constraints: [
-    { type: 'requires', tool: 'charge', condition: 'authenticate' },
-    { type: 'budget', tool: 'charge', maxCalls: 5 },
-  ],
+  policies: `
+    forbid(principal, action == Action::"charge", resource)
+    unless temporal { formerly Action::"authenticate"::request };
+
+    forbid(principal, action == Action::"charge", resource)
+    when temporal { count(Action::"charge"::request) >= 5 };
+  `,
   discover: true, // also mine new ones
   storage,
 })
@@ -328,20 +331,42 @@ const agent = new Agent({
 // Mined constraints persist to storage → next agent loads them on startup
 ```
 
-### Authored + mining
+### Authored policies (Dogwood text)
 
 ```typescript
+// Dogwood text — the authoring surface (like Cedar for CedarAuthorization)
 const vigil = new Vigil({
-  constraints: [
-    { type: 'requires', tool: 'promote', condition: 'health_check' },
-    { type: 'budget', tool: 'charge', maxCalls: 5 },
-  ],
+  policies: `
+    forbid(principal, action == Action::"promote", resource)
+    unless temporal { formerly Action::"health_check"::request };
+
+    forbid(principal, action == Action::"charge", resource)
+    when temporal { count(Action::"charge"::request) >= 5 };
+  `,
   discover: true,  // also mine new constraints from execution
   storage,
 })
 ```
 
-Authored constraints enforce immediately. Mining finds additional constraints from execution. Both coexist.
+Authored policies enforce immediately. Mining finds additional constraints from execution. Both coexist.
+
+### Compiled constraints (escape hatch)
+
+When the Dogwood WASM parser isn't available, or for programmatic construction:
+
+```typescript
+// Compiled form — what the miner produces internally
+const vigil = new Vigil({
+  compiledConstraints: [
+    { type: 'requires', tool: 'promote', condition: 'health_check' },
+    { type: 'budget', tool: 'charge', maxCalls: 5 },
+  ],
+  discover: true,
+  storage,
+})
+```
+
+The compiled JSON form is the internal representation — it's what the miner produces and the evaluator consumes. The `policies` field is the intended authoring surface; `compiledConstraints` is for programmatic use or when a parser isn't yet available.
 
 ### Composition
 

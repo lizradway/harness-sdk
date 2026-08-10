@@ -197,7 +197,7 @@ describe('Vigil discovery: performance scenarios', () => {
         condition: `prereq_${index}`,
       }))
 
-      const vigil = new Vigil({ constraints })
+      const vigil = new Vigil({ compiledConstraints: constraints })
 
       const start = globalThis.performance.now()
       for (let round = 0; round < 100; round++) {

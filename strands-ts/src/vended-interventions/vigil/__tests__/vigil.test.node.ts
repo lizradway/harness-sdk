@@ -36,7 +36,7 @@ describe('Vigil', () => {
   describe('forbid constraints', () => {
     it('denies a forbidden tool', async () => {
       const vigil = new Vigil({
-        constraints: [{ type: 'forbid', tool: 'admin_delete' }],
+        compiledConstraints: [{ type: 'forbid', tool: 'admin_delete' }],
       })
 
       const result = await vigil.beforeToolCall(makeBeforeEvent('admin_delete'))
@@ -45,7 +45,7 @@ describe('Vigil', () => {
 
     it('allows tools not in the forbid list', async () => {
       const vigil = new Vigil({
-        constraints: [{ type: 'forbid', tool: 'admin_delete' }],
+        compiledConstraints: [{ type: 'forbid', tool: 'admin_delete' }],
       })
 
       const result = await vigil.beforeToolCall(makeBeforeEvent('search'))
@@ -58,7 +58,7 @@ describe('Vigil', () => {
 
     beforeEach(() => {
       vigil = new Vigil({
-        constraints: [{ type: 'requires', tool: 'charge', condition: 'authenticate' }],
+        compiledConstraints: [{ type: 'requires', tool: 'charge', condition: 'authenticate' }],
       })
     })
 
@@ -96,7 +96,7 @@ describe('Vigil', () => {
 
     beforeEach(() => {
       vigil = new Vigil({
-        constraints: [{ type: 'loop', tool: 'search', maxRepeats: 3 }],
+        compiledConstraints: [{ type: 'loop', tool: 'search', maxRepeats: 3 }],
       })
     })
 
@@ -135,7 +135,7 @@ describe('Vigil', () => {
 
     beforeEach(() => {
       vigil = new Vigil({
-        constraints: [{ type: 'cascade', trigger: 'deploy', blocks: ['promote', 'rollback'] }],
+        compiledConstraints: [{ type: 'cascade', trigger: 'deploy', blocks: ['promote', 'rollback'] }],
       })
     })
 
@@ -174,7 +174,7 @@ describe('Vigil', () => {
 
     beforeEach(() => {
       vigil = new Vigil({
-        constraints: [{ type: 'budget', tool: 'charge', maxCalls: 3 }],
+        compiledConstraints: [{ type: 'budget', tool: 'charge', maxCalls: 3 }],
       })
     })
 
@@ -208,7 +208,7 @@ describe('Vigil', () => {
   describe('multiple constraints', () => {
     it('evaluates all constraints and denies on first violation', async () => {
       const vigil = new Vigil({
-        constraints: [
+        compiledConstraints: [
           { type: 'requires', tool: 'charge', condition: 'authenticate' },
           { type: 'budget', tool: 'charge', maxCalls: 3 },
         ],
@@ -221,7 +221,7 @@ describe('Vigil', () => {
 
     it('checks all constraints even when first passes', async () => {
       const vigil = new Vigil({
-        constraints: [
+        compiledConstraints: [
           { type: 'requires', tool: 'charge', condition: 'authenticate' },
           { type: 'budget', tool: 'charge', maxCalls: 2 },
         ],
@@ -240,7 +240,7 @@ describe('Vigil', () => {
   describe('trajectory management', () => {
     it('resets trajectory state', async () => {
       const vigil = new Vigil({
-        constraints: [{ type: 'requires', tool: 'charge', condition: 'authenticate' }],
+        compiledConstraints: [{ type: 'requires', tool: 'charge', condition: 'authenticate' }],
       })
 
       await vigil.afterToolCall(makeAfterEvent('authenticate'))
@@ -257,7 +257,7 @@ describe('Vigil', () => {
         { type: 'requires', tool: 'charge', condition: 'authenticate' },
         { type: 'budget', tool: 'charge', maxCalls: 5 },
       ]
-      const vigil = new Vigil({ constraints })
+      const vigil = new Vigil({ compiledConstraints: constraints })
 
       const records = vigil.getConstraintRecords()
       expect(records).toHaveLength(2)
@@ -270,7 +270,7 @@ describe('Vigil', () => {
   describe('afterToolCall result status', () => {
     it('records error status result as failure', async () => {
       const vigil = new Vigil({
-        constraints: [{ type: 'cascade', trigger: 'deploy', blocks: ['promote'] }],
+        compiledConstraints: [{ type: 'cascade', trigger: 'deploy', blocks: ['promote'] }],
       })
 
       await vigil.afterToolCall(makeAfterEvent('deploy', {}, { status: 'error' }))
