@@ -1,6 +1,6 @@
 # Trellis: Temporal Constraint Mining from Agent Execution
 
-![A wooden trellis with climbing plants](assets/trellis.png)
+![A wooden trellis with climbing plants](https://raw.githubusercontent.com/lizradway/harness-sdk/feat/vigil-handler/team/designs/assets/trellis.png)
 
 **Status**: Proposed
 
