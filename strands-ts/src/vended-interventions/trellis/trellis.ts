@@ -89,9 +89,9 @@ export interface ConstraintRecord {
 }
 
 /**
- * Storage interface for persisting discovered constraints across agents.
+ * Storage interface for persisting mined constraints across agents.
  */
-export interface VigilStorage {
+export interface TrellisStorage {
   load(): Promise<ConstraintRecord[]>
   save(records: ConstraintRecord[]): Promise<void>
 }
@@ -99,7 +99,7 @@ export interface VigilStorage {
 /**
  * In-memory storage for single-process use. Does not survive restarts.
  */
-export class InMemoryVigilStorage implements VigilStorage {
+export class InMemoryTrellisStorage implements TrellisStorage {
   private _records: ConstraintRecord[] = []
 
   async load(): Promise<ConstraintRecord[]> {
@@ -112,11 +112,11 @@ export class InMemoryVigilStorage implements VigilStorage {
 }
 
 /**
- * Configuration for the {@link Vigil} intervention handler.
+ * Configuration for the {@link Trellis} intervention handler.
  *
  * @see {@link https://github.com/dogwood-policy/dogwood | Dogwood Policy Language}
  */
-export interface VigilConfig {
+export interface TrellisConfig {
   /** Dogwood policy text — the authoring surface for temporal constraints. Requires a Dogwood parser. */
   policies?: string
 
@@ -130,7 +130,7 @@ export interface VigilConfig {
   minEvidence?: number
 
   /** Storage backend for persisting mined constraints across agents. */
-  storage?: VigilStorage
+  storage?: TrellisStorage
 
   /**
    * Error handling: `'throw'` (default), `'deny'` (fail-closed), `'proceed'` (fail-open).
@@ -163,54 +163,59 @@ interface Observation {
 }
 
 /**
- * Vigil: Dogwood temporal policy intervention handler.
+ * Trellis: Dogwood temporal constraint mining intervention handler.
+ *
+ * A wooden framework that guides agent growth — mines temporal constraints from
+ * observed execution patterns and enforces them deterministically. Like a garden
+ * trellis shapes what grows through it, Trellis shapes agent behavior by learning
+ * from failures and preventing their recurrence.
  *
  * Evaluates compiled Dogwood temporal constraints against the agent's execution
  * trajectory on every `beforeToolCall`. Records tool outcomes on `afterToolCall`
  * to advance the trajectory state.
  *
- * When `discover: true`, the handler observes failure patterns and discovers new
- * constraints automatically. Discovered constraints enforce within the same session
- * once evidence thresholds are met.
+ * When `discover: true`, the handler mines constraint patterns from failures
+ * automatically. Mined constraints enforce within the same session once evidence
+ * thresholds are met.
  *
  * @see {@link https://github.com/dogwood-policy/dogwood | Dogwood Policy Language}
  *
  * @example
  * ```typescript
- * // Enforcement only (authored constraints)
- * const vigil = new Vigil({
- *   constraints: [
- *     { type: 'requires', tool: 'charge', condition: 'authenticate' },
- *     { type: 'budget', tool: 'charge', maxCalls: 5 },
- *   ],
+ * // Mining enabled — zero-config, learns from execution
+ * const trellis = new Trellis({
+ *   discover: true,
+ *   storage: new InMemoryTrellisStorage(),
  * })
  *
- * // With discovery enabled
- * const vigil = new Vigil({
- *   discover: true,
- *   storage: new InMemoryVigilStorage(),
+ * // Authored policies (when Dogwood parser is available)
+ * const trellis = new Trellis({
+ *   policies: `
+ *     forbid(principal, action == Action::"charge", resource)
+ *     unless temporal { formerly Action::"authenticate"::request };
+ *   `,
  * })
  *
  * const agent = new Agent({
  *   tools: [authenticate, charge, deploy, promote],
- *   interventions: [vigil],
+ *   interventions: [trellis],
  * })
  * ```
  */
-export class Vigil extends InterventionHandler {
-  readonly name = 'vigil'
+export class Trellis extends InterventionHandler {
+  readonly name = 'trellis'
   override readonly onError: OnError
 
   private readonly _records: ConstraintRecord[]
   private readonly _discover: boolean
   private readonly _minEvidence: number
-  private readonly _storage: VigilStorage | undefined
+  private readonly _storage: TrellisStorage | undefined
   private _trajectory: Trajectory
   private readonly _observations: Observation[] = []
   private readonly _toolSequence: string[] = []
   private _loaded = false
 
-  constructor(config: VigilConfig) {
+  constructor(config: TrellisConfig) {
     super()
     this.onError = config.onError ?? 'throw'
     this._discover = config.discover ?? false
@@ -283,7 +288,7 @@ export class Vigil extends InterventionHandler {
     return proceed()
   }
 
-  /** Returns all constraint records (authored + discovered). */
+  /** Returns all constraint records (authored + mined). */
   getConstraintRecords(): ReadonlyArray<ConstraintRecord> {
     return this._records
   }

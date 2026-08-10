@@ -1,4 +1,4 @@
-# Vigil: Temporal Constraint Mining from Agent Execution
+# Trellis: Temporal Constraint Mining from Agent Execution
 
 **Status**: Proposed
 
@@ -13,6 +13,7 @@
 
 | Term | Definition |
 |------|-----------|
+| **Trellis** | A wooden framework that guides growth. Like a garden trellis shapes what grows through it, Trellis shapes agent behavior by mining constraints from execution and enforcing them deterministically. The name connects the Cedar/Dogwood lineage (it's made of wood), the growth metaphor (constraints grow from observed failures), and the structural guidance role (shapes without killing). |
 | **Constraint mining** | Discovering temporal constraints from observed execution patterns — the same technique as Declare mining (process mining, Maggi et al. 2012) applied to agent tool calls instead of business process events. |
 | **Intervention Handler** | The Strands SDK's first-class control primitive (design 0007). Intercepts lifecycle events, evaluates against rules, returns Proceed/Deny/Guide/Transform/Confirm. |
 | **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. The enforcement language for mined constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
@@ -47,7 +48,7 @@ This is the ICRL insight [14]: constraints are latent in the environment. You ca
 
 Memory systems solve knowledge propagation — Agent A learns that `charge` requires `authenticate`, and memory can surface that to Agent B. But a remembered constraint is just a more sophisticated system prompt. It's still advisory: the model can ignore it under pressure, adversarial prompts can override it, and you can't audit or test compliance.
 
-The gap isn't remembering constraints — it's enforcing them. A constraint in memory says "you should authenticate first." A constraint in Vigil says "this call will not execute until authenticate has completed." One is guidance; the other is a gate.
+The gap isn't remembering constraints — it's enforcing them. A constraint in memory says "you should authenticate first." A constraint in Trellis says "this call will not execute until authenticate has completed." One is guidance; the other is a gate.
 
 ### Enforcement must be deterministic
 
@@ -69,9 +70,9 @@ This requires three things working together:
 2. **Enforcement** — evaluate constraints deterministically, in microseconds, no LLM in the path
 3. **Transfer** — propagate discovered constraints to new agents so they never hit the same failure
 
-This is what Vigil does. Failures become constraints, constraints become enforcement, enforcement transfers across agents. The authored-policy path exists (and is the right choice when you know your constraints), but the novel contribution is closing the loop from observed failure → deterministic prevention automatically.
+This is what Trellis does. Failures become constraints, constraints become enforcement, enforcement transfers across agents. The authored-policy path exists (and is the right choice when you know your constraints), but the novel contribution is closing the loop from observed failure → deterministic prevention automatically.
 
-The technique is process mining applied to agent execution. The Declare Miner (Maggi et al., 2012) counts activations, fulfillments, and violations in event logs to discover temporal constraints over business processes. Vigil does the same — count failures-without vs. successes-with, apply an evidence threshold, promote to enforcement. The algorithm is proven in a different field; the domain is new.
+The technique is process mining applied to agent execution. The Declare Miner (Maggi et al., 2012) counts activations, fulfillments, and violations in event logs to discover temporal constraints over business processes. Trellis does the same — count failures-without vs. successes-with, apply an evidence threshold, promote to enforcement. The algorithm is proven in a different field; the domain is new.
 
 ---
 
@@ -89,7 +90,7 @@ The technique is process mining applied to agent execution. The Declare Miner (M
 ### Non-Goals
 
 - Replacing Cedar for identity/permission checks.
-- Replacing authored Dogwood for infrastructure-level enforcement (Vigil is inside the loop, not at the gateway).
+- Replacing authored Dogwood for infrastructure-level enforcement (Trellis is inside the loop, not at the gateway).
 - Replacing RiskGate for risk classification and HITL escalation.
 - Implementing a full Dogwood runtime in TypeScript (use the WASM module when available; compiled typed JSON handles common cases).
 - Offline trace analysis or log processing (the miner operates over the live event stream, not stored traces).
@@ -103,19 +104,19 @@ The technique is process mining applied to agent execution. The Declare Miner (M
 
 ### Core concept: mine constraints from execution, enforce them deterministically
 
-Vigil applies process mining to agent execution. It watches the agent's tool-call stream, mines temporal constraints from observed failure patterns, and enforces them deterministically — all inline, no redeploy, no human authoring required.
+Trellis applies process mining to agent execution. It watches the agent's tool-call stream, mines temporal constraints from observed failure patterns, and enforces them deterministically — all inline, no redeploy, no human authoring required.
 
 The mechanism is a Dogwood policy intervention handler (the temporal counterpart to `CedarAuthorization`), but the novel contribution is the mining: failures become constraints automatically.
 
 ```typescript
 // Mining enabled — zero-config, learns from execution
-const vigil = new Vigil({
+const trellis = new Trellis({
   discover: true,
   storage: new DynamoDBStorage({ table: 'agent-constraints' }),
 })
 
 // Authored policies — Dogwood text (like CedarAuthorization takes Cedar text)
-const vigil = new Vigil({
+const trellis = new Trellis({
   policies: `
     forbid(principal, action == Action::"charge", resource)
     unless temporal { formerly Action::"authenticate"::request };
@@ -142,7 +143,7 @@ afterToolCall  → update trajectory + mine patterns from failures
 
 The "trajectory" is a Set of completed tools + a Map of call counts + a Set of failed tools. It lives in memory for the duration of the agent's execution.
 
-### How Vigil works
+### How Trellis works
 
 A single `InterventionHandler` with two responsibilities:
 
@@ -167,7 +168,7 @@ A single `InterventionHandler` with two responsibilities:
 | **Cascades** | When A fails, B always fails after | `forbid ... when temporal { formerly A::resolution{error} }` | `{ type: 'cascade', trigger, blocks }` |
 | **Budgets** | Tool exceeds max calls | `forbid ... when temporal { count(...) >= N }` | `{ type: 'budget', tool, maxCalls }` |
 
-Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. The temporal observation stream is what enables mining *all* constraint types — it provides the data to distinguish "always fails" (stateless) from "fails without X" (temporal). Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
+Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Trellis mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. The temporal observation stream is what enables mining *all* constraint types — it provides the data to distinguish "always fails" (stateless) from "fails without X" (temporal). Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
 
 **Future mining targets** (not yet implemented):
 
@@ -314,16 +315,16 @@ Cedar handles "who can call what." Dogwood handles "when is it safe to call, giv
 
 ```typescript
 import { Agent } from '@strands-agents/sdk'
-import { Vigil } from '@strands-agents/sdk/vended-interventions/vigil'
+import { Trellis } from '@strands-agents/sdk/vended-interventions/trellis'
 
-const vigil = new Vigil({
+const trellis = new Trellis({
   discover: true,
   storage: new DynamoDBStorage({ table: 'agent-constraints' }),
 })
 
 const agent = new Agent({
   tools: [authenticate, charge, refund],
-  interventions: [vigil],
+  interventions: [trellis],
 })
 
 // The handler watches, mines, and enforces — all inline:
@@ -335,7 +336,7 @@ const agent = new Agent({
 
 ```typescript
 // Dogwood text — the authoring surface (like Cedar for CedarAuthorization)
-const vigil = new Vigil({
+const trellis = new Trellis({
   policies: `
     forbid(principal, action == Action::"promote", resource)
     unless temporal { formerly Action::"health_check"::request };
@@ -356,7 +357,7 @@ When the Dogwood WASM parser isn't available, or for programmatic construction:
 
 ```typescript
 // Compiled form — what the miner produces internally
-const vigil = new Vigil({
+const trellis = new Trellis({
   compiledConstraints: [
     { type: 'requires', tool: 'promote', condition: 'health_check' },
     { type: 'budget', tool: 'charge', maxCalls: 5 },
@@ -376,7 +377,7 @@ const agent = new Agent({
   interventions: [
     cedarAuth,      // WHO can call (identity)
     riskGate,       // WHAT risk level (classification + HITL)
-    vigil,          // WHEN is it safe (temporal constraints)
+    trellis,          // WHEN is it safe (temporal constraints)
   ],
 })
 ```
@@ -386,7 +387,7 @@ Each answers a distinct question. The pipeline short-circuits — if Cedar denie
 ### Inspection
 
 ```typescript
-vigil.getEnforcingConstraints()
+trellis.getEnforcingConstraints()
 // [{ constraint: { type: 'requires', tool: 'charge', condition: 'authenticate' },
 //    status: 'enforcing', evidence: { failures: 4, successes: 2, overrides: 0 },
 //    source: 'discovered' }]
@@ -404,7 +405,7 @@ vigil.getEnforcingConstraints()
 - **Immune to prompt injection.** Enforcement is code. Adversarial messages cannot override.
 - **Auditable.** Every denial has a reason, a constraint with provenance (authored vs. mined), and evidence.
 - **Self-correcting.** Constraints that humans override demote rather than accumulate.
-- **Temporal enforcement as an SDK primitive.** `interventions: [vigil]` — same pattern as Cedar for authz.
+- **Temporal enforcement as an SDK primitive.** `interventions: [trellis]` — same pattern as Cedar for authz.
 
 ### What requires care
 
@@ -433,7 +434,7 @@ Cross-agent transfer eliminates cold start: the second agent loading from storag
 
 ### Real-model benchmark (Claude Sonnet 4.6 via Bedrock)
 
-Fresh agent per invocation (no conversation history carryover), same Vigil instance accumulating observations across invocations.
+Fresh agent per invocation (no conversation history carryover), same Trellis instance accumulating observations across invocations.
 
 **Opaque prerequisite** (`submit_result` requires `activate_session`, error message: "submission rejected"):
 
@@ -441,7 +442,7 @@ Fresh agent per invocation (no conversation history carryover), same Vigil insta
 |-------|---------|
 | 1–3 | `submit_result` fails (session not active). Model cannot self-correct — error is opaque. |
 | 4 | User prompt includes activation. Success provides causal confirmation. **Constraint mined.** |
-| 5 | Vigil **blocks** `submit_result` without `activate_session`. Model structurally prevented. |
+| 5 | Trellis **blocks** `submit_result` without `activate_session`. Model structurally prevented. |
 
 Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires', tool: 'submit_result', condition: 'activate_session' }`.
 
@@ -533,15 +534,15 @@ The research converges from multiple directions on the same architecture: **obse
 | **Harness engineering** | arXiv 2607.08028 (2026) | Deterministic enforcement around neural components | — |
 | **LLM-Modulo** | Kambhampati et al. (ICML 2024) | LLMs generate; external verifiers certify | — |
 
-Vigil's lineage is most directly Declare monitoring (temporal monitor over event stream) + Declare mining (discover constraints from observed patterns) + ANNEAL (structural repair — discovered constraints prevent recurrence).
+Trellis's lineage is most directly Declare monitoring (temporal monitor over event stream) + Declare mining (discover constraints from observed patterns) + ANNEAL (structural repair — discovered constraints prevent recurrence).
 
 ### The Declare Miner parallel
 
-The Declare Miner counts **activations** (tool called) and **fulfillments** (prerequisite met) vs **violations** (prerequisite absent), computes confidence, and applies a support threshold. Vigil does the same: count failures-without vs successes-with, apply `minEvidence`. The mechanisms are identical — the domain is different (agent tool calls instead of business process events).
+The Declare Miner counts **activations** (tool called) and **fulfillments** (prerequisite met) vs **violations** (prerequisite absent), computes confidence, and applies a support threshold. Trellis does the same: count failures-without vs successes-with, apply `minEvidence`. The mechanisms are identical — the domain is different (agent tool calls instead of business process events).
 
 ### Systems comparison
 
-| System | What it does | Gap Vigil fills |
+| System | What it does | Gap Trellis fills |
 |--------|-------------|-------------------------|
 | **Declare Miner** [16] | Mines LTLf constraints from event logs | Offline batch analysis; no inline enforcement |
 | **Declare Monitor** [17] | Evaluates LTLf over live event streams | Enforces but doesn't discover |
@@ -550,7 +551,7 @@ The Declare Miner counts **activations** (tool called) and **fulfillments** (pre
 | **Agent-C** [1] | DSL + SMT temporal constraints | Human-authored only, no discovery |
 | **Invariant Labs** [3] | Trace-level policy enforcement | Static rules, no adaptation |
 
-Vigil is the first system to combine Declare-style temporal monitoring with Declare-style constraint mining in a single in-loop primitive for agent execution.
+Trellis is the first system to combine Declare-style temporal monitoring with Declare-style constraint mining in a single in-loop primitive for agent execution.
 
 </details>
 
@@ -559,7 +560,7 @@ Vigil is the first system to combine Declare-style temporal monitoring with Decl
 <details>
 <summary><strong>Appendix C: Relationship to Cedar and RiskGate</strong></summary>
 
-| Dimension | CedarAuthorization | Vigil | RiskGate |
+| Dimension | CedarAuthorization | Trellis | RiskGate |
 |-----------|-------------------|-------|----------|
 | **Language** | Cedar | Dogwood (Cedar + temporal) | — |
 | **Question** | Who can call what? | Is it safe to call now, given history? | How risky? |
@@ -567,11 +568,11 @@ Vigil is the first system to combine Declare-style temporal monitoring with Decl
 | **Policies** | Authored | Authored + optionally discovered | — |
 | **LLM in hot path?** | No | No | No |
 
-CedarAuthorization and Vigil are the same pattern at different levels:
+CedarAuthorization and Trellis are the same pattern at different levels:
 - **CedarAuthorization** evaluates Cedar policies (stateless authz) on `beforeToolCall`
-- **Vigil** evaluates Dogwood policies (temporal constraints) on `beforeToolCall`
+- **Trellis** evaluates Dogwood policies (temporal constraints) on `beforeToolCall`
 
-Cedar is a subset of Dogwood — a Dogwood policy with no `temporal` clause is valid Cedar. The handlers compose naturally: Cedar answers "is this user allowed?", Vigil answers "is it safe given what already happened?"
+Cedar is a subset of Dogwood — a Dogwood policy with no `temporal` clause is valid Cedar. The handlers compose naturally: Cedar answers "is this user allowed?", Trellis answers "is it safe given what already happened?"
 
 </details>
 

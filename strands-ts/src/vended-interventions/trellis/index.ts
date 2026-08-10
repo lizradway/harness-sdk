@@ -1,7 +1,7 @@
-export { Vigil, InMemoryVigilStorage } from './vigil.js'
+export { Trellis, InMemoryTrellisStorage } from './trellis.js'
 export type {
-  VigilConfig,
-  VigilStorage,
+  TrellisConfig,
+  TrellisStorage,
   Constraint,
   ConstraintRecord,
   ConstraintEvidence,
@@ -10,4 +10,4 @@ export type {
   LoopConstraint,
   CascadeConstraint,
   BudgetConstraint,
-} from './vigil.js'
+} from './trellis.js'
