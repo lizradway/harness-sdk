@@ -1,4 +1,4 @@
-# Vigil: Dogwood Policy Intervention Handler
+# Vigil: Temporal Constraint Mining from Agent Execution
 
 **Status**: Proposed
 
@@ -13,16 +13,16 @@
 
 | Term | Definition |
 |------|-----------|
+| **Constraint mining** | Discovering temporal constraints from observed execution patterns — the same technique as Declare mining (process mining, Maggi et al. 2012) applied to agent tool calls instead of business process events. |
 | **Intervention Handler** | The Strands SDK's first-class control primitive (design 0007). Intercepts lifecycle events, evaluates against rules, returns Proceed/Deny/Guide/Transform/Confirm. |
-| **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. The temporal policy language for trajectory-aware constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
-| **Temporal monitor** | A state machine that advances over an event stream, evaluating temporal properties in real-time. Each event updates the monitor's state; queries resolve against the accumulated history. |
-| **Trajectory-aware constraint** | A constraint whose evaluation depends on what already happened in the current execution — prerequisites, loops, cascades, budgets. Requires temporal operators over event history, not just the current request. |
+| **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. The enforcement language for mined constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
+| **Temporal constraint** | A constraint whose evaluation depends on what already happened in the current execution — prerequisites, loops, cascades, budgets. Requires temporal operators over event history, not just the current request. |
 
 </details>
 
 ---
 
-[Problem](#problem) · [Goals and Non-Goals](#goals-and-non-goals) · [Proposal](#proposal) · [Dogwood as Constraint Language](#dogwood-as-constraint-language) · [Developer Experience](#developer-experience) · [Consequences](#consequences)
+[Problem](#problem) · [Goals and Non-Goals](#goals-and-non-goals) · [Proposal](#proposal) · [Constraint Language](#dogwood-as-constraint-language) · [Developer Experience](#developer-experience) · [Consequences](#consequences)
 
 ---
 
@@ -79,11 +79,11 @@ The technique is process mining applied to agent execution. The Declare Miner (M
 
 ### Goals
 
-1. **Dynamic constraint discovery**: discover Dogwood constraints from observed failure patterns — no manual rule authoring required. Failures become policies automatically.
-2. **Same-session enforcement**: discovered constraints begin enforcing within the same session. No redeploy, no restart.
-3. **Cross-agent transfer**: persist discovered constraints to storage so new agents inherit protection without ever seeing a failure.
-4. **Deterministic enforcement**: no LLM in `beforeToolCall`. Compiled Dogwood evaluates as set lookups and counter checks (microseconds).
-5. **Authored policy support**: also works with purely human-written Dogwood policies (zero discovery) for known constraints.
+1. **Constraint mining**: mine temporal constraints from observed failure patterns — no manual rule authoring required. Failures become enforced policies automatically.
+2. **Same-session enforcement**: mined constraints begin enforcing within the same session. No redeploy, no restart.
+3. **Cross-agent transfer**: persist mined constraints to storage so new agents inherit protection without ever seeing a failure.
+4. **Deterministic enforcement**: no LLM in `beforeToolCall`. Compiled constraints evaluate as set lookups and counter checks (microseconds).
+5. **Authored policy support**: also works with purely human-written constraints (zero mining) for known risks.
 6. **Composition**: standard intervention pipeline — composes with Cedar, RiskGate, steering, HITL.
 
 ### Non-Goals
@@ -92,66 +92,69 @@ The technique is process mining applied to agent execution. The Declare Miner (M
 - Replacing authored Dogwood for infrastructure-level enforcement (Vigil is inside the loop, not at the gateway).
 - Replacing RiskGate for risk classification and HITL escalation.
 - Implementing a full Dogwood runtime in TypeScript (use the WASM module when available; compiled typed JSON handles common cases).
-- Offline trace analysis or log processing (the monitor operates over the live event stream, not stored traces).
+- Offline trace analysis or log processing (the miner operates over the live event stream, not stored traces).
 - Real-time LLM-based enforcement (too slow, non-deterministic, bypassable).
-- Formal verification of the learning system itself (discovery is statistical, not formally verified).
+- Formal verification of the mining algorithm itself (mining is statistical, not formally verified).
 - Python SDK implementation (follow-up).
 
 ---
 
 ## Proposal
 
-### Core concept: a Dogwood policy handler with optional discovery
+### Core concept: mine constraints from execution, enforce them deterministically
 
-Vigil is a Dogwood policy intervention handler — the temporal counterpart to `CedarAuthorization`. It evaluates Dogwood temporal policies against the agent's execution trajectory on every `beforeToolCall`. Like Cedar, it can work with purely authored policies. Unlike Cedar, it can optionally discover new policies from the agent's own execution.
+Vigil applies process mining to agent execution. It watches the agent's tool-call stream, mines temporal constraints from observed failure patterns, and enforces them deterministically — all inline, no redeploy, no human authoring required.
+
+The mechanism is a Dogwood policy intervention handler (the temporal counterpart to `CedarAuthorization`), but the novel contribution is the mining: failures become constraints automatically.
 
 ```typescript
-// Authored policies only (like CedarAuthorization but temporal)
+// Mining enabled — zero-config, learns from execution
 const vigil = new Vigil({
-  policies: `
-    forbid(principal, action == Action::"charge", resource)
-    unless temporal { formerly Action::"authenticate"::request };
-  `,
+  discover: true,
+  storage: new DynamoDBStorage({ table: 'agent-constraints' }),
 })
 
-// Same handler, discovery enabled
+// Can also enforce authored constraints (the Dogwood handler baseline)
 const vigil = new Vigil({
-  policies: '...', // optional starting policies
-  discover: true,
+  constraints: [
+    { type: 'requires', tool: 'charge', condition: 'authenticate' },
+    { type: 'budget', tool: 'charge', maxCalls: 5 },
+  ],
+  discover: true, // also mine new ones
   storage,
 })
 ```
 
 | Mode | What it does | LLM needed? |
 |------|-------------|-------------|
-| **Enforce only** | Evaluate authored Dogwood policies against trajectory | No |
-| **Discover + enforce** | Observe execution, discover new policies, enforce all | Discovery: optional. Enforcement: never. |
+| **Mine + enforce** | Observe execution, mine constraints from failures, enforce all | Mining: no. Enforcement: no. |
+| **Enforce only** | Evaluate authored constraints against trajectory | No |
 
-The handler advances over the agent's event stream — every `beforeToolCall` evaluates policies against the trajectory so far, every `afterToolCall` records the outcome into the trajectory.
+The handler advances over the agent's event stream — every `beforeToolCall` evaluates constraints against the trajectory so far, every `afterToolCall` records the outcome and runs the mining algorithm.
 
 ```
-beforeToolCall → evaluate Dogwood policies against trajectory → proceed/deny
-afterToolCall  → update trajectory (+ detect patterns if discover: true)
+beforeToolCall → evaluate constraints against trajectory → proceed/deny
+afterToolCall  → update trajectory + mine patterns from failures
 ```
 
-The "trajectory" is a Set of completed tools + a Map of call counts + a Set of failed tools. It lives in memory for the duration of the agent's execution. The context window IS the execution history.
+The "trajectory" is a Set of completed tools + a Map of call counts + a Set of failed tools. It lives in memory for the duration of the agent's execution.
 
-### Vigil
+### How Vigil works
 
 A single `InterventionHandler` with two responsibilities:
 
-**Always (enforcement):**
-1. **Evaluates** Dogwood policies against the current trajectory on every `beforeToolCall`
+**Enforcement (always):**
+1. **Evaluates** constraints against the current trajectory on every `beforeToolCall`
 2. **Records** tool outcomes into the trajectory on every `afterToolCall`
-3. **Denies** calls that violate temporal constraints deterministically
+3. **Denies** calls that violate constraints deterministically
 
-**When `discover: true` (optional):**
-4. **Discovers** new constraint patterns from observed failures (statistical pattern matching)
-5. **Validates** discoveries against evidence thresholds before enforcing
-6. **Persists** discovered constraints to storage for cross-agent transfer
+**Mining (when `discover: true`):**
+4. **Mines** constraint patterns from observed failures (statistical process mining)
+5. **Validates** mined constraints against evidence thresholds before enforcing
+6. **Persists** mined constraints to storage for cross-agent transfer
 7. **Self-corrects** — demotes constraints that humans consistently override
 
-### What it discovers
+### What it mines
 
 | Pattern | Signal | Dogwood policy | Compiled form |
 |---------|--------|----------------|---------------|
@@ -161,11 +164,11 @@ A single `InterventionHandler` with two responsibilities:
 | **Cascades** | When A fails, B always fails after | `forbid ... when temporal { formerly A::resolution{error} }` | `{ type: 'cascade', trigger, blocks }` |
 | **Budgets** | Tool exceeds max calls | `forbid ... when temporal { count(...) >= N }` | `{ type: 'budget', tool, maxCalls }` |
 
-Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil discovers both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. Every discovered constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
+Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
 
-### How discovery works (process mining over agent execution)
+### The mining algorithm
 
-Pattern detection runs after every observation as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement. Discovers the common temporal patterns (prerequisites, loops, cascades, budgets) from the observation buffer:
+Pattern detection runs after every observation as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement. Mines the common temporal patterns (prerequisites, loops, cascades, budgets) from the observation buffer:
 
 ```
 Call 1: charge() → 403          → observe(failure, precedingTools: [])
@@ -173,16 +176,16 @@ Call 2: authenticate() → ok     → observe(success)
 Call 3: charge() → 403          → observe(failure, precedingTools: [])  
 Call 4: authenticate() → ok     → observe(success)
 Call 5: charge() → ok           → observe(success, precedingTools: [authenticate])
-                                  → DISCOVER: charge requires authenticate
+                                  → MINED: charge requires authenticate
                                     (3 failures without + 1 success with = causal evidence)
 Call 6: charge() → DENIED       → constraint enforcing
 ```
 
-Future: LLM-assisted discovery could analyze failure patterns and propose constraints that statistical detection misses (error message interpretation, domain-specific rules). Every proposal would pass through the same validation pipeline — the LLM proposes, the monitor validates.
+Future: LLM-assisted mining could analyze failure patterns and propose constraints that statistical detection misses (error message interpretation, domain-specific rules). Every proposal would pass through the same validation pipeline — the LLM proposes, the monitor validates.
 
 ### Validation before enforcement
 
-A discovered constraint must pass:
+A mined constraint must pass:
 
 1. **Minimum evidence** — enough observations to be statistically meaningful (configurable, default 3)
 2. **Causal confirmation** — at least one success where the proposed condition was met
@@ -203,9 +206,9 @@ If humans override a denial more than a threshold percentage, the constraint dem
 
 ---
 
-## Dogwood as Constraint Language
+## Constraint Language (Dogwood)
 
-Vigil evaluates **Dogwood** policies — the same way CedarAuthorization evaluates Cedar policies. Every policy, whether authored by a developer or discovered from execution, is a Dogwood temporal policy.
+Every constraint — whether authored or mined from execution — is represented as a Dogwood temporal policy. Dogwood is the enforcement language; mining produces constraints in this form.
 
 ### Why Dogwood
 
@@ -293,36 +296,15 @@ Cedar handles "who can call what." Dogwood handles "when is it safe to call, giv
 
 ## Developer Experience
 
-### Authored policies (like CedarAuthorization)
+### Mining mode (zero-config)
 
 ```typescript
 import { Agent } from '@strands-agents/sdk'
 import { Vigil } from '@strands-agents/sdk/vended-interventions/vigil'
 
 const vigil = new Vigil({
-  policies: `
-    forbid(principal, action == Action::"charge", resource)
-    unless temporal { formerly Action::"authenticate"::request };
-
-    forbid(principal, action == Action::"charge", resource)
-    when temporal { count(Action::"charge"::request) >= 5 };
-  `,
-})
-
-const agent = new Agent({
-  tools: [authenticate, charge, refund],
-  interventions: [vigil],
-})
-```
-
-Pure enforcement. No discovery. Temporal policies evaluate deterministically against the execution trajectory.
-
-### With discovery enabled
-
-```typescript
-const vigil = new Vigil({
   discover: true,
-  storage: new DynamoDBStorage({ table: 'agent-governance' }),
+  storage: new DynamoDBStorage({ table: 'agent-constraints' }),
 })
 
 const agent = new Agent({
@@ -330,25 +312,25 @@ const agent = new Agent({
   interventions: [vigil],
 })
 
-// The handler watches, discovers, and enforces — all inline:
-// charge() fails without auth → evidence accumulates → constraint discovered → subsequent charge() DENIED
-// Discovered constraints persist to storage → next agent loads them on startup
+// The handler watches, mines, and enforces — all inline:
+// charge() fails without auth → evidence accumulates → constraint mined → subsequent charge() DENIED
+// Mined constraints persist to storage → next agent loads them on startup
 ```
 
-### Both: authored + discovery
+### Authored + mining
 
 ```typescript
 const vigil = new Vigil({
-  policies: `
-    forbid(principal, action == Action::"promote", resource)
-    unless temporal { formerly Action::"health_check"::request };
-  `,
-  discover: true,
+  constraints: [
+    { type: 'requires', tool: 'promote', condition: 'health_check' },
+    { type: 'budget', tool: 'charge', maxCalls: 5 },
+  ],
+  discover: true,  // also mine new constraints from execution
   storage,
 })
 ```
 
-Authored policies enforce immediately. Discovery finds additional constraints from execution. Both coexist.
+Authored constraints enforce immediately. Mining finds additional constraints from execution. Both coexist.
 
 ### Composition
 
@@ -380,20 +362,20 @@ vigil.getEnforcingConstraints()
 
 ### What becomes easier
 
-- **Temporal enforcement as an SDK primitive.** Dogwood policies inside the agent loop, just like Cedar for authz. `interventions: [vigil]`.
-- **Microsecond enforcement.** Compiled Dogwood evaluates as set lookups. No LLM, no latency, no token cost.
-- **Auditable.** Every denial has a reason, a Dogwood policy text, and provenance.
+- **Constraints emerge from execution.** No human writes rules. Failures become enforced policies automatically.
+- **Institutional memory.** Mined constraints persist. One agent's failures protect all future agents.
+- **Microsecond enforcement.** Compiled constraints evaluate as set lookups. No LLM, no latency, no token cost.
 - **Immune to prompt injection.** Enforcement is code. Adversarial messages cannot override.
-- **Discovery closes the authoring loop.** With `discover: true`, the handler finds constraints you didn't know existed — from the agent's own execution.
-- **Institutional memory.** Discovered constraints persist. One agent's failures protect all future agents.
+- **Auditable.** Every denial has a reason, a constraint with provenance (authored vs. mined), and evidence.
 - **Self-correcting.** Constraints that humans override demote rather than accumulate.
+- **Temporal enforcement as an SDK primitive.** `interventions: [vigil]` — same pattern as Cedar for authz.
 
 ### What requires care
 
-- **Discovery needs failures.** Cannot prevent the *first* occurrence. For known risks, author Dogwood policies.
-- **Frontier models self-correct from clear errors.** If the error message contains the fix ("Authentication required"), the model corrects within the same turn and the failure never accumulates. Discovery is most valuable for opaque errors, rate limits, and cross-invocation scenarios.
-- **Discovered constraints may be wrong.** Validation mitigates but doesn't eliminate this. Review discoveries for safety-critical tools.
-- **Cold start.** A fresh handler with no policies and no storage enforces nothing. Author policies or pre-seed storage.
+- **Mining needs failures.** Cannot prevent the *first* occurrence. For known risks, author constraints directly.
+- **Frontier models self-correct from clear errors.** If the error message contains the fix ("Authentication required"), the model corrects within the same turn and the failure never accumulates. Mining is most valuable for opaque errors, rate limits, and cross-invocation scenarios.
+- **Mined constraints may be wrong.** Validation mitigates but doesn't eliminate false positives. Review mined constraints for safety-critical tools.
+- **Cold start.** A fresh handler with no constraints and no storage enforces nothing. Author constraints or pre-seed storage.
 - **Storage for cross-agent transfer.** In-memory mode works for single-agent use but doesn't survive restarts.
 
 ---
@@ -409,7 +391,7 @@ Simulated agent calling `charge` without `authenticate` (prerequisite violation)
 | Learning (rounds 1–4) | 4 | 0 | 80% |
 | Enforcing (rounds 5–30) | 0 | 20 | 0% |
 
-**Post-discovery failure rate: 0%.** Convergence: 3 failures + 1 causal confirmation.
+**Post-mining failure rate: 0%.** Convergence: 3 failures + 1 causal confirmation.
 
 Cross-agent transfer eliminates cold start: the second agent loading from storage has zero failures from its first call.
 
@@ -422,7 +404,7 @@ Fresh agent per invocation (no conversation history carryover), same Vigil insta
 | Round | Outcome |
 |-------|---------|
 | 1–3 | `submit_result` fails (session not active). Model cannot self-correct — error is opaque. |
-| 4 | User prompt includes activation. Success provides causal confirmation. **Constraint discovered.** |
+| 4 | User prompt includes activation. Success provides causal confirmation. **Constraint mined.** |
 | 5 | Vigil **blocks** `submit_result` without `activate_session`. Model structurally prevented. |
 
 Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires', tool: 'submit_result', condition: 'activate_session' }`.
@@ -434,36 +416,36 @@ Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires
 | 1 | 5 | 2 |
 | 2–4 | 4 | 1 |
 
-Budget constraints discovered and enforcing after round 1 (3 successes + 2 failures in one batch provides immediate evidence).
+Budget constraints mined and enforcing after round 1 (3 successes + 2 failures in one batch provides immediate evidence).
 
-### When discovery matters (and when it doesn't)
+### When mining matters (and when it doesn't)
 
-Frontier models with clear error messages **self-correct within the same invocation**. Claude reads "403: Authentication required" and authenticates on its next turn — the failure never accumulates across invocations. Discovery adds no value here.
+Frontier models with clear error messages **self-correct within the same invocation**. Claude reads "403: Authentication required" and authenticates on its next turn — the failure never accumulates across invocations. Mining adds no value here.
 
-Discovery's value is for **irrecoverable failures** — where the cost IS the failure itself:
+Mining's value is for **irrecoverable failures** — where the cost IS the failure itself:
 
-| Scenario | Why model can't self-correct | Discovery value |
-|----------|------------------------------|-----------------|
+| Scenario | Why model can't self-correct | Mining value |
+|----------|------------------------------|--------------|
 | **Rate limits / budgets** | The 4th call locks the account. No retry fixes it. | Prevents the call entirely |
 | **Opaque errors** | "Error: request failed" — no remediation hint | Model can't deduce what's missing |
 | **Loops** | Each repeated call "works" — no error signal | Model doesn't realize it's looping |
 | **Cross-invocation** | Fresh agent, no history from prior failure | Same mistake repeated indefinitely |
 | **Weaker models** | Don't interpret error messages well | Can't self-correct even from clear errors |
 
-The sell isn't "discovery finds things models can't figure out." It's **"discovery prevents failures whose cost is the failure itself."** Prevention vs. recovery.
+Mining doesn't find things models can't figure out. It **prevents failures whose cost is the failure itself.** Prevention vs. recovery.
 
 ---
 
 <details>
-<summary><strong>Appendix A: Discovery Algorithm</strong></summary>
+<summary><strong>Appendix A: Mining Algorithm</strong></summary>
 
 ### Observation
 
 On every `afterToolCall`: tool name, args hash, success/failure, error, preceding tools in this invocation. This is the monitor advancing its state.
 
-### Statistical discovery (inline, default)
+### Pattern mining (inline)
 
-After each observation, the monitor checks for discoverable patterns:
+After each observation, the miner checks for discoverable patterns:
 
 - **Prerequisites**: tool B fails without tool A; succeeds with tool A → `requires` constraint
 - **Loops**: same tool + same args repeated beyond threshold → `loop` constraint  
