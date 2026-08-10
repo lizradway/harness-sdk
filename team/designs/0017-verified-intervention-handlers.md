@@ -71,6 +71,8 @@ This requires three things working together:
 
 This is what Vigil does. Failures become constraints, constraints become enforcement, enforcement transfers across agents. The authored-policy path exists (and is the right choice when you know your constraints), but the novel contribution is closing the loop from observed failure → deterministic prevention automatically.
 
+The technique is process mining applied to agent execution. The Declare Miner (Maggi et al., 2012) counts activations, fulfillments, and violations in event logs to discover temporal constraints over business processes. Vigil does the same — count failures-without vs. successes-with, apply an evidence threshold, promote to enforcement. The algorithm is proven in a different field; the domain is new.
+
 ---
 
 ## Goals and Non-Goals
@@ -161,9 +163,9 @@ A single `InterventionHandler` with two responsibilities:
 
 Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Vigil discovers both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. Every discovered constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
 
-### How discovery works
+### How discovery works (process mining over agent execution)
 
-Pattern detection runs after every observation as part of event processing. No LLM call. Discovers the common temporal patterns (prerequisites, loops, cascades, budgets) from the observation buffer:
+Pattern detection runs after every observation as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement. Discovers the common temporal patterns (prerequisites, loops, cascades, budgets) from the observation buffer:
 
 ```
 Call 1: charge() → 403          → observe(failure, precedingTools: [])
@@ -389,6 +391,7 @@ vigil.getEnforcingConstraints()
 ### What requires care
 
 - **Discovery needs failures.** Cannot prevent the *first* occurrence. For known risks, author Dogwood policies.
+- **Frontier models self-correct from clear errors.** If the error message contains the fix ("Authentication required"), the model corrects within the same turn and the failure never accumulates. Discovery is most valuable for opaque errors, rate limits, and cross-invocation scenarios.
 - **Discovered constraints may be wrong.** Validation mitigates but doesn't eliminate this. Review discoveries for safety-critical tools.
 - **Cold start.** A fresh handler with no policies and no storage enforces nothing. Author policies or pre-seed storage.
 - **Storage for cross-agent transfer.** In-memory mode works for single-agent use but doesn't survive restarts.
@@ -397,22 +400,57 @@ vigil.getEnforcingConstraints()
 
 ## Empirical Results
 
-Tested with a simulated agent calling `charge` without `authenticate` (prerequisite violation), 30 invocations across 6 batches:
+### Synthetic scenarios (unit tests)
 
-| Batch | Failures | Blocked | Failure Rate |
+Simulated agent calling `charge` without `authenticate` (prerequisite violation), 30 invocations:
+
+| Phase | Failures | Blocked | Failure Rate |
 |-------|----------|---------|--------------|
-| 1 (learning) | 4 | 0 | 80% |
-| 2–6 (enforcing) | 0 | 20 | 0% |
+| Learning (rounds 1–4) | 4 | 0 | 80% |
+| Enforcing (rounds 5–30) | 0 | 20 | 0% |
 
-**Post-discovery failure rate: 0%.** Convergence: one batch of failures + one success with the prerequisite present.
+**Post-discovery failure rate: 0%.** Convergence: 3 failures + 1 causal confirmation.
 
-| Mode | Failures | Rate |
-|------|----------|------|
-| No guard | 5/5 | 100% |
-| Vigil | 4/30 | 13% overall, 0% post-discovery |
-| Manual constraints | 0/5 | 0% |
+Cross-agent transfer eliminates cold start: the second agent loading from storage has zero failures from its first call.
 
-Cross-agent transfer eliminates cold start: the second guard instance loading from the same storage has zero failures from its first call.
+### Real-model benchmark (Claude Sonnet 4.6 via Bedrock)
+
+Fresh agent per invocation (no conversation history carryover), same Vigil instance accumulating observations across invocations.
+
+**Opaque prerequisite** (`submit_result` requires `activate_session`, error message: "submission rejected"):
+
+| Round | Outcome |
+|-------|---------|
+| 1–3 | `submit_result` fails (session not active). Model cannot self-correct — error is opaque. |
+| 4 | User prompt includes activation. Success provides causal confirmation. **Constraint discovered.** |
+| 5 | Vigil **blocks** `submit_result` without `activate_session`. Model structurally prevented. |
+
+Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires', tool: 'submit_result', condition: 'activate_session' }`.
+
+**Budget** (`process_item` rate-limited after 3 calls):
+
+| Round | API Calls | Over Limit |
+|-------|-----------|-----------|
+| 1 | 5 | 2 |
+| 2–4 | 4 | 1 |
+
+Budget constraints discovered and enforcing after round 1 (3 successes + 2 failures in one batch provides immediate evidence).
+
+### When discovery matters (and when it doesn't)
+
+Frontier models with clear error messages **self-correct within the same invocation**. Claude reads "403: Authentication required" and authenticates on its next turn — the failure never accumulates across invocations. Discovery adds no value here.
+
+Discovery's value is for **irrecoverable failures** — where the cost IS the failure itself:
+
+| Scenario | Why model can't self-correct | Discovery value |
+|----------|------------------------------|-----------------|
+| **Rate limits / budgets** | The 4th call locks the account. No retry fixes it. | Prevents the call entirely |
+| **Opaque errors** | "Error: request failed" — no remediation hint | Model can't deduce what's missing |
+| **Loops** | Each repeated call "works" — no error signal | Model doesn't realize it's looping |
+| **Cross-invocation** | Fresh agent, no history from prior failure | Same mistake repeated indefinitely |
+| **Weaker models** | Don't interpret error messages well | Can't self-correct even from clear errors |
+
+The sell isn't "discovery finds things models can't figure out." It's **"discovery prevents failures whose cost is the failure itself."** Prevention vs. recovery.
 
 ---
 
