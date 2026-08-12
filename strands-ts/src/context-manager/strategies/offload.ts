@@ -215,9 +215,54 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
     const targetRemoval = Math.max(1, Math.floor(eligible.length * 0.3))
     const toRemove = eligible.slice(0, targetRemoval)
 
-    const removed = spliceWithPairs(messages, toRemove)
-    if (removed > 0) repairAlternation(messages)
-    return removed > 0
+    const safeSet = new Set<Message>()
+    for (const message of toRemove) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
+      for (const removable of collectRemovableWithPair(messages, index)) {
+        safeSet.add(removable)
+      }
+    }
+    const safe = messages.filter((message) => safeSet.has(message))
+    if (safe.length === 0) return false
+
+    const refs = await this._stashMessages(safe)
+    const insertIndex = Math.max(1, messages.indexOf(safe[0]!))
+
+    const removed = spliceWithPairs(messages, safe)
+    if (removed === 0) return false
+
+    const marker = this._makeRemovalMarker(removed, refs)
+    if (marker) {
+      const clampedInsert = Math.min(insertIndex, messages.length)
+      messages.splice(clampedInsert, 0, new Message({ role: 'user', content: [new TextBlock(marker)] }))
+    }
+
+    repairAlternation(messages)
+    return true
+  }
+
+  /**
+   * Build a removal marker for message-level operations.
+   * Base returns null (no marker). Subclasses override for distinct behavior.
+   */
+  protected _makeRemovalMarker(_count: number, _refs: string[]): string | null {
+    return null
+  }
+
+  /** Stash all eligible blocks from messages about to be removed. Returns collected refs. */
+  protected async _stashMessages(messagesToRemove: Message[]): Promise<string[]> {
+    if (!this._stash) return []
+    const refs: string[] = []
+    for (const message of messagesToRemove) {
+      for (const block of message.content) {
+        if (block instanceof ToolResultBlock) {
+          const ref = await this._stashBlock(block)
+          if (ref) refs.push(ref)
+        }
+      }
+    }
+    return refs
   }
 
   /** Process eligible blocks in a message. */
@@ -230,7 +275,11 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
       if (block instanceof TextBlock) {
         if (!this._targetIncludesText(message)) continue
       } else if (block instanceof ToolResultBlock) {
-        if (this._target !== undefined && !matchesToolTarget(block, this._target, messages, this._toolFilter, this._excludeFilter)) continue
+        if (
+          this._target !== undefined &&
+          !matchesToolTarget(block, this._target, messages, this._toolFilter, this._excludeFilter)
+        )
+          continue
       } else {
         continue
       }
@@ -304,6 +353,10 @@ abstract class BaseOffloadStrategy implements ContextStrategy {
 class DropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
 
+  protected override _makeRemovalMarker(count: number, _refs: string[]): string {
+    return `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`
+  }
+
   protected async _replaceBlock(
     block: TextBlock | ToolResultBlock,
     _tokens: number,
@@ -330,6 +383,11 @@ class TruncateStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:truncate'
 
   private readonly _truncateConfig: TruncateConfig
+
+  protected override _makeRemovalMarker(count: number, refs: string[]): string {
+    const refSuffix = refs.length > 0 ? ` | refs: ${refs.join(', ')}` : ''
+    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided${refSuffix}]`
+  }
 
   constructor(target?: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
     super(target, conditions)
@@ -411,7 +469,12 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     return super.apply(context)
   }
 
-  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+  protected override _makeRemovalMarker(count: number, refs: string[]): string {
+    const refSuffix = refs.length > 0 ? ` | refs: ${refs.join(', ')}` : ''
+    return `${SUMMARIZED_PREFIX} ${count} ${count === 1 ? 'message' : 'messages'}${refSuffix}]`
+  }
+
+  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     if (!this._model) return false
 
     const { messages } = context
@@ -423,7 +486,6 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     const summarizeCount = Math.max(1, Math.floor(eligible.length * 0.3))
     const toSummarize = eligible.slice(0, summarizeCount)
 
-    // Expand to include paired messages so we don't orphan tool pairs
     const safeSet = new Set<Message>()
     for (const message of toSummarize) {
       const index = messages.indexOf(message)
@@ -435,30 +497,30 @@ class SummarizeStrategy extends BaseOffloadStrategy {
     const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
+    const refs = await this._stashMessages(safe)
+
     const contentBlocks = flattenMessagesToContent(safe)
     const summary = await summarizeContent(contentBlocks, this._model, this._config)
     if (!summary) return false
 
     const totalTokens = await this._model.countTokens(safe)
+    const refSuffix = refs.length > 0 ? ` | refs: ${refs.join(', ')}` : ''
     const summaryMessage = new Message({
       role: 'user',
       content: [
         new TextBlock(
-          `${SUMMARIZED_PREFIX} ${safe.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`
+          `${SUMMARIZED_PREFIX} ${safe.length} messages, ~${totalTokens.toLocaleString()} tokens${refSuffix}]\n\n${summary}`
         ),
       ],
     })
 
-    // Record insertion point before removing (position of the first summarized message)
     const insertIndex = Math.max(1, messages.indexOf(safe[0]!))
 
-    // Remove summarized messages individually (they may not be contiguous)
     for (const message of safe) {
       const index = messages.indexOf(message)
       if (index !== -1) messages.splice(index, 1)
     }
 
-    // Insert summary where the first summarized message was
     const clampedInsert = Math.min(insertIndex, messages.length)
     messages.splice(clampedInsert, 0, summaryMessage)
 
@@ -484,11 +546,17 @@ class SummarizeStrategy extends BaseOffloadStrategy {
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${refSuffix}]\n\n${summary}`)],
+        content: [
+          new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${refSuffix}]\n\n${summary}`),
+        ],
       })
     }
 
-    const summary = await summarizeContent([new TextBlock(`<content>\n${block.text}\n</content>`)], this._model, this._config)
+    const summary = await summarizeContent(
+      [new TextBlock(`<content>\n${block.text}\n</content>`)],
+      this._model,
+      this._config
+    )
     if (!summary) return null
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
@@ -660,17 +728,11 @@ export const Offload: OffloadNamespace = {
   },
 
   truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder {
-    return wrapAsBuilder(
-      new TruncateStrategy(target, config),
-      (c) => new TruncateStrategy(target, config, c)
-    )
+    return wrapAsBuilder(new TruncateStrategy(target, config), (c) => new TruncateStrategy(target, config, c))
   },
 
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder {
-    return wrapAsBuilder(
-      new SummarizeStrategy(target, config),
-      (c) => new SummarizeStrategy(target, config, c)
-    )
+    return wrapAsBuilder(new SummarizeStrategy(target, config), (c) => new SummarizeStrategy(target, config, c))
   },
 }
 

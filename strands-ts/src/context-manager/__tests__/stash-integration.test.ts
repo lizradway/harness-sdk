@@ -165,4 +165,88 @@ describe('Offload strategies with stash', () => {
       expect(new TextDecoder().decode(retrieved!.content)).toBe(largeText)
     })
   })
+
+  describe('message-level offload + stash', () => {
+    it('truncate message-level stashes content and includes refs in marker', async () => {
+      const { ToolUseBlock } = await import('../../types/messages.js')
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage)
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('system')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-1', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('stashable content', 'tool-1'),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-2', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('more stashable content', 'tool-2'),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-3', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('even more content', 'tool-3'),
+        new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+        new Message({ role: 'user', content: [new TextBlock('latest')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      ]
+      const strategy = Offload.truncate('*').when({ utilization: 0.5 })
+      const context = makeContext(messages, stash, 0.9)
+
+      await strategy.apply(context)
+
+      const keys = await stash.list()
+      expect(keys.length).toBeGreaterThan(0)
+
+      const allText = messages.flatMap((message) =>
+        message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+      )
+      const marker = allText.find((text) => text.includes('[...') && text.includes('elided'))
+      expect(marker).toBeDefined()
+      expect(marker).toContain('refs:')
+    })
+
+    it('drop message-level stashes content but marker has no refs', async () => {
+      const { ToolUseBlock } = await import('../../types/messages.js')
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage)
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('system')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-1', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('stashable content', 'tool-1'),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-2', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('more stashable', 'tool-2'),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ toolUseId: 'tool-3', name: 'bash', input: {} })],
+        }),
+        makeToolResultMessage('even more', 'tool-3'),
+        new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+        new Message({ role: 'user', content: [new TextBlock('latest')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      ]
+      const strategy = Offload.drop('*').when({ utilization: 0.5 })
+      const context = makeContext(messages, stash, 0.9)
+
+      await strategy.apply(context)
+
+      const keys = await stash.list()
+      expect(keys.length).toBeGreaterThan(0)
+
+      const allText = messages.flatMap((message) =>
+        message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+      )
+      const marker = allText.find((text) => text.includes('[Dropped:'))
+      expect(marker).toBeDefined()
+      expect(marker).not.toContain('refs:')
+    })
+  })
 })

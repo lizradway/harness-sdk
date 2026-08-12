@@ -450,7 +450,7 @@ describe('Offload message-level with role alternation', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    expect(messages.length).toBeLessThan(4)
+    expect(messages.length).toBeLessThanOrEqual(4)
   })
 
   it('message-level starts with user message after operation', async () => {
@@ -541,5 +541,120 @@ describe('Offload with * target (fires on everything)', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(false)
+  })
+})
+
+describe('Message-level markers and stash refs', () => {
+  it('drop inserts a marker with message count', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('system')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+    )
+    expect(allText.some((text) => text.includes('[Dropped:') && text.includes('message'))).toBe(true)
+  })
+
+  it('drop marker has no stash refs', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('system')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 'tool-1', name: 'bash', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('output')] })],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('done')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+    )
+    const marker = allText.find((text) => text.includes('[Dropped:'))
+    expect(marker).toBeDefined()
+    expect(marker).not.toContain('refs:')
+  })
+
+  it('truncate inserts a marker with elided count', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('system')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.truncate('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+    )
+    expect(allText.some((text) => text.includes('[...') && text.includes('elided'))).toBe(true)
+  })
+
+  it('truncate marker includes stash refs when stash is configured', async () => {
+    const { Stash } = await import('../../stash.js')
+    const { InMemoryStorage } = await import('../../../storage/in-memory-storage.js')
+    const stash = new Stash(new InMemoryStorage())
+
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('system')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 'tool-1', name: 'bash', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tool-1',
+            status: 'success',
+            content: [new TextBlock('important tool output')],
+          }),
+        ],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('done')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.truncate('*').when({ utilization: 0.5 })
+    const agent = createMockAgent({
+      messages,
+      extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } },
+    })
+    const context: ContextState = { messages, agent, utilization: 0.9, stash }
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block): block is TextBlock => block instanceof TextBlock).map((block) => block.text)
+    )
+    const marker = allText.find((text) => text.includes('[...') && text.includes('elided'))
+    expect(marker).toBeDefined()
+    expect(marker).toContain('refs:')
+
+    const keys = await stash.list()
+    expect(keys.length).toBeGreaterThan(0)
   })
 })

@@ -6,7 +6,7 @@ function makeMockAgent(overrides?: { id?: string }) {
   const agent = createMockAgent()
   Object.defineProperty(agent, 'id', { value: overrides?.id ?? 'test-agent', writable: false })
   Object.defineProperty(agent, 'model', {
-    value: { getConfig: () => ({}), countTokens: async () => 0 },
+    value: { getConfig: () => ({}), countTokens: async () => 0, estimateUtilization: () => 0 },
     writable: false,
   })
   return agent
