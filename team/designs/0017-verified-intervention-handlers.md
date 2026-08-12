@@ -306,12 +306,12 @@ If a rate limit moves from 3 → 10, the existing `{ type: 'budget', maxCalls: 3
 
 ## Constraint Language (Dogwood)
 
-Every constraint — whether authored or mined from execution — is represented as a Dogwood temporal policy. Dogwood extends Cedar with temporal operators (`formerly`, `count`, `since`) so it can express "is it safe to call *given what already happened*?" — not just "is this principal allowed?"
+Dogwood is the constraint language — Cedar extended with temporal operators (`formerly`, `count`, `since`) so it can express "is it safe to call *given what already happened*?" — not just "is this principal allowed?"
 
-The typed JSON IS compiled Dogwood — `requires` is compiled `formerly`, `budget` is compiled `count`. The miner produces the compiled form directly, and the evaluator consumes it as TypeScript set lookups and counter checks. **No Dogwood parser, CLI, or WASM module is in the runtime path.** The evaluation is pure TypeScript:
+Today, Trellis evaluates a subset of Dogwood natively in TypeScript as typed JSON objects (`compiledConstraints`). This is a pragmatic interim: Dogwood WASM bindings don't exist yet. When they ship, `policies` (Dogwood text) replaces `compiledConstraints` as the authoring and evaluation surface.
 
 ```typescript
-// This IS the "Dogwood runtime" — set membership, not a policy engine
+// Current: native TypeScript evaluation of typed JSON constraints
 if (constraint.type === 'requires' && !completedTools.has(condition)) {
   return deny(...)
 }
@@ -320,13 +320,11 @@ if (constraint.type === 'budget' && callCount >= constraint.maxCalls) {
 }
 ```
 
-Dogwood text is the canonical representation for auditing and sharing — a human-readable form of what's enforced. The `policies` config field will accept Dogwood text when a parser ships (WASM module), but the enforcement path never needs one. The typed JSON is self-sufficient.
-
-| Layer | What exists today | Future |
-|-------|-------------------|--------|
-| **Authoring** | `compiledConstraints` (typed JSON) | `policies` (Dogwood text → parsed by WASM) |
-| **Mining output** | Typed JSON directly | Same — miner always produces compiled form |
-| **Evaluation** | TypeScript set/counter checks | Same — already microseconds |
+| Layer | Today (typed JSON) | With Dogwood WASM |
+|-------|-------------------|-------------------|
+| **Authoring** | `compiledConstraints` (typed JSON) | `policies` (Dogwood text) |
+| **Mining output** | Typed JSON | Dogwood text (or typed JSON fed to WASM) |
+| **Evaluation** | TypeScript set/counter checks | Dogwood WASM evaluator |
 
 ---
 
