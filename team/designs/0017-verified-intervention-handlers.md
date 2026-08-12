@@ -215,7 +215,7 @@ If humans override a denial more than a threshold percentage, the constraint dem
 | Tier | Action | Semantics |
 |------|--------|-----------|
 | **Enforced** | `deny()` | Invariant — always true |
-| **Advisory** | `confirm()` | Usually true but exceptions exist — escalate to human |
+| **Advisory** | `confirm()` or `guide()` | Usually true but exceptions exist — escalate to human or steer the model |
 | **Retired** | no-op | Pattern isn't reliable |
 
 "Authenticate before charge" is invariant. "Run tests before deploy" is contextual (valid to skip for a hotfix). The first stays enforced; the second demotes to advisory and raises HITL confirmation.
