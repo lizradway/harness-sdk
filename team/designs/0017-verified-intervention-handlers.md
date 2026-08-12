@@ -52,15 +52,11 @@ An LLM can guess that `charge` requires `authenticate` — it's a reasonable inf
 
 To separate real from false, you need to observe execution. And here's the key insight: **your agents are already hitting these failures.** They hit the 403, they exceed the rate limit, they call deploy without the health check — and then the error vanishes into a log. Trellis doesn't create new failures; it turns the failures you're already eating into constraints that prevent recurrence. The first failure is the cost; every subsequent one is waste.
 
-### Remembering isn't enforcing
-
-Memory systems solve knowledge propagation — Agent A learns that `charge` requires `authenticate`, and memory can surface that to Agent B. But a remembered constraint is just a more sophisticated system prompt. It's still advisory: the model can ignore it under pressure, adversarial prompts can override it, and you can't audit or test compliance.
-
-The gap isn't remembering constraints — it's enforcing them. A constraint in memory says "you should authenticate first." A constraint in Trellis says "this call will not execute until authenticate has completed." One is guidance; the other is a gate.
-
 ### Enforcement must be deterministic
 
 Once you know a constraint — whether authored or discovered — you need a gate the model cannot circumvent. Putting constraints in the prompt (or memory, or system instructions) is fundamentally insufficient. This is not a model quality problem — it's architectural:
+
+- **Remembering isn't enforcing.** Memory systems solve knowledge propagation — Agent A learns that `charge` requires `authenticate`, and memory can surface that to Agent B. But a remembered constraint is just a more sophisticated system prompt. It's still advisory: the model can ignore it under pressure, adversarial prompts can override it, and you can't audit or test compliance. A constraint in memory says "you should authenticate first." A constraint in Trellis says "this call will not execute until authenticate has completed." One is guidance; the other is a gate.
 
 - **Safety competes with the task.** The model weighs "don't call charge without auth" against "process this payment urgently." Under pressure, the task wins. Agent-C [1] demonstrated 100% conformance with deterministic enforcement vs 77.4% with the model self-policing. That's a 22.6% failure rate on known constraints that were explicitly stated in the prompt.
 - **Prompts don't scale.** Three constraints fit in a system prompt. Fifty don't. Each competes for attention with the actual task. In long-running agents already fighting context limits, packing safety rules into the prompt directly competes with the agent's ability to remember what it's doing. Every constraint you add dilutes the attention available for every other constraint.
