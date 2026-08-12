@@ -297,7 +297,25 @@ when temporal {
 
 ### Compiled form
 
-The typed JSON IS compiled Dogwood — `requires` is compiled `formerly`, `budget` is compiled `count`. The monitor discovers constraints and produces the compiled form directly. Dogwood text is the canonical representation for auditing and sharing.
+The typed JSON IS compiled Dogwood — `requires` is compiled `formerly`, `budget` is compiled `count`. The miner produces the compiled form directly, and the evaluator consumes it as TypeScript set lookups and counter checks. **No Dogwood parser, CLI, or WASM module is in the runtime path.** The evaluation is pure TypeScript:
+
+```typescript
+// This IS the "Dogwood runtime" — set membership, not a policy engine
+if (constraint.type === 'requires' && !completedTools.has(condition)) {
+  return deny(...)
+}
+if (constraint.type === 'budget' && callCount >= constraint.maxCalls) {
+  return deny(...)
+}
+```
+
+Dogwood text is the canonical representation for auditing and sharing — a human-readable form of what's enforced. The `policies` config field will accept Dogwood text when a parser ships (WASM module), but the enforcement path never needs one. The typed JSON is self-sufficient.
+
+| Layer | What exists today | Future |
+|-------|-------------------|--------|
+| **Authoring** | `compiledConstraints` (typed JSON) | `policies` (Dogwood text → parsed by WASM) |
+| **Mining output** | Typed JSON directly | Same — miner always produces compiled form |
+| **Evaluation** | TypeScript set/counter checks | Same — already microseconds |
 
 ### Relationship to Cedar
 
