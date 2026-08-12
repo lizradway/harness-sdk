@@ -95,12 +95,9 @@ The technique is process mining applied to agent execution. The Declare Miner (M
 
 - Replacing Cedar for identity/permission checks.
 - Replacing authored Dogwood for infrastructure-level enforcement (Trellis is inside the loop, not at the gateway).
-- Replacing RiskGate for risk classification and HITL escalation.
-- Implementing a full Dogwood runtime in TypeScript (use the WASM module when available; compiled typed JSON handles common cases).
 - Offline trace analysis or log processing (the miner operates over the live event stream, not stored traces).
 - Real-time LLM-based enforcement (too slow, non-deterministic, bypassable).
 - Formal verification of the mining algorithm itself (mining is statistical, not formally verified).
-- Python SDK implementation (follow-up).
 
 ---
 
