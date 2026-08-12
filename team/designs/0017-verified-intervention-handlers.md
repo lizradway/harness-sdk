@@ -184,17 +184,69 @@ The temporal awareness is the *mechanism* that enables mining — it sees orderi
 
 ### The mining algorithm
 
-Pattern detection runs after every observation as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement. Mines the common temporal patterns (prerequisites, loops, cascades, budgets) from the observation buffer:
+Pattern detection runs after every `afterToolCall` as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement.
+
+#### Prerequisite mining
+
+For each tool `B` that just succeeded, check if there's a tool `A` that distinguishes successes from failures:
 
 ```
-Call 1: charge() → 403          → observe(failure, precedingTools: [])
-Call 2: authenticate() → ok     → observe(success)
-Call 3: charge() → 403          → observe(failure, precedingTools: [])  
-Call 4: authenticate() → ok     → observe(success)
-Call 5: charge() → ok           → observe(success, precedingTools: [authenticate])
-                                  → MINED: charge requires authenticate
-                                    (3 failures without + 1 success with = causal evidence)
-Call 6: charge() → DENIED       → constraint enforcing
+confidence(B requires A) = failuresWithout(A) / totalFailures(B)
+support = failuresWithout(A) ≥ minEvidence AND successesWith(A) ≥ 1
+```
+
+If `support` is met: promote `{ type: 'requires', tool: B, condition: A }` to enforcing.
+
+**Worked example:**
+
+```
+observations = []
+
+Call 1: charge() → fail    → observations: [{tool: charge, success: false, preceding: []}]
+Call 2: charge() → fail    → observations: [{...}, {tool: charge, success: false, preceding: []}]
+Call 3: charge() → fail    → observations: [{...}, {...}, {tool: charge, success: false, preceding: []}]
+Call 4: authenticate() → ok → observations: [{...}, {...}, {...}, {tool: authenticate, success: true, ...}]
+Call 5: charge() → ok      → observations: [{...}, {...}, {...}, {...}, {tool: charge, success: true, preceding: [authenticate]}]
+
+Mining triggers on Call 5 (charge succeeded):
+  failuresWithout(authenticate) = 3  (calls 1-3 had no authenticate in preceding)
+  successesWith(authenticate)   = 1  (call 5 had authenticate in preceding)
+  3 ≥ minEvidence(3) AND 1 ≥ 1      → PROMOTE
+
+Call 6: charge() → beforeToolCall → evaluate requires constraint
+  completedTools.has('authenticate') → false → DENY
+```
+
+#### Budget mining
+
+For each tool, track the transition point where successes stop and failures start:
+
+```
+maxSuccessfulCalls = max index where tool succeeded consecutively
+failuresAfterMax   = failures at call indices > maxSuccessfulCalls
+support            = failuresAfterMax ≥ minEvidence AND maxSuccessfulCalls > 0
+```
+
+If `support` is met: promote `{ type: 'budget', tool, maxCalls: maxSuccessfulCalls }`.
+
+#### Implementation
+
+```typescript
+private _detectPrerequisiteFromSuccess(successTool: string): void {
+  const failures = this._observations.filter(o => o.tool === successTool && !o.success)
+  const successes = this._observations.filter(o => o.tool === successTool && o.success)
+
+  if (failures.length < this._minEvidence || successes.length === 0) return
+
+  for (const prereq of this._candidatePrereqs(successes)) {
+    const failuresWithout = failures.filter(o => !o.precedingTools.includes(prereq)).length
+    const successesWith = successes.filter(o => o.precedingTools.includes(prereq)).length
+
+    if (failuresWithout >= this._minEvidence && successesWith >= 1) {
+      this._promoteConstraint({ type: 'requires', tool: successTool, condition: prereq })
+    }
+  }
+}
 ```
 
 **LLM-assisted mining** analyzes failure patterns and proposes constraints that statistical detection misses — error message interpretation, domain-specific rules, multi-step reasoning about why a sequence failed. Every proposal passes through the same validation pipeline: the LLM proposes, execution validates. This is not a future enhancement; it's a core mining mode alongside statistical detection.
