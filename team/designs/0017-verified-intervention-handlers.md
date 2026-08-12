@@ -48,13 +48,9 @@ This is the ICRL insight [14]: constraints are latent in the environment. You ca
 
 ### Why not generate constraints with an LLM?
 
-A natural reaction: "give the LLM the tool descriptions and ask it to generate safety policies." This doesn't work for the same reason you can't write them by hand — **you can't enumerate what you don't know.**
+An LLM can guess that `charge` requires `authenticate` — it's a reasonable inference. The problem isn't generation; it's **validation**. You'll get a mix of real constraints and false ones, and false constraints are worse than no constraints: they silently block valid agent behavior. A missed constraint causes a visible failure; a wrong constraint causes invisible prevention of legitimate work.
 
-- **Tool descriptions don't contain the constraints.** The `charge` tool description says "process a payment." It doesn't say "requires `authenticate` first" — that's an implicit coupling in the backend. The rate limit isn't in any description. The cascade between `deploy` and `promote` is emergent. An LLM reading tool descriptions hallucinates plausible-sounding constraints that may not match reality.
-- **Generated constraints are ungrounded.** A human writing "charge requires authenticate" knows this because they built the system or read the incident report. An LLM generating the same rule is pattern-matching on common API shapes. It will produce both real constraints (authenticate before charge) and false ones (log before search?) with equal confidence. You can't distinguish signal from noise without running the system.
-- **The environment is the ground truth.** The only reliable signal for "X requires Y" is: X fails without Y and succeeds with Y. This is empirical, not inferrable from documentation. Trellis gets its constraints from the environment itself — the same source of truth that will enforce them.
-
-LLM-generated constraints are a reasonable *starting point* for seeding authored policies (and a future enhancement could propose constraints from failure analysis). But they cannot replace observation. Trellis mines from what actually happens, not what a model thinks might happen.
+To separate real from false, you need to observe: does the tool actually fail without the prerequisite? That observation mechanism is exactly what Trellis provides. LLM-generated constraints are a reasonable seed — but without grounding them against execution, you're enforcing guesses.
 
 ### Remembering isn't enforcing
 
