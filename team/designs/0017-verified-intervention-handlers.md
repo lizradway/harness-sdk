@@ -262,15 +262,45 @@ A mined constraint must pass:
 
 ### Self-correction and demotion
 
-If humans override a denial more than a threshold percentage, the constraint demotes:
+Mined constraints can be wrong. The environment changes. A rate limit gets raised. A prerequisite gets removed. Trellis handles this through **override tracking and automatic demotion**.
 
-| Tier | Action | Semantics |
-|------|--------|-----------|
-| **Enforced** | `deny()` | Invariant — always true |
-| **Advisory** | `confirm()` or `guide()` | Usually true but exceptions exist — escalate to human or steer the model |
-| **Retired** | no-op | Pattern isn't reliable |
+#### How a human overrides a denial
 
-"Authenticate before charge" is invariant. "Run tests before deploy" is contextual (valid to skip for a hotfix). The first stays enforced; the second demotes to advisory and raises HITL confirmation.
+When Trellis denies a tool call, the intervention pipeline returns a `deny` action. The override mechanism depends on deployment context:
+
+- **HITL mode** (`confirm()`): The denial surfaces to a human operator who can approve or reject. An approval is an override.
+- **Programmatic override**: The agent's orchestrator can catch denials for specific constraints and explicitly allow them (e.g. during a hotfix, bypass "run tests before deploy").
+- **Admin API**: `trellis.override(constraintKey)` records an override and allows the call through.
+
+Every override is recorded in the constraint's evidence: `{ failures: 4, successes: 2, overrides: 3 }`.
+
+#### Demotion tiers
+
+| Tier | Action | Semantics | Demotion trigger |
+|------|--------|-----------|-----------------|
+| **Enforced** | `deny()` | Invariant — always true | — |
+| **Advisory** | `confirm()` or `guide()` | Usually true but exceptions exist | override rate > threshold (e.g. 20%) |
+| **Retired** | no-op | Pattern isn't reliable | override rate > retirement threshold (e.g. 50%) |
+
+#### What happens when a constraint is wrong
+
+A mined constraint that no longer reflects reality (e.g. the API removed the auth requirement) will start getting overridden. The demotion cascade:
+
+1. Constraint enforces → human overrides → override counter increments
+2. Override rate crosses advisory threshold → constraint demotes to `confirm()`/`guide()`
+3. Override rate crosses retirement threshold → constraint retires (no-op)
+4. Retired constraints stay in storage with provenance — they don't re-discover from the same pattern
+
+A constraint can also be **manually retired** via the admin API if you know it's wrong without waiting for overrides to accumulate.
+
+#### What happens when the environment changes
+
+If a rate limit moves from 3 → 10, the existing `{ type: 'budget', maxCalls: 3 }` constraint starts blocking calls that would now succeed. Two paths to resolution:
+
+- **Override-driven**: calls 4–10 get overridden → constraint demotes → eventually retires → a new budget constraint mines at the correct threshold
+- **Explicit update**: admin removes or updates the constraint in storage directly
+
+"Authenticate before charge" is invariant — it never gets overridden, never demotes. "Run tests before deploy" is contextual — valid to skip for a hotfix, so it accumulates overrides and demotes to advisory.
 
 ---
 
