@@ -48,9 +48,9 @@ This is the ICRL insight [14]: constraints are latent in the environment. You ca
 
 ### Why not generate constraints with an LLM?
 
-An LLM can guess that `charge` requires `authenticate` — it's a reasonable inference. The problem isn't generation; it's **validation**. You'll get a mix of real constraints and false ones, and false constraints are worse than no constraints: they silently block valid agent behavior. A missed constraint causes a visible failure; a wrong constraint causes invisible prevention of legitimate work.
+An LLM can guess that `charge` requires `authenticate` — it's a reasonable inference. The problem isn't generation; it's **validation**. You'll get a mix of real constraints and false ones, and false constraints are worse than missing ones: they silently block valid agent behavior with no visible signal that anything went wrong.
 
-To separate real from false, you need to observe: does the tool actually fail without the prerequisite? That observation mechanism is exactly what Trellis provides. LLM-generated constraints are a reasonable seed — but without grounding them against execution, you're enforcing guesses.
+To separate real from false, you need to observe execution. And here's the key insight: **your agents are already hitting these failures.** They hit the 403, they exceed the rate limit, they call deploy without the health check — and then the error vanishes into a log. Trellis doesn't create new failures; it turns the failures you're already eating into constraints that prevent recurrence. The first failure is the cost; every subsequent one is waste.
 
 ### Remembering isn't enforcing
 
