@@ -197,7 +197,7 @@ Call 5: charge() → ok           → observe(success, precedingTools: [authenti
 Call 6: charge() → DENIED       → constraint enforcing
 ```
 
-Future: LLM-assisted mining could analyze failure patterns and propose constraints that statistical detection misses (error message interpretation, domain-specific rules). Every proposal would pass through the same validation pipeline — the LLM proposes, the monitor validates.
+**LLM-assisted mining** analyzes failure patterns and proposes constraints that statistical detection misses — error message interpretation, domain-specific rules, multi-step reasoning about why a sequence failed. Every proposal passes through the same validation pipeline: the LLM proposes, execution validates. This is not a future enhancement; it's a core mining mode alongside statistical detection.
 
 ### Validation before enforcement
 
@@ -215,86 +215,16 @@ If humans override a denial more than a threshold percentage, the constraint dem
 | Tier | Action | Semantics |
 |------|--------|-----------|
 | **Enforced** | `deny()` | Invariant — always true |
-| **Advisory** | `guide()` | Usually true but exceptions exist |
+| **Advisory** | `confirm()` | Usually true but exceptions exist — escalate to human |
 | **Retired** | no-op | Pattern isn't reliable |
 
-"Authenticate before charge" is invariant. "Run tests before deploy" is contextual (valid to skip for a hotfix). The first stays enforced; the second demotes to advisory.
+"Authenticate before charge" is invariant. "Run tests before deploy" is contextual (valid to skip for a hotfix). The first stays enforced; the second demotes to advisory and raises HITL confirmation.
 
 ---
 
 ## Constraint Language (Dogwood)
 
-Every constraint — whether authored or mined from execution — is represented as a Dogwood temporal policy. Dogwood is the enforcement language; mining produces constraints in this form.
-
-### Why Dogwood
-
-Cedar answers "is this principal allowed to perform this action?" — a stateless, per-request question. Agent safety requires "is it safe to perform this action *given what already happened*?" This is inherently temporal. Dogwood extends Cedar with the operators needed:
-
-| Operator | Semantics | Maps to |
-|----------|-----------|---------|
-| `formerly within W` | Some matching event occurred within window W | Prerequisites |
-| `count(...)` | Aggregate count of matching events | Budgets |
-| `previous` | The immediately preceding event | Loop detection |
-| `since` | Property held continuously since condition | Cascades |
-
-### Dogwood event model
-
-Dogwood's two event kinds map directly to agent lifecycle hooks:
-
-| Dogwood concept | Agent hook | Role |
-|-----------------|-----------|------|
-| `request` | `beforeToolCall` | Decision point — triggers authorization |
-| `resolution` | `afterToolCall` | History-only — records outcome for temporal queries |
-
-A tool call generates a `request` (authz decision), then a `resolution` (outcome recording). Temporal operators query the history of both.
-
-### Constraint types as Dogwood policies
-
-**Prerequisites** — `charge` requires prior `authenticate`:
-
-```cedar
-forbid(principal, action == Action::"charge", resource)
-unless temporal {
-  formerly Action::"authenticate"::request{
-    __cedar_principal: principal
-  }
-};
-```
-
-**Budgets** — max 3 charges per session:
-
-```cedar
-forbid(principal, action == Action::"charge", resource)
-when temporal {
-  count(Action::"charge"::request{__cedar_principal: principal}) >= 3
-};
-```
-
-**Cascades** — block `promote` after `deploy` failure:
-
-```cedar
-forbid(principal, action == Action::"promote", resource)
-when temporal {
-  formerly Action::"deploy"::resolution{
-    __cedar_principal: principal,
-    output.error: true
-  }
-};
-```
-
-**Loops** — block repeated identical calls:
-
-```cedar
-forbid(principal, action == Action::"search", resource)
-when temporal {
-  count(Action::"search"::request{
-    __cedar_principal: principal,
-    input: context.input
-  }) >= 5
-};
-```
-
-### Compiled form
+Every constraint — whether authored or mined from execution — is represented as a Dogwood temporal policy. Dogwood extends Cedar with temporal operators (`formerly`, `count`, `since`) so it can express "is it safe to call *given what already happened*?" — not just "is this principal allowed?"
 
 The typed JSON IS compiled Dogwood — `requires` is compiled `formerly`, `budget` is compiled `count`. The miner produces the compiled form directly, and the evaluator consumes it as TypeScript set lookups and counter checks. **No Dogwood parser, CLI, or WASM module is in the runtime path.** The evaluation is pure TypeScript:
 
@@ -315,16 +245,6 @@ Dogwood text is the canonical representation for auditing and sharing — a huma
 | **Authoring** | `compiledConstraints` (typed JSON) | `policies` (Dogwood text → parsed by WASM) |
 | **Mining output** | Typed JSON directly | Same — miner always produces compiled form |
 | **Evaluation** | TypeScript set/counter checks | Same — already microseconds |
-
-### Relationship to Cedar
-
-| Layer | Language | Statefulness |
-|-------|----------|-------------|
-| Identity/authz | Cedar | Stateless per-request |
-| Trajectory constraints | Dogwood | Stateful over event history |
-| Infrastructure perimeter | Dogwood | Stateful over event history |
-
-Cedar handles "who can call what." Dogwood handles "when is it safe to call, given history." Same language at every temporal layer.
 
 ---
 
@@ -592,6 +512,68 @@ CedarAuthorization and Trellis are the same pattern at different levels:
 - **Trellis** evaluates Dogwood policies (temporal constraints) on `beforeToolCall`
 
 Cedar is a subset of Dogwood — a Dogwood policy with no `temporal` clause is valid Cedar. The handlers compose naturally: Cedar answers "is this user allowed?", Trellis answers "is it safe given what already happened?"
+
+### Dogwood operators
+
+| Operator | Semantics | Maps to |
+|----------|-----------|---------|
+| `formerly within W` | Some matching event occurred within window W | Prerequisites |
+| `count(...)` | Aggregate count of matching events | Budgets |
+| `previous` | The immediately preceding event | Loop detection |
+| `since` | Property held continuously since condition | Cascades |
+
+### Dogwood event model
+
+| Dogwood concept | Agent hook | Role |
+|-----------------|-----------|------|
+| `request` | `beforeToolCall` | Decision point — triggers authorization |
+| `resolution` | `afterToolCall` | History-only — records outcome for temporal queries |
+
+### Constraint types as Dogwood policies
+
+**Prerequisites** — `charge` requires prior `authenticate`:
+
+```cedar
+forbid(principal, action == Action::"charge", resource)
+unless temporal {
+  formerly Action::"authenticate"::request{
+    __cedar_principal: principal
+  }
+};
+```
+
+**Budgets** — max 3 charges per session:
+
+```cedar
+forbid(principal, action == Action::"charge", resource)
+when temporal {
+  count(Action::"charge"::request{__cedar_principal: principal}) >= 3
+};
+```
+
+**Cascades** — block `promote` after `deploy` failure:
+
+```cedar
+forbid(principal, action == Action::"promote", resource)
+when temporal {
+  formerly Action::"deploy"::resolution{
+    __cedar_principal: principal,
+    output.error: true
+  }
+};
+```
+
+**Loops** — block repeated identical calls:
+
+```cedar
+forbid(principal, action == Action::"search", resource)
+when temporal {
+  count(Action::"search"::request{
+    __cedar_principal: principal,
+    input: context.input
+  }) >= 5
+};
+```
 
 </details>
 
