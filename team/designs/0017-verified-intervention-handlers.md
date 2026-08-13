@@ -1,4 +1,4 @@
-# Trellis: Temporal Constraint Mining from Agent Execution
+# Trellis: Learning Constraints from Agent Execution
 
 ![A wooden trellis with climbing plants](https://raw.githubusercontent.com/lizradway/harness-sdk/feat/vigil-handler/team/designs/assets/trellis.png)
 
@@ -15,193 +15,355 @@
 
 | Term | Definition |
 |------|-----------|
-| **Trellis** | A wooden framework that guides plant growth. |
-| **Constraint mining** | Discovering temporal constraints from observed execution patterns — the same technique as Declare mining (process mining, Maggi et al. 2012) applied to agent tool calls instead of business process events. |
+| **Trellis** | A wooden frame that stops plant growth in unsupported directions and guides it along supported ones. |
+| **Constraint mining** | Discovering behavioral constraints from observed execution patterns. The same technique as Declare mining (process mining, Maggi et al. 2012) applied to agent tool calls instead of business process events. |
 | **Intervention Handler** | The Strands SDK's first-class control primitive (design 0007). Intercepts lifecycle events, evaluates against rules, returns Proceed/Deny/Guide/Transform/Confirm. |
-| **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. The enforcement language for mined constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
-| **Temporal constraint** | A constraint whose evaluation depends on what already happened in the current execution — prerequisites, loops, cascades, budgets. Requires temporal operators over event history, not just the current request. |
+| **Dogwood** | Cedar extended with bounded past-time Metric First-Order Temporal Logic (MFOTL). Adds `formerly`, `previous`, `since` operators and aggregations (`count`, `sum`) over event history. One of several export targets for mined constraints. Open source at [github.com/dogwood-policy/dogwood](https://github.com/dogwood-policy/dogwood). |
+| **Behavioral constraint** | A constraint on agent tool-call behavior. Some are temporal (prerequisites, cascades, sequences: depend on execution history), some are stateless (forbid, budget: depend on current state or counts only). All are mined from the same observation stream. |
 
 </details>
 
 ---
 
-[Problem](#problem) · [Goals and Non-Goals](#goals-and-non-goals) · [Proposal](#proposal) · [Constraint Language](#dogwood-as-constraint-language) · [Developer Experience](#developer-experience) · [Consequences](#consequences)
+[Problem](#problem) · [What](#what-trellis-is) · [How](#how-it-works) · [Developer Experience](#developer-experience) · [Consequences](#consequences)
 
 ---
 
 ## Problem
 
-Agents fail in ways you can't predict. They call a payment API without authentication, loop on an expensive tool 47 times, deploy without a health check, hit a rate limit on the fourth call. The consequences are expensive and often irreversible.
+Production agents need policy enforcement. Cedar, Dogwood, OPA — pick your language, the point is the same: deterministic gates that the model cannot circumvent. This isn't optional anymore. An agent without policy enforcement is a liability.
 
-The core problem isn't that agents make mistakes — it's that **constraints resist enumeration**. You can't write rules for things you don't know about yet.
+But nobody is writing these policies by hand. They're LLM-generating them — "here's my agent, write me Cedar policies." And that works for the constraints you already know about. But agents fail in ways you can't predict — the problem is the constraints you don't know about yet.
 
-### Constraints are latent
+### Your policy is always incomplete
 
-Every static approach — system prompts, Cedar policies, guardrail configs — assumes you already know the constraints. But in practice, most constraints are implicit. They exist in the system's behavior, not in any document:
+Every static approach — system prompts, Cedar policies, guardrail configs — assumes you already know the constraints. But agents talk to systems they don't fully control, and most constraints are implicit:
 
-- The 403 on `charge` without `authenticate` isn't documented anywhere. It just happens.
-- The rate limit on the payments API isn't in the tool description. You discover it on the fourth call.
-- The deployment pipeline requires health-check → promote ordering. No schema says so.
+- The payment API returns 403 without `authenticate` first. No documentation says so.
+- The rate limit locks the account on the fourth call. The tool description doesn't mention it.
 - The third-party API silently corrupts data if you call `update` before `refresh`. You learn this from a production incident.
 
-This is the ICRL insight [14]: constraints are latent in the environment. You can't enumerate them upfront because you don't know what they are until you hit them.
+Constraints are latent in the environment [14]. You can't enumerate them upfront because you don't know what they are until you hit them. An LLM can guess some of them — but guessed constraints are worse than missing ones if they're wrong, because they silently block valid behavior with no signal that anything went wrong.
 
-### Why not generate constraints with an LLM?
-
-An LLM can guess that `charge` requires `authenticate` — it's a reasonable inference. The problem isn't generation; it's **validation**. You'll get a mix of real constraints and false ones, and false constraints are worse than missing ones: they silently block valid agent behavior with no visible signal that anything went wrong.
-
-To separate real from false, you need to observe execution. And here's the key insight: **your agents are already hitting these failures.** They hit the 403, they exceed the rate limit, they call deploy without the health check — and then the error vanishes into a log. Trellis doesn't create new failures; it turns the failures you're already eating into constraints that prevent recurrence. The first failure is the cost; every subsequent one is waste.
+To validate, you need to observe execution. And here's the key insight: **your agents are already hitting these failures.** They hit the 403, they exceed the rate limit, they call deploy without the health check, and then the error vanishes into a log. Trellis doesn't create new failures; it turns the failures you're already eating into constraints that prevent recurrence. The first failure is the cost; every subsequent one is waste.
 
 ### Enforcement must be deterministic
 
-Once you know a constraint — whether authored or discovered — you need a gate the model cannot circumvent. Putting constraints in the prompt (or memory, or system instructions) is fundamentally insufficient. This is not a model quality problem — it's architectural:
+Once you know a constraint — whether authored, generated, or discovered — you need a gate the model cannot circumvent. Putting constraints in the prompt is fundamentally insufficient:
 
-- **Remembering isn't enforcing.** Memory systems solve knowledge propagation — Agent A learns that `charge` requires `authenticate`, and memory can surface that to Agent B. But a remembered constraint is just a more sophisticated system prompt. It's still advisory: the model can ignore it under pressure, adversarial prompts can override it, and you can't audit or test compliance.
-
-- **Safety competes with the task.** The model weighs "don't call charge without auth" against "process this payment urgently." Under pressure, the task wins. Agent-C [1] demonstrated 100% conformance with deterministic enforcement vs 77.4% with the model self-policing. That's a 22.6% failure rate on known constraints that were explicitly stated in the prompt.
-- **Prompts don't scale.** Three constraints fit in a system prompt. Fifty don't. Each competes for attention with the actual task. In long-running agents already fighting context limits, packing safety rules into the prompt directly competes with the agent's ability to remember what it's doing. Every constraint you add dilutes the attention available for every other constraint.
-- **Self-monitoring is unreliable.** A model that could reliably detect its own violations wouldn't commit them. The LLM-Modulo framework [13] formalizes this: LLMs are "universal approximate knowledge sources" — they know things about the world, but cannot certify facts about their own outputs. They are generators, not verifiers. Asking a model to verify its own output is infinite regress.
-- **You can't audit or test a prompt.** "Prove no deployment skipped a health check this month." With a prompt, you can't — the model might have followed the instruction or might not have. With a deterministic gate, enforcement is binary: if the constraint existed, the call was blocked. Period. `expect(tool).toHaveBeenBlocked()`.
-- **Constraints are model-portable.** Switch from Claude to GPT to Llama, and every prompt-based rule needs re-testing. A deterministic gate doesn't care which model is generating the calls — it evaluates the same way regardless.
+- **Safety competes with the task.** The model weighs "don't call charge without auth" against "process this payment urgently." Under pressure, the task wins. Agent-C [1]: 100% conformance with deterministic enforcement vs 77.4% with the model self-policing.
+- **Prompts don't scale.** Three constraints fit in a system prompt. Fifty don't. Each competes for attention with the actual task. Every constraint you add dilutes the attention available for every other constraint.
+- **You can't audit or test a prompt.** "Prove no deployment skipped a health check this month." With a prompt, you can't. With a deterministic gate: `expect(tool).toHaveBeenBlocked()`.
+- **Constraints are model-portable.** Switch from Claude to GPT to Llama, and every prompt-based rule needs re-testing. A deterministic gate evaluates the same regardless.
 
 ### The problem, stated simply
 
-**How do you go from zero authored policies to a set of enforced constraints that prevent the failures you've already seen — without requiring a human to write each rule?**
+**You LLM-generate policies for the constraints you know. How do you validate them, refine them, and fill the gaps you didn't know existed — without requiring a human to discover each missing rule?**
 
-This requires three things working together:
+1. **Validate**: does "authenticate before charge" actually hold in this environment? Execution confirms or disproves it.
+2. **Refine**: "max 3 API calls" is imprecise. Which tool? Per session? Per user? Execution sharpens it.
+3. **Discover**: what did you miss entirely? Execution reveals constraints you didn't know existed.
 
-1. **Discovery** — observe failures and infer what constraint was violated
-2. **Enforcement** — evaluate constraints deterministically, in microseconds, no LLM in the path
-3. **Transfer** — propagate discovered constraints to new agents so they never hit the same failure
-
-This is what Trellis does. Failures become constraints, constraints become enforcement, enforcement transfers across agents. The authored-policy path exists (and is the right choice when you know your constraints), but the novel contribution is closing the loop from observed failure → deterministic prevention automatically.
-
-The technique is process mining applied to agent execution. The Declare Miner (Maggi et al., 2012) counts activations, fulfillments, and violations in event logs to discover temporal constraints over business processes. Trellis does the same — count failures-without vs. successes-with, apply an evidence threshold, promote to enforcement. The algorithm is proven in a different field; the domain is new.
+Trellis is the next step after LLM-generated policies. You seed it with your intent (authored or generated); execution validates, refines, and expands it into a complete, enforced policy. The LLM generates hypotheses; the evidence pipeline validates them. No constraint enforces without proof.
 
 ---
 
-## Goals and Non-Goals
+## What Trellis Is
 
-### Goals
+The lowest-friction path from "I roughly know what my agent shouldn't do" to "it's deterministically enforced, tested, and transferred across all my agents."
 
-1. **Constraint mining**: mine temporal constraints from observed failure patterns — no manual rule authoring required. Failures become enforced policies automatically.
-2. **Same-session enforcement**: mined constraints begin enforcing within the same session. No redeploy, no restart.
-3. **Cross-agent transfer**: persist mined constraints to storage so new agents inherit protection without ever seeing a failure.
-4. **Deterministic enforcement**: no LLM in `beforeToolCall`. Compiled constraints evaluate as set lookups and counter checks (microseconds).
-5. **Authored policy support**: also works with purely human-written constraints (zero mining) for known risks.
-6. **Composition**: standard intervention pipeline — composes with Cedar, RiskGate, steering, HITL.
+You seed it with what you know. Execution validates, refines, and expands your policy into a complete set of deterministically enforced constraints.
 
-### Non-Goals
+|  | **Hard (code gate)** | **Soft (guidance)** |
+|--|---------------------|---------------------|
+| **Authored** | Policy languages (Cedar, Dogwood, OPA) | Steering, Skills |
+| **Learned** | Mined constraints (Trellis) | Mined skills, procedural memory |
 
-- Replacing Cedar for identity/permission checks.
-- Replacing authored Dogwood for infrastructure-level enforcement (Trellis is inside the loop, not at the gateway).
-- Offline trace analysis or log processing (the miner operates over the live event stream, not stored traces).
-- Real-time LLM-based enforcement (too slow, non-deterministic, bypassable).
-- Formal verification of the mining algorithm itself (mining is statistical, not formally verified).
-
----
-
-## Proposal
-
-### Core concept: mine constraints from execution, enforce them deterministically
-
-Trellis applies process mining to agent execution. It watches the agent's tool-call stream, mines temporal constraints from observed failure patterns, and enforces them deterministically — all inline, no redeploy, no human authoring required.
-
-The mechanism is a Dogwood policy intervention handler (the temporal counterpart to `CedarAuthorization`), but the novel contribution is the mining: failures become constraints automatically.
-
-```typescript
-// Mining enabled — zero-config, learns from execution
-const trellis = new Trellis({
-  discover: true,
-  storage: new DynamoDBStorage({ table: 'agent-constraints' }),
-})
-
-// Authored policies — Dogwood text (like CedarAuthorization takes Cedar text)
-const trellis = new Trellis({
-  policies: `
-    forbid(principal, action == Action::"charge", resource)
-    unless temporal { formerly Action::"authenticate"::request };
-
-    forbid(principal, action == Action::"charge", resource)
-    when temporal { count(Action::"charge"::request) >= 5 };
-  `,
-  discover: true, // also mine new ones
-  storage,
-})
-```
-
-| Mode | What it does | LLM needed? |
-|------|-------------|-------------|
-| **Mine + enforce** | Observe execution, mine constraints from failures, enforce all | Mining: no. Enforcement: no. |
-| **Enforce only** | Evaluate authored constraints against trajectory | No |
-
-The handler advances over the agent's event stream — every `beforeToolCall` evaluates constraints against the trajectory so far, every `afterToolCall` records the outcome and runs the mining algorithm.
+Trellis occupies the **learned × hard** cell. It does not mine skills (learned × soft) or replace steering (authored × soft). Those are separate primitives that compose alongside it in the interventions array.
 
 ```
 beforeToolCall → evaluate constraints against trajectory → proceed/deny
 afterToolCall  → update trajectory + mine patterns from failures
 ```
 
-The "trajectory" is a Set of completed tools + a Map of call counts + a Set of failed tools. It lives in memory for the duration of the agent's execution.
+### Goals
 
-### How Trellis works
+1. **Prevent, not recover.** Block violations before they happen, not after.
+2. **Transfer across agents.** One agent's failure protects every future agent. Fresh agents inherit protection without ever seeing the failure.
+3. **Mine constraints from failures**, no manual rule authoring required.
+4. **Deterministic.** No LLM in the enforcement path (microseconds). Immune to prompt injection.
+5. **Policy-language agnostic.** Typed JSON natively, or delegate to Cedar/Dogwood/OPA.
 
-A single `InterventionHandler` with two responsibilities:
+### Non-Goals
 
-**Enforcement (always):**
-1. **Evaluates** constraints against the current trajectory on every `beforeToolCall`
-2. **Records** tool outcomes into the trajectory on every `afterToolCall`
-3. **Denies** calls that violate constraints deterministically
-
-**Mining (when `discover: true`):**
-4. **Mines** constraint patterns from observed failures (statistical process mining)
-5. **Validates** mined constraints against evidence thresholds before enforcing
-6. **Persists** mined constraints to storage for cross-agent transfer
-7. **Self-corrects** — demotes constraints that humans consistently override
+- Replacing Cedar for identity/permission checks
+- Mining skills or procedures: Trellis mines what *not* to do (failures → hard gate), not what *to* do (successes → guidance). That's a skills/memory layer.
+- Steering: same intent expressed as a prompt-based suggestion the model can ignore under pressure (Agent-C: 22.6% failure rate).
 
 ### What it mines
 
-| Pattern | Signal | Dogwood policy | Compiled form |
-|---------|--------|----------------|---------------|
-| **Authorization** | Tool always fails for this principal/resource | `forbid(principal, action == Action::"X", resource)` | `{ type: 'forbid', tool, principal?, resource? }` |
-| **Prerequisites** | Tool B fails without A; succeeds with A | `forbid ... unless temporal { formerly Action::"A"::request }` | `{ type: 'requires', tool, condition }` |
-| **Loops** | Same tool + same args repeated | `forbid ... when temporal { count(same input) >= N }` | `{ type: 'loop', tool, maxRepeats }` |
-| **Cascades** | When A fails, B always fails after | `forbid ... when temporal { formerly A::resolution{error} }` | `{ type: 'cascade', trigger, blocks }` |
-| **Budgets** | Tool exceeds max calls | `forbid ... when temporal { count(...) >= N }` | `{ type: 'budget', tool, maxCalls }` |
+| Pattern | Signal | Typed JSON form |
+|---------|--------|-----------------|
+| **Prerequisites** | Tool B fails without A; succeeds with A | `{ type: 'requires', tool, condition }` |
+| **Loops** | Same tool + same args repeated | `{ type: 'loop', tool, maxRepeats }` |
+| **Cascades** | When A fails, B always fails after | `{ type: 'cascade', trigger, blocks }` |
+| **Budgets** | Tool exceeds max calls | `{ type: 'budget', tool, maxCalls }` |
 
-Dogwood is a superset of Cedar — stateless authorization is just the degenerate case where no temporal operators are needed. Trellis mines both: a tool that always fails regardless of context is an authz constraint; a tool that fails only without a prerequisite is temporal. The temporal observation stream is what enables mining *all* constraint types — it provides the data to distinguish "always fails" (stateless) from "fails without X" (temporal). Every mined constraint is compiled to a typed JSON form that evaluates as a set membership check or counter comparison — microseconds, no ambiguity.
 
-**Future mining targets** (not yet implemented):
+### Constraint representation
 
-| Pattern | Signal | Dogwood policy | Temporal? |
-|---------|--------|----------------|-----------|
-| **Input-value** | Tool fails when `amount > N` | `forbid ... when context.input.amount > N` | No — Cedar `when` clause |
-| **Resource-specific** | Tool fails on resource Y but succeeds on others | `forbid(principal, action, Resource::"Y")` | No — Cedar resource scope |
-| **Temporal + value** | Tool fails after N calls *with same input* | `forbid ... when temporal { count(same input) >= N }` | Yes — already `loop` type |
-| **Sequence** | Tool C fails unless A then B in order | `forbid ... unless temporal { formerly B after formerly A }` | Yes — ordered `formerly` |
+Trellis is **policy-language agnostic**. It mines typed constraint objects and evaluates them with native TypeScript set/counter checks. No dependency on any policy language runtime.
 
-The temporal awareness is the *mechanism* that enables mining — it sees ordering, counts, and causal relationships — but the constraints it produces span the full Dogwood/Cedar expressiveness, from stateless authz to multi-step temporal ordering.
+```typescript
+if (constraint.type === 'requires' && !completedTools.has(condition)) {
+  return deny(...)
+}
+if (constraint.type === 'budget' && callCount >= constraint.maxCalls) {
+  return deny(...)
+}
+```
+
+To delegate enforcement to an external policy engine instead, pass a handler:
+
+```typescript
+const trellis = new Trellis({
+  policy: new CedarAuthorization(),
+})
+```
+
+Mined constraints can also be exported for governance, auditing, or infrastructure-level enforcement:
+
+| Target | Export form | Use case |
+|--------|-----------|----------|
+| **Dogwood** | `forbid ... unless temporal { formerly ... }` | Temporal enforcement at infrastructure layer |
+| **Cedar** | `forbid(principal, action, resource) when { ... }` | Stateless authz integration |
+| **OPA/Rego** | `deny[msg] { not input.preceding[_] == "authenticate" }` | Policy-as-code pipelines |
+| **Custom** | Typed JSON as-is | Programmatic consumption |
+
+---
+
+## How It Works
 
 ### The mining algorithm
 
-Pattern detection runs after every `afterToolCall` as part of event processing. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls — count activations vs. violations, apply an evidence threshold, promote to enforcement.
+Pattern detection runs after every `afterToolCall`. No LLM call. This is Declare mining (Maggi et al., 2012) applied to agent tool calls.
 
-#### Prerequisite mining
+For each candidate constraint, the miner tracks:
+1. **Activations**: how many times the situation arose (e.g. `charge` was called)
+2. **Violations**: how many of those times the constraint was broken (e.g. `authenticate` hadn't run)
+3. **Confirmations**: at least one case where the constraint held and the tool succeeded
 
-For each tool `B` that just succeeded, check if there's a tool `A` that distinguishes successes from failures:
+When violations ≥ evidence threshold and confirmations ≥ 1, the constraint promotes from candidate to enforcing.
 
 ```
 confidence(B requires A) = failuresWithout(A) / totalFailures(B)
 support = failuresWithout(A) ≥ minEvidence AND successesWith(A) ≥ 1
 ```
 
-If `support` is met: promote `{ type: 'requires', tool: B, condition: A }` to enforcing.
+A mined constraint must pass: (1) minimum evidence threshold, (2) causal confirmation (at least one success where the condition was met), (3) consistency check (no circular deps). See Appendix A for worked examples, budget mining, and implementation details.
 
-**Worked example:**
+When `extraction` is configured, Trellis uses an LLM to propose constraints that statistical detection misses. Every proposal passes through the same validation pipeline: the LLM accelerates discovery, execution validates. No constraint enforces without evidence.
+
+### Constraint visibility
+
+Enforcing constraints are surfaced to the agent so it can plan around them rather than discovering them through failed tool calls.
+
+```typescript
+beforeToolCall → evaluate constraints against trajectory → proceed/deny
+                                                          ↑
+system prompt injection: "deploy requires health_check"   │
+agent plans accordingly ─────────────────────────────────→│ denial is a bug, not normal flow
+```
+
+The agent sees "deploy requires health_check" and routes around it. If it still tries, the gate still blocks — knowing the rule doesn't let you bypass it. The adversarial robustness property is preserved: visibility is not override-ability.
+
+Why this matters: a `deny()` that fires is expensive — a wasted tool call, a recovery turn, context spent on the error. Surfacing constraints upfront turns denial from the expected learning mechanism into an anomaly signal.
+
+### Self-correction
+
+Mined constraints can be wrong. Trellis handles this through **override tracking and automatic demotion**:
+
+| Tier | Action | Demotion trigger |
+|------|--------|-----------------|
+| **Enforced** | `deny()` | — |
+| **Advisory** | `confirm()` | override rate > threshold |
+| **Retired** | no-op | override rate > retirement threshold |
+
+"Authenticate before charge" is invariant: it never gets overridden, never demotes. "Run tests before deploy" is contextual: valid to skip for a hotfix, so it accumulates overrides and demotes to advisory. See Appendix A for the full demotion cascade.
+
+
+---
+
+## Developer Experience
+
+### Seed: start with what you know
+
+The `policy` field is your initial intent. Everything you pass enforces immediately. Execution then validates your seeds (are they correct?), refines them (are they precise?), and discovers what you missed.
+
+Start blank (learn everything from scratch):
+
+```typescript
+import { Trellis } from '@strands-agents/sdk/vended-interventions/trellis'
+
+const trellis = new Trellis()
+```
+
+Seed with known constraints:
+
+```typescript
+const trellis = new Trellis({
+  policy: [
+    { type: 'requires', tool: 'promote', condition: 'health_check' },
+    { type: 'budget', tool: 'charge', maxCalls: 5 },
+  ],
+})
+```
+
+Seed with natural language (compiled by agent's model at first tool call):
+
+```typescript
+const trellis = new Trellis({
+  policy: 'Read-only access to prod. Authenticate before any payment call. No more than 3 API calls per session.',
+})
+```
+
+Seed with a policy engine handler:
+
+```typescript
+const trellis = new Trellis({
+  policy: new CedarAuthorization({ policies }),
+})
+```
+
+### Learn: execution refines and expands your policy
+
+Every `afterToolCall` records the outcome and checks for patterns. Seeds get validated against reality. Gaps get filled. When evidence accumulates, new constraints promote to enforcement automatically.
+
+```typescript
+const agent = new Agent({
+  tools: [authenticate, charge, refund],
+  interventions: [trellis],
+})
+
+// charge() fails without auth → evidence accumulates → constraint mined → subsequent charge() DENIED
+```
+
+Mined constraints persist in the agent's app state via the session manager.
+
+For faster discovery, enable LLM-assisted extraction:
+
+```typescript
+const trellis = new Trellis({
+  extraction: true,  // uses the agent's model, moderate sensitivity
+})
+
+// Configure sensitivity and thresholds (subset shown — full config TBD)
+const trellis = new Trellis({
+  extraction: {
+    model: new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-5-v1' }),
+    sensitivity: 'aggressive',  // propose constraints from fewer signals
+    minEvidence: 2,             // require less evidence before enforcing
+  },
+})
+
+// Or bring your own extractor
+const trellis = new Trellis({
+  extraction: myCustomExtractor,
+})
+```
+
+LLM extraction runs on top of deterministic pattern detection. The model proposes candidates; execution validates them through the same evidence pipeline.
+
+Learned constraints persist via the session manager. For infrastructure-level enforcement, write them to external storage and load into a gateway-level policy engine.
+
+### Production deployment
+
+Trellis runs in production. That's where the constraints are — real rate limits, real third-party behavior, real failure modes that staging mocks can't reproduce. In dev, your seeds get validated. In production, the gaps get filled.
+
+Production enforces all known constraints (authored seeds + anything mined in prior environments).
+
+Live mining has three modes:
+
+- **Off** — enforce only, no new discovery. For regulated environments where policy changes require review.
+- **Shadow** (default) — mine candidates and log them, but don't enforce. Human reviews and promotes.
+- **Live** — mine and enforce automatically when evidence threshold is met. Use higher `minEvidence` and the demotion cascade as safety nets.
+
+### Delegated enforcement
+
+To delegate enforcement to an external policy engine instead of native evaluation:
+
+```typescript
+const trellis = new Trellis({
+  policy: new CedarAuthorization({ policies }),
+})
+
+const trellis = new Trellis({
+  policy: new DogwoodHandler(),
+})
+```
+
+The delegated handler is Trellis's private child. Don't add it to the `interventions` array separately. Trellis manages its lifecycle. If you also pass a CedarAuthorization to the agent's `interventions` array for hard identity/authz checks, Trellis cannot modify it. Those are two isolated instances with separate policy stores: one for your authored authorization rules, one for Trellis's mined behavioral constraints.
+
+
+---
+
+## Consequences
+
+### What becomes easier
+
+- **Guarantees at scale.** A model that follows instructions 98% of the time still violates across thousands of invocations. A deterministic gate never does.
+- **Cross-invocation transfer.** One agent's failure protects every future agent. Fresh agents with no history never repeat a known mistake.
+- **Immune to prompt injection.** Enforcement is code. Adversarial messages cannot override a `deny()`.
+- **Auditable.** Every denial carries a reason, provenance (authored vs. mined), and evidence counts. `expect(tool).toHaveBeenBlocked()` works in tests.
+- **Self-correcting.** Constraints that humans override demote rather than accumulate indefinitely.
+
+### When mining matters
+
+A frontier model can self-correct within a single session: it reads "403: Authentication required" and authenticates on its next turn. But self-correction isn't good enough when:
+
+| Scenario | Why self-correction is insufficient | Mining value |
+|----------|-------------------------------------|--------------|
+| **Irrecoverable actions** | The 4th call locks the account. Correcting after is meaningless. | Prevents the call entirely |
+| **Scale** | 98% compliance × 10,000 invocations = 200 violations | Hard gate: 0 violations |
+| **Cross-invocation** | Fresh agent, no history from prior failure | Transfer: same mistake never repeated |
+| **Adversarial** | Prompt injection overrides model reasoning (Agent-C: 22.6% failure rate on explicitly stated constraints) | Code gate: immune to prompts |
+| **Opaque errors** | "Error: request failed", no remediation hint | Model can't deduce what's missing |
+| **Loops** | Each repeated call "works", no error signal | Model doesn't realize it's looping |
+
+Self-correction solves for one session. Trellis solves for all sessions, all agents, at any scale, against any attack. The model discovers the constraint on the first failure; Trellis ensures no subsequent invocation pays that cost again.
+
+Hard enforcement is for when the cost of a single violation exceeds the cost of occasionally blocking a valid action. The demotion cascade handles the gray area: constraints that get overridden frequently weren't worth a hard gate.
+
+### What requires care
+
+- **Mining needs failures.** Cannot prevent the *first* occurrence. For known risks, author constraints directly.
+- **Mined constraints may be wrong.** The evidence threshold (minEvidence + causal confirmation) mitigates false positives. Review mined constraints for safety-critical tools.
+- **Cold start.** A fresh handler with no constraints enforces nothing until failures accumulate. For known risks, author constraints directly or provide a string policy.
+
+---
+
+---
+
+<details>
+<summary><strong>Appendix A: Mining Algorithm and Self-Correction</strong></summary>
+
+### Observation
+
+On every `afterToolCall`: tool name, args hash, success/failure, error, preceding tools in this invocation. This is the monitor advancing its state.
+
+### Pattern mining (inline)
+
+After each observation, the miner checks for discoverable patterns:
+
+- **Prerequisites**: tool B fails without tool A; succeeds with tool A → `requires` constraint
+- **Loops**: same tool + same args repeated beyond threshold → `loop` constraint  
+- **Cascades**: when tool A fails, tool B always fails after → `cascade` constraint
+
+Pure pattern matching over the observation buffer. Constraints that meet the evidence threshold begin enforcing immediately.
+
+### Prerequisite mining: worked example
 
 ```
-observations = []
-
 Call 1: charge() → fail    → observations: [{tool: charge, success: false, preceding: []}]
 Call 2: charge() → fail    → observations: [{...}, {tool: charge, success: false, preceding: []}]
 Call 3: charge() → fail    → observations: [{...}, {...}, {tool: charge, success: false, preceding: []}]
@@ -217,7 +379,7 @@ Call 6: charge() → beforeToolCall → evaluate requires constraint
   completedTools.has('authenticate') → false → DENY
 ```
 
-#### Budget mining
+### Budget mining
 
 For each tool, track the transition point where successes stop and failures start:
 
@@ -229,7 +391,7 @@ support            = failuresAfterMax ≥ minEvidence AND maxSuccessfulCalls > 0
 
 If `support` is met: promote `{ type: 'budget', tool, maxCalls: maxSuccessfulCalls }`.
 
-#### Implementation
+### Implementation
 
 ```typescript
 private _detectPrerequisiteFromSuccess(successTool: string): void {
@@ -249,194 +411,57 @@ private _detectPrerequisiteFromSuccess(successTool: string): void {
 }
 ```
 
-**LLM-assisted mining** analyzes failure patterns and proposes constraints that statistical detection misses — error message interpretation, domain-specific rules, multi-step reasoning about why a sequence failed. Every proposal passes through the same validation pipeline: the LLM proposes, execution validates. This is not a future enhancement; it's a core mining mode alongside statistical detection.
+### Validation
 
-### Validation before enforcement
+Before a constraint enforces:
 
-A mined constraint must pass:
+1. **Evidence threshold**: at least N failures (default 3)
+2. **Causal confirmation**: at least one success where the condition was met
+3. **Consistency**: no circular dependencies
+4. **Canary** (optional): shadow-mode for M invocations before blocking
 
-1. **Minimum evidence** — enough observations to be statistically meaningful (configurable, default 3)
-2. **Causal confirmation** — at least one success where the proposed condition was met
-3. **Consistency check** — no circular dependencies ("A requires B" + "B requires A")
-4. **Canary period** — optional shadow mode (default: 0, immediate enforcement)
+### Enforcement
 
-### Self-correction and demotion
+```typescript
+// Set membership (microseconds)
+if (constraint.type === 'requires' && !completedTools.has(condition)) {
+  return deny(`requires: ${condition}`)
+}
 
-Mined constraints can be wrong. The environment changes. A rate limit gets raised. A prerequisite gets removed. Trellis handles this through **override tracking and automatic demotion**.
+// Counter check (microseconds)
+if (constraint.type === 'loop' && repeats >= maxRepeats) {
+  return deny(`loop: ${tool} called ${repeats} times`)
+}
+```
 
-#### How a human overrides a denial
+### Self-correction: full demotion cascade
 
-When Trellis denies a tool call, the intervention pipeline returns a `deny` action. The override mechanism depends on deployment context:
-
-- **HITL mode** (`confirm()`): The denial surfaces to a human operator who can approve or reject. An approval is an override.
-- **Programmatic override**: The agent's orchestrator can catch denials for specific constraints and explicitly allow them (e.g. during a hotfix, bypass "run tests before deploy").
-- **Admin API**: `trellis.override(constraintKey)` records an override and allows the call through.
-
-Every override is recorded in the constraint's evidence: `{ failures: 4, successes: 2, overrides: 3 }`.
-
-#### Demotion tiers
-
-| Tier | Action | Semantics | Demotion trigger |
-|------|--------|-----------|-----------------|
-| **Enforced** | `deny()` | Invariant — always true | — |
-| **Advisory** | `confirm()` or `guide()` | Usually true but exceptions exist | override rate > threshold (e.g. 20%) |
-| **Retired** | no-op | Pattern isn't reliable | override rate > retirement threshold (e.g. 50%) |
-
-#### What happens when a constraint is wrong
-
-A mined constraint that no longer reflects reality (e.g. the API removed the auth requirement) will start getting overridden. The demotion cascade:
+When a constraint demotes to advisory tier, it returns `confirm()` instead of `deny()`. The human approves or rejects. A rejection is an override, recorded in the constraint's evidence: `{ failures: 4, successes: 2, overrides: 3 }`.
 
 1. Constraint enforces → human overrides → override counter increments
-2. Override rate crosses advisory threshold → constraint demotes to `confirm()`/`guide()`
+2. Override rate crosses advisory threshold → constraint demotes to `confirm()`
 3. Override rate crosses retirement threshold → constraint retires (no-op)
-4. Retired constraints stay in storage with provenance — they don't re-discover from the same pattern
+4. Retired constraints stay in app state with provenance so they don't re-discover from the same pattern
 
-A constraint can also be **manually retired** via the admin API if you know it's wrong without waiting for overrides to accumulate.
+A constraint can also be **manually retired** if you know it's wrong without waiting for overrides to accumulate.
 
-#### What happens when the environment changes
+### When the environment changes
 
 If a rate limit moves from 3 → 10, the existing `{ type: 'budget', maxCalls: 3 }` constraint starts blocking calls that would now succeed. Two paths to resolution:
 
 - **Override-driven**: calls 4–10 get overridden → constraint demotes → eventually retires → a new budget constraint mines at the correct threshold
-- **Explicit update**: admin removes or updates the constraint in storage directly
+- **Explicit update**: admin removes or updates the constraint directly
 
-"Authenticate before charge" is invariant — it never gets overridden, never demotes. "Run tests before deploy" is contextual — valid to skip for a hotfix, so it accumulates overrides and demotes to advisory.
+### Future: advisory-first promotion
 
----
+A stronger mitigation for false positives: mined constraints start in advisory (`confirm()`) and promote to enforced only after repeated non-overrides. This eliminates silent false blocking entirely but requires HITL infrastructure wired up.
 
-## Constraint Language (Dogwood)
-
-Dogwood is the constraint language — Cedar extended with temporal operators (`formerly`, `count`, `since`) so it can express "is it safe to call *given what already happened*?" — not just "is this principal allowed?"
-
-Today, Trellis evaluates a subset of Dogwood natively in TypeScript as typed JSON objects (`compiledConstraints`). This is a pragmatic interim: Dogwood WASM bindings don't exist yet. When they ship, `policies` (Dogwood text) replaces `compiledConstraints` as the authoring and evaluation surface.
-
-```typescript
-// Current: native TypeScript evaluation of typed JSON constraints
-if (constraint.type === 'requires' && !completedTools.has(condition)) {
-  return deny(...)
-}
-if (constraint.type === 'budget' && callCount >= constraint.maxCalls) {
-  return deny(...)
-}
-```
-
-| Layer | Today (typed JSON) | With Dogwood WASM |
-|-------|-------------------|-------------------|
-| **Authoring** | `compiledConstraints` (typed JSON) | `policies` (Dogwood text) |
-| **Mining output** | Typed JSON | Dogwood text (or typed JSON fed to WASM) |
-| **Evaluation** | TypeScript set/counter checks | Dogwood WASM evaluator |
+</details>
 
 ---
 
-## Developer Experience
-
-### Mining mode (zero-config)
-
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { Trellis } from '@strands-agents/sdk/vended-interventions/trellis'
-
-const trellis = new Trellis({
-  discover: true,
-  storage: new DynamoDBStorage({ table: 'agent-constraints' }),
-})
-
-const agent = new Agent({
-  tools: [authenticate, charge, refund],
-  interventions: [trellis],
-})
-
-// The handler watches, mines, and enforces — all inline:
-// charge() fails without auth → evidence accumulates → constraint mined → subsequent charge() DENIED
-// Mined constraints persist to storage → next agent loads them on startup
-```
-
-### Authored policies (Dogwood text)
-
-```typescript
-// Dogwood text — the authoring surface (like Cedar for CedarAuthorization)
-const trellis = new Trellis({
-  policies: `
-    forbid(principal, action == Action::"promote", resource)
-    unless temporal { formerly Action::"health_check"::request };
-
-    forbid(principal, action == Action::"charge", resource)
-    when temporal { count(Action::"charge"::request) >= 5 };
-  `,
-  discover: true,  // also mine new constraints from execution
-  storage,
-})
-```
-
-Authored policies enforce immediately. Mining finds additional constraints from execution. Both coexist.
-
-### Compiled constraints (escape hatch)
-
-When the Dogwood WASM parser isn't available, or for programmatic construction:
-
-```typescript
-// Compiled form — what the miner produces internally
-const trellis = new Trellis({
-  compiledConstraints: [
-    { type: 'requires', tool: 'promote', condition: 'health_check' },
-    { type: 'budget', tool: 'charge', maxCalls: 5 },
-  ],
-  discover: true,
-  storage,
-})
-```
-
-The compiled JSON form is the internal representation — it's what the miner produces and the evaluator consumes. The `policies` field is the intended authoring surface; `compiledConstraints` is for programmatic use or when a parser isn't yet available.
-
-### Composition
-
-```typescript
-const agent = new Agent({
-  tools: [...],
-  interventions: [
-    cedarAuth,      // WHO can call (identity)
-    riskGate,       // WHAT risk level (classification + HITL)
-    trellis,          // WHEN is it safe (temporal constraints)
-  ],
-})
-```
-
-Each answers a distinct question. The pipeline short-circuits — if Cedar denies, nothing else fires.
-
-### Inspection
-
-```typescript
-trellis.getEnforcingConstraints()
-// [{ constraint: { type: 'requires', tool: 'charge', condition: 'authenticate' },
-//    status: 'enforcing', evidence: { failures: 4, successes: 2, overrides: 0 },
-//    source: 'discovered' }]
-```
-
----
-
-## Consequences
-
-### What becomes easier
-
-- **Constraints emerge from execution.** No human writes rules. Failures become enforced policies automatically.
-- **Institutional memory.** Mined constraints persist. One agent's failures protect all future agents.
-- **Microsecond enforcement.** Compiled constraints evaluate as set lookups. No LLM, no latency, no token cost.
-- **Immune to prompt injection.** Enforcement is code. Adversarial messages cannot override.
-- **Auditable.** Every denial has a reason, a constraint with provenance (authored vs. mined), and evidence.
-- **Self-correcting.** Constraints that humans override demote rather than accumulate.
-- **Temporal enforcement as an SDK primitive.** `interventions: [trellis]` — same pattern as Cedar for authz.
-
-### What requires care
-
-- **Mining needs failures.** Cannot prevent the *first* occurrence. For known risks, author constraints directly.
-- **Frontier models self-correct from clear errors.** If the error message contains the fix ("Authentication required"), the model corrects within the same turn and the failure never accumulates. Mining is most valuable for opaque errors, rate limits, and cross-invocation scenarios.
-- **Mined constraints may be wrong.** Validation mitigates but doesn't eliminate false positives. Review mined constraints for safety-critical tools.
-- **Cold start.** A fresh handler with no constraints and no storage enforces nothing. Author constraints or pre-seed storage.
-- **Storage for cross-agent transfer.** In-memory mode works for single-agent use but doesn't survive restarts.
-
----
-
-## Empirical Results
+<details>
+<summary><strong>Appendix B: Empirical Results</strong></summary>
 
 ### Synthetic scenarios (unit tests)
 
@@ -449,7 +474,7 @@ Simulated agent calling `charge` without `authenticate` (prerequisite violation)
 
 **Post-mining failure rate: 0%.** Convergence: 3 failures + 1 causal confirmation.
 
-Cross-agent transfer eliminates cold start: the second agent loading from storage has zero failures from its first call.
+Cross-agent transfer eliminates cold start: the second agent sharing app state has zero failures from its first call.
 
 ### Real-model benchmark (Claude Sonnet 4.6 via Bedrock)
 
@@ -459,7 +484,7 @@ Fresh agent per invocation (no conversation history carryover), same Trellis ins
 
 | Round | Outcome |
 |-------|---------|
-| 1–3 | `submit_result` fails (session not active). Model cannot self-correct — error is opaque. |
+| 1–3 | `submit_result` fails (session not active). Model cannot self-correct because the error is opaque. |
 | 4 | User prompt includes activation. Success provides causal confirmation. **Constraint mined.** |
 | 5 | Trellis **blocks** `submit_result` without `activate_session`. Model structurally prevented. |
 
@@ -474,70 +499,12 @@ Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires
 
 Budget constraints mined and enforcing after round 1 (3 successes + 2 failures in one batch provides immediate evidence).
 
-### When mining matters (and when it doesn't)
-
-Frontier models with clear error messages **self-correct within the same invocation**. Claude reads "403: Authentication required" and authenticates on its next turn — the failure never accumulates across invocations. Mining adds no value here.
-
-Mining's value is for **irrecoverable failures** — where the cost IS the failure itself:
-
-| Scenario | Why model can't self-correct | Mining value |
-|----------|------------------------------|--------------|
-| **Rate limits / budgets** | The 4th call locks the account. No retry fixes it. | Prevents the call entirely |
-| **Opaque errors** | "Error: request failed" — no remediation hint | Model can't deduce what's missing |
-| **Loops** | Each repeated call "works" — no error signal | Model doesn't realize it's looping |
-| **Cross-invocation** | Fresh agent, no history from prior failure | Same mistake repeated indefinitely |
-| **Weaker models** | Don't interpret error messages well | Can't self-correct even from clear errors |
-
-Mining doesn't find things models can't figure out. It **prevents failures whose cost is the failure itself.** Prevention vs. recovery.
-
----
-
-<details>
-<summary><strong>Appendix A: Mining Algorithm</strong></summary>
-
-### Observation
-
-On every `afterToolCall`: tool name, args hash, success/failure, error, preceding tools in this invocation. This is the monitor advancing its state.
-
-### Pattern mining (inline)
-
-After each observation, the miner checks for discoverable patterns:
-
-- **Prerequisites**: tool B fails without tool A; succeeds with tool A → `requires` constraint
-- **Loops**: same tool + same args repeated beyond threshold → `loop` constraint  
-- **Cascades**: when tool A fails, tool B always fails after → `cascade` constraint
-
-Pure pattern matching over the observation buffer. Constraints that meet the evidence threshold begin enforcing immediately.
-
-### Validation
-
-Before a constraint enforces:
-
-1. **Evidence threshold**: at least N failures (default 3)
-2. **Causal confirmation**: at least one success where the condition was met
-3. **Consistency**: no circular dependencies
-4. **Canary** (optional): shadow-mode for M invocations before blocking
-
-### Enforcement
-
-```typescript
-// Set membership — microseconds
-if (constraint.type === 'requires' && !completedTools.has(condition)) {
-  return deny(`requires: ${condition}`)
-}
-
-// Counter check — microseconds
-if (constraint.type === 'loop' && repeats >= maxRepeats) {
-  return deny(`loop: ${tool} called ${repeats} times`)
-}
-```
-
 </details>
 
 ---
 
 <details>
-<summary><strong>Appendix B: Research Landscape and Prior Art</strong></summary>
+<summary><strong>Appendix C: Research Landscape and Prior Art</strong></summary>
 
 The research converges from multiple directions on the same architecture: **observe execution, discover temporal constraints, enforce deterministically.**
 
@@ -553,11 +520,11 @@ The research converges from multiple directions on the same architecture: **obse
 | **Harness engineering** | arXiv 2607.08028 (2026) | Deterministic enforcement around neural components | — |
 | **LLM-Modulo** | Kambhampati et al. (ICML 2024) | LLMs generate; external verifiers certify | — |
 
-Trellis's lineage is most directly Declare monitoring (temporal monitor over event stream) + Declare mining (discover constraints from observed patterns) + ANNEAL (structural repair — discovered constraints prevent recurrence).
+Trellis's lineage is most directly Declare monitoring (temporal monitor over event stream) + Declare mining (discover constraints from observed patterns) + ANNEAL (structural repair: discovered constraints prevent recurrence).
 
 ### The Declare Miner parallel
 
-The Declare Miner counts **activations** (tool called) and **fulfillments** (prerequisite met) vs **violations** (prerequisite absent), computes confidence, and applies a support threshold. Trellis does the same: count failures-without vs successes-with, apply `minEvidence`. The mechanisms are identical — the domain is different (agent tool calls instead of business process events).
+The Declare Miner counts **activations** (tool called) and **fulfillments** (prerequisite met) vs **violations** (prerequisite absent), computes confidence, and applies a support threshold. Trellis does the same: count failures-without vs successes-with, apply `minEvidence`. The mechanisms are identical; the domain is different (agent tool calls instead of business process events).
 
 ### Systems comparison
 
@@ -570,28 +537,28 @@ The Declare Miner counts **activations** (tool called) and **fulfillments** (pre
 | **Agent-C** [1] | DSL + SMT temporal constraints | Human-authored only, no discovery |
 | **Invariant Labs** [3] | Trace-level policy enforcement | Static rules, no adaptation |
 
-Trellis is the first system to combine Declare-style temporal monitoring with Declare-style constraint mining in a single in-loop primitive for agent execution.
+Trellis is the first system to combine Declare-style monitoring with Declare-style constraint mining in a single in-loop primitive for agent execution, mining both temporal and stateless behavioral constraints from the same observation stream.
 
 </details>
 
 ---
 
 <details>
-<summary><strong>Appendix C: Relationship to Cedar and RiskGate</strong></summary>
+<summary><strong>Appendix D: Relationship to Cedar</strong></summary>
 
-| Dimension | CedarAuthorization | Trellis | RiskGate |
-|-----------|-------------------|-------|----------|
-| **Language** | Cedar | Dogwood (Cedar + temporal) | — |
-| **Question** | Who can call what? | Is it safe to call now, given history? | How risky? |
-| **Statefulness** | Stateless per-request | Stateful over event history | Stateless |
-| **Policies** | Authored | Authored + optionally discovered | — |
-| **LLM in hot path?** | No | No | No |
+| Dimension | CedarAuthorization | Trellis |
+|-----------|-------------------|-------|
+| **Language** | Cedar | Typed JSON (exports to Dogwood/Cedar/OPA) |
+| **Question** | Who can call what? | Is it safe to call now, given history? |
+| **Statefulness** | Stateless per-request | Stateful over event history |
+| **Policies** | Authored | Authored + discovered |
+| **LLM in hot path?** | No | No |
 
 CedarAuthorization and Trellis are the same pattern at different levels:
 - **CedarAuthorization** evaluates Cedar policies (stateless authz) on `beforeToolCall`
-- **Trellis** evaluates Dogwood policies (temporal constraints) on `beforeToolCall`
+- **Trellis** evaluates typed JSON constraints (behavioral, temporal and stateless) on `beforeToolCall`, exports to Dogwood/Cedar/OPA
 
-Cedar is a subset of Dogwood — a Dogwood policy with no `temporal` clause is valid Cedar. The handlers compose naturally: Cedar answers "is this user allowed?", Trellis answers "is it safe given what already happened?"
+The handlers compose naturally: Cedar answers "is this user allowed?", Trellis answers "is it safe given what already happened?" Mined constraints can be exported to Dogwood for infrastructure-level temporal enforcement.
 
 ### Dogwood operators
 
@@ -606,12 +573,12 @@ Cedar is a subset of Dogwood — a Dogwood policy with no `temporal` clause is v
 
 | Dogwood concept | Agent hook | Role |
 |-----------------|-----------|------|
-| `request` | `beforeToolCall` | Decision point — triggers authorization |
-| `resolution` | `afterToolCall` | History-only — records outcome for temporal queries |
+| `request` | `beforeToolCall` | Decision point, triggers authorization |
+| `resolution` | `afterToolCall` | History-only: records outcome for temporal queries |
 
 ### Constraint types as Dogwood policies
 
-**Prerequisites** — `charge` requires prior `authenticate`:
+**Prerequisites**: `charge` requires prior `authenticate`:
 
 ```cedar
 forbid(principal, action == Action::"charge", resource)
@@ -622,7 +589,7 @@ unless temporal {
 };
 ```
 
-**Budgets** — max 3 charges per session:
+**Budgets**: max 3 charges per session:
 
 ```cedar
 forbid(principal, action == Action::"charge", resource)
@@ -631,7 +598,7 @@ when temporal {
 };
 ```
 
-**Cascades** — block `promote` after `deploy` failure:
+**Cascades**: block `promote` after `deploy` failure:
 
 ```cedar
 forbid(principal, action == Action::"promote", resource)
@@ -643,7 +610,7 @@ when temporal {
 };
 ```
 
-**Loops** — block repeated identical calls:
+**Loops**: block repeated identical calls:
 
 ```cedar
 forbid(principal, action == Action::"search", resource)
@@ -654,6 +621,90 @@ when temporal {
   }) >= 5
 };
 ```
+
+</details>
+
+---
+
+<details>
+<summary><strong>Appendix E: Future Mining Targets</strong></summary>
+
+Not yet implemented:
+
+| Pattern | Signal | Typed JSON form | Temporal? |
+|---------|--------|-----------------|-----------|
+| **Input-value** | Tool fails when `amount > N` | `{ type: 'input_guard', tool, field, op, value }` | No |
+| **Resource-specific** | Tool fails on resource Y but succeeds on others | `{ type: 'forbid', tool, resource: 'Y' }` | No |
+| **Sequence** | Tool C fails unless A then B in order | `{ type: 'sequence', tool, requires: ['A', 'B'] }` | Yes |
+
+</details>
+
+---
+
+<details>
+<summary><strong>Appendix F: When LLM Extraction Helps (and When It's Harmful)</strong></summary>
+
+The key principle: **only mine constraints the agent could have prevented by acting differently.** If no sequence of agent actions would have avoided the failure, it's not a constraint — it's an outage.
+
+| Scenario | Agent-preventable? | Correct behavior |
+|----------|-------------------|------------------|
+| "Authenticate before charge" | Yes — agent can call authenticate first | Mine it |
+| "Amount > 1000 requires approval" | Yes — agent can request approval first | Mine it |
+| GitHub returning 503 | No — nothing the agent does fixes GitHub | Don't mine |
+| Flaky third-party API | No — retrying randomly succeeds | Don't mine |
+| "submission rejected" (needs session activation) | Yes — agent can activate first | Mine it |
+
+Deterministic mining handles this naturally: transient failures never produce causal confirmation (there's no "do X first and it works" signal). LLM extraction is more dangerous because a model can look at repeated 503s and propose "don't call GitHub." The evidence pipeline catches this (no success-with-condition to confirm), but the extraction prompt should filter for agent-preventable failures upfront.
+
+LLM extraction earns its value for:
+- **Semantic error interpretation**: parsing "submission rejected" into "needs session activation" (the miner can't read error messages)
+- **Input-value constraints**: "amount > 1000 requires approval" (the miner doesn't inspect input fields)
+- **Silent corruption**: tool returned 200 but downstream broke (no error signal for the miner)
+
+</details>
+
+---
+
+<details>
+<summary><strong>Appendix G: FAQ</strong></summary>
+
+### Why not just use RL?
+
+Three reasons: (1) You can't fine-tune API models. Most agents call Claude or GPT via an API with no training access. Trellis operates at inference time. (2) Even a well-trained RL policy violates constraints probabilistically. For "locks your account on the 4th call," 2% isn't good enough. Trellis is a hard gate. (3) RL requires you to define the reward signal before training. The whole point is you don't know the constraints yet.
+
+Trellis does the same *discovery* step as ICRL [14] (infer constraints from observations) but enforces externally rather than baking them into weights. No training loop required.
+
+### Isn't this just a rules engine?
+
+Yes, plus automatic rule discovery. A rules engine needs someone to author the rules. Trellis mines them from failures. The enforcement path is deliberately simple (set membership, counter checks) because the value is in discovery and transfer, not in a novel evaluation engine.
+
+### Why is the default evidence threshold 3?
+
+A single failure could be transient (network timeout, service restart, flaky API). Three failures with the same missing precondition and one success confirming the precondition is enough to distinguish signal from noise. Configurable via `minEvidence`: set to 1 for aggressive mining in controlled environments, higher for noisy ones.
+
+### What about transient failures? Won't it mine noise?
+
+The causal confirmation requirement prevents this. A constraint only promotes when: (1) the tool fails N times without condition X, AND (2) it succeeds at least once with condition X. Random timeouts don't produce the success-with-condition signal, so they never mine.
+
+### What happens when it's wrong?
+
+The demotion cascade. If a human overrides a mined constraint repeatedly, it demotes from enforcing → advisory → retired. Constraints can also be manually retired. See Appendix A.
+
+### How do I debug a blocked call?
+
+Every denial carries: the constraint (typed JSON), its source (`authored` or `discovered`), evidence counts (`{ failures: 3, successes: 1 }`), and a human-readable reason string. `trellis.getConstraintRecords()` returns the full set for inspection.
+
+### Does the observation buffer grow forever?
+
+In the current implementation, yes (bounded by session length). For long-running agents, a sliding window or summarization strategy is future work. In practice, agent sessions are short enough that unbounded observation is fine.
+
+### Multi-tenant: if user A's failures mine a constraint, does it block user B?
+
+Constraints are scoped to the Trellis instance. If you share a single instance across users (via persistent state), mined constraints apply to all. For multi-tenant, either scope instances per-tenant or include principal in the constraint (the `forbid` type supports an optional `principal` field). Cross-tenant transfer is opt-in, not default.
+
+### How does this compose with Cedar?
+
+They're independent handlers in the interventions array. Cedar answers "is this user allowed?" (stateless authz). Trellis answers "is it safe given what already happened?" (stateful behavioral). Both can deny the same call for different reasons. If you pass a CedarAuthorization as Trellis's `policy`, that's a different pattern: Trellis delegates enforcement to Cedar as a private child.
 
 </details>
 
@@ -688,7 +739,7 @@ when temporal {
 
 [13] Kambhampati et al., "LLMs Can't Plan, But Can Help Planning in LLM-Modulo Frameworks," ICML 2024, arXiv 2402.01817.
 
-[14] Havelund, Peled, Ulus, "DejaVu: A Monitoring Tool for First-Order Temporal Logic," github.com/havelund/dejavu.
+[14] Malik, Anwar, Aghasi, Ahmed, "Inverse Constrained Reinforcement Learning," ICML 2021.
 
 [15] Weil-Kennedy et al., "Runtime Verification of Interactions Using Automata," arXiv 2511.00531, 2025.
 
@@ -697,5 +748,9 @@ when temporal {
 [17] De Giacomo, De Masellis, Maggi, Montali, "Monitoring Constraints and Metaconstraints with Temporal Logics on Finite Traces," arXiv 2004.01859, 2020.
 
 [18] Dogwood Policy Language, github.com/dogwood-policy/dogwood.
+
+[19] Lou et al., "Deriving Semantic Checkers from Tests to Detect Silent Failures in Production Distributed Systems," USENIX OSDI 2025.
+
+[20] Havelund, Peled, Ulus, "DejaVu: A Monitoring Tool for First-Order Temporal Logic," github.com/havelund/dejavu.
 
 </details>
