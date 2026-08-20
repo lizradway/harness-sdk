@@ -38,6 +38,11 @@ export class LocalFileStorage implements Storage {
   private readonly _baseDir: string
   private readonly _sandbox: Sandbox | undefined
 
+  /** The resolved root directory for this storage instance. */
+  get baseDir(): string {
+    return this._baseDir
+  }
+
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.

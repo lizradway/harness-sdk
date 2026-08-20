@@ -11,3 +11,5 @@
 export type { SearchStrategy } from './types.js'
 export type { StorageSearchResult } from '../storage.js'
 export { KeywordSearchStrategy } from './keyword.js'
+export { QmdSearchStrategy } from './qmd.js'
+export type { QmdSearchStrategyConfig } from './qmd.js'

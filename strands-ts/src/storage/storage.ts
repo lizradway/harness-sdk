@@ -54,6 +54,19 @@ export function normalizePrefix(prefix: string): string {
   return normalized
 }
 
+/**
+ * Type guard that checks whether a {@link Storage} exposes a filesystem `baseDir`.
+ *
+ * Search strategies that need direct filesystem access (grep, FTS5 indexing)
+ * use this to validate the storage at runtime before accessing `baseDir`.
+ *
+ * @param storage - The storage instance to check
+ * @returns `true` if the storage exposes a `baseDir` string property
+ */
+export function isFileSystemStorage(storage: Storage): storage is Storage & { baseDir: string } {
+  return 'baseDir' in storage && typeof (storage as Storage & { baseDir: string }).baseDir === 'string'
+}
+
 /** A single result from a {@link Storage.search} call. */
 export interface StorageSearchResult {
   /** Storage key of the matched item. */
