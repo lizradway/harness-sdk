@@ -85,13 +85,34 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     block: TextBlock | ToolResultBlock,
     tokens: number,
     message: Message,
-    _agent: LocalAgent
+    _agent: LocalAgent,
+    stashRef?: string
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return truncateToolResultBlock(block, this._truncateConfig)
+      const truncated = truncateToolResultBlock(block, this._truncateConfig)
+      if (stashRef && truncated !== block) {
+        return appendStashRef(truncated, stashRef)
+      }
+      return truncated
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
     return truncateTextBlock(block, this._truncateConfig)
   }
+}
+
+function appendStashRef(block: ToolResultBlock, stashRef: string): ToolResultBlock {
+  const content = [...block.content]
+  for (let index = 0; index < content.length; index++) {
+    const item = content[index]!
+    if (item instanceof TextBlock) {
+      content[index] = new TextBlock(`${item.text}\n\n[Stashed: ref=${stashRef}]`)
+      return new ToolResultBlock({
+        toolUseId: block.toolUseId,
+        status: block.status,
+        content,
+      })
+    }
+  }
+  return block
 }

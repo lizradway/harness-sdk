@@ -10,6 +10,8 @@ import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../type
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
+import type { Stash } from '../../stash.js'
+import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -276,6 +278,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _removalRatio: number = 0.3
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
+  protected _stash: Stash | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
@@ -297,7 +300,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._utilizationThreshold !== undefined
   }
 
-  init(agent: LocalAgent): void {
+  init(agent: LocalAgent, stash?: Stash): void {
+    this._stash = stash
     if (this._isMessageLevel) return
     if (this._preserveRecent > 0) return
     agent.addHook(MessageAddedEvent, async (event) => {
@@ -308,6 +312,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   async apply(context: ContextState): Promise<boolean> {
+    if (context.stash) this._stash = context.stash
     if (this._isMessageLevel) {
       if (context.utilization < this._utilizationThreshold!) return false
       return this._applyPerMessage(context)
@@ -375,6 +380,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected _blockMatchesTarget(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
     if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
+      if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       return (
         this._target === undefined ||
         toolMatchesTarget(block, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
@@ -399,10 +405,15 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const replacement = await this._replaceBlock(block as TextBlock | ToolResultBlock, tokens, message, agent)
+      const stashRef = block instanceof ToolResultBlock ? await this._stashBlock(block) : undefined
+      const replacement = await this._replaceBlock(
+        block as TextBlock | ToolResultBlock,
+        tokens,
+        message,
+        agent,
+        stashRef
+      )
       if (replacement && replacement !== block) {
-        // Intentional in-place mutation: per-block replacement shrinks existing message content
-        // rather than constructing a new Message (unlike message-level removal which uses new objects).
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
       }
@@ -452,12 +463,36 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return eligible
   }
 
+  /** Persist the original tool result content to L1 stash before replacing. */
+  private async _stashBlock(block: ToolResultBlock): Promise<string | undefined> {
+    if (!this._stash) return undefined
+    const text = this._extractBlockText(block)
+    if (!text) return undefined
+    try {
+      return await this._stash.store(block.toolUseId, 0, new TextEncoder().encode(text), 'text/plain')
+    } catch (error) {
+      logger.warn(`toolUseId=<${block.toolUseId}>, error=<${error}> | failed to stash content, continuing without`)
+      return undefined
+    }
+  }
+
+  private _extractBlockText(block: ToolResultBlock): string | undefined {
+    const parts: string[] = []
+    for (const item of block.content) {
+      if (item instanceof TextBlock) {
+        parts.push(item.text)
+      }
+    }
+    return parts.length > 0 ? parts.join('\n') : undefined
+  }
+
   /** Transform a block. Return the replacement, or null to skip. */
   protected abstract _replaceBlock(
     block: TextBlock | ToolResultBlock,
     tokens: number,
     message: Message,
-    agent: LocalAgent
+    agent: LocalAgent,
+    stashRef?: string
   ): Promise<ContentBlock | null>
 }
 
@@ -480,7 +515,7 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     super('*')
   }
 
-  override init(): void {
+  override init(_agent: LocalAgent, _stash?: Stash): void {
     // No eager hooks — this only fires on overflow
   }
 

@@ -107,7 +107,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     block: TextBlock | ToolResultBlock,
     tokens: number,
     message: Message,
-    agent: LocalAgent
+    agent: LocalAgent,
+    stashRef?: string
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
     if (!model) return null
@@ -116,11 +117,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       const summary = await summarizeContent(toolResultToContentBlocks(block.content), model, this._config)
       if (!summary) return null
 
+      const refSuffix = stashRef ? ` ref: ${stashRef}` : ''
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens]\n\n${summary}`)],
+        content: [
+          new TextBlock(`${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${refSuffix}]\n\n${summary}`),
+        ],
       })
     }
 
