@@ -13,7 +13,8 @@ import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock
 import type { ContentBlock } from '../types/messages.js'
 import { logger } from '../logging/logger.js'
 
-const STASH_PREFIX = 'context'
+/** @internal */
+export const STASH_PREFIX = 'context'
 
 function encode(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value))

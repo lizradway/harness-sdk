@@ -7,6 +7,7 @@ import type { SnapshotTriggerCallback, Snapshot } from './types.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { ContextManager } from '../context-manager/context-manager.js'
+import { STASH_PREFIX } from '../context-manager/stash.js'
 import type { JSONValue } from '../types/json.js'
 import { AfterInvocationEvent, AfterModelCallEvent, InitializedEvent, MessageAddedEvent } from '../hooks/events.js'
 import { v7 as uuidV7 } from 'uuid'
@@ -109,6 +110,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   private readonly _saveLatestOn: SaveLatestStrategy
   private readonly _snapshotTrigger?: SnapshotTriggerCallback | undefined
   private readonly _multiAgentSaveLatestOn: MultiAgentSaveLatestStrategy
+  private _rootStorage: Storage | undefined
   private _multiAgentRestoredIds = new Set<string>()
 
   /**
@@ -130,6 +132,9 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     this._configStorage = config.storage
     if (config.storage) {
       this._storage = { snapshot: this._resolveSnapshotStorage(config.storage) }
+      if (!('snapshot' in config.storage)) {
+        this._rootStorage = config.storage
+      }
     }
     this._saveLatestOn = config.saveLatestOn ?? 'invocation'
     this._multiAgentSaveLatestOn = config.multiAgentSaveLatestOn ?? 'node'
@@ -160,6 +165,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
         )
       }
       this._storage = { snapshot: this._resolveSnapshotStorage(agent.storage) }
+      this._rootStorage = agent.storage
     }
     agent.addHook(InitializedEvent, async (event) => {
       await this._onAgentInitialized(event)
@@ -211,9 +217,18 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     await this._snapshotStorage.saveSnapshot({ location, snapshotId, isLatest: params.isLatest, snapshot })
   }
 
-  /** Deletes all snapshots and manifests for this session from storage. */
+  /** Deletes all snapshots, manifests, and stash data for this session from storage. */
   async deleteSession(): Promise<void> {
     await this._snapshotStorage.deleteSession({ sessionId: this._sessionId })
+
+    if (this._rootStorage) {
+      const prefix = `${STASH_PREFIX}/${this._sessionId}/`
+      const keys = await this._rootStorage.list(prefix)
+      const BATCH_SIZE = 100
+      for (let index = 0; index < keys.length; index += BATCH_SIZE) {
+        await Promise.all(keys.slice(index, index + BATCH_SIZE).map((key) => this._rootStorage!.delete(key)))
+      }
+    }
   }
 
   /** Lists all available immutable snapshot IDs for the given agent target. */
