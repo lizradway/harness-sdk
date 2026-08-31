@@ -133,6 +133,34 @@ export class Stash {
     logger.debug(`reference=<${reference}> | stash entry deleted`)
   }
 
+  /**
+   * Serialize all stash entries into a plain object for snapshot persistence.
+   *
+   * @returns Map of reference keys to their stored JSON values
+   */
+  async takeSnapshot(): Promise<Record<string, unknown>> {
+    const keys = await this.list()
+    const entries: Record<string, unknown> = {}
+    for (const key of keys) {
+      const result = await this.retrieve(key)
+      if (result) {
+        entries[key] = result.data
+      }
+    }
+    return entries
+  }
+
+  /**
+   * Restore stash entries from a previously captured snapshot.
+   *
+   * @param entries - Map of reference keys to their JSON values (from {@link takeSnapshot})
+   */
+  async loadSnapshot(entries: Record<string, unknown>): Promise<void> {
+    for (const [key, data] of Object.entries(entries)) {
+      await this._storage.write(key, encode(data))
+    }
+  }
+
   private async _storeToolResult(block: ToolResultBlock): Promise<void> {
     for (let blockIndex = 0; blockIndex < block.content.length; blockIndex++) {
       const item = block.content[blockIndex]!

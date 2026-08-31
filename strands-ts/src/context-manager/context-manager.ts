@@ -35,7 +35,8 @@ export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
 
   private readonly _strategies: ContextStrategy[]
-  private readonly _stashStorage: Storage | false
+  private readonly _stashDisabled: boolean
+  private readonly _stashConfigStorage: Storage | undefined
   private readonly _enableRetrievalTool: boolean
   private readonly _retrievalToolUseIds = new Set<string>()
   private _stash: Stash | undefined
@@ -51,7 +52,8 @@ export class ContextManager implements Plugin {
     ]
     const stashConfig = config?.stash
     const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
-    this._stashStorage = stashConfig === false ? false : (stashObj?.storage ?? new InMemoryStorage())
+    this._stashDisabled = stashConfig === false
+    this._stashConfigStorage = stashObj?.storage
     this._enableRetrievalTool = stashConfig !== false && stashObj?.retrievalTool !== false
   }
 
@@ -65,8 +67,9 @@ export class ContextManager implements Plugin {
   }
 
   initAgent(agent: LocalAgent): void {
-    if (this._stashStorage !== false) {
-      this._stash = new Stash(this._stashStorage, agent.sessionId, agent.id)
+    if (!this._stashDisabled) {
+      const storage = this._stashConfigStorage ?? agent.storage ?? new InMemoryStorage()
+      this._stash = new Stash(storage, agent.sessionId, agent.id)
     }
 
     if (this._stash) {
@@ -109,6 +112,28 @@ export class ContextManager implements Plugin {
       overflowRetries++
       event.retry = true
     })
+  }
+
+  /**
+   * Serialize the stash contents for snapshot persistence.
+   * Returns null when the stash is disabled or not initialized.
+   *
+   * @internal
+   */
+  async takeStashSnapshot(): Promise<Record<string, unknown> | null> {
+    if (!this._stash) return null
+    return this._stash.takeSnapshot()
+  }
+
+  /**
+   * Restore stash contents from a snapshot.
+   * No-op when the stash is disabled or not initialized.
+   *
+   * @internal
+   */
+  async loadStashSnapshot(entries: Record<string, unknown>): Promise<void> {
+    if (!this._stash) return
+    await this._stash.loadSnapshot(entries)
   }
 
   private async _runStrategies(agent: LocalAgent, precomputedInputTokens?: number): Promise<boolean> {
