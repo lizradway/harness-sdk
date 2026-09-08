@@ -143,17 +143,40 @@ files: give them different names to keep them separate.
 
 ## Search
 
-`search` ranks files by keyword token overlap: it counts
-how many distinct words from the query appear in each
-file's name and content, and returns the top scorers. A
-query with no usable words returns nothing.
+The default search ranks files by keyword token overlap: it
+counts how many distinct words from the query appear in
+each file's name and content, and returns the top scorers.
+A query with no usable words returns nothing.
 
 :::note
-Search is lexical, not semantic. "Seat" matches "seat" but
-not "chair." For synonym-aware retrieval, use the
-[Bedrock Knowledge Base store](./bedrock-knowledge-base)
-or plug in a custom search strategy (TypeScript only).
+The default search is lexical, not semantic. "Seat" matches
+"seat" but not "chair." For embedding-based semantic search
+over a managed vector store, use the
+[Bedrock Knowledge Base store](./bedrock-knowledge-base).
 :::
+
+<Tabs>
+<Tab label="Python">
+
+Python uses the built-in keyword search. To change the
+search behavior, implement a custom `MemoryStore` that
+wraps `FileMemoryStore` and overrides `search`.
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass a `search` strategy to replace the default keyword
+scan. The SDK ships `QmdSearchStrategy` for BM25 ranking
+(requires `@tobilu/qmd`), or implement the
+`SearchStrategy` interface for your own backend:
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:custom_search_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:custom_search"
+```
+</Tab>
+</Tabs>
 
 ## Writing Memories
 
