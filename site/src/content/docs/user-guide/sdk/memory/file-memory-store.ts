@@ -1,6 +1,7 @@
 import { Agent, BedrockModel, MemoryManager } from '@strands-agents/sdk'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 import { S3Storage } from '@strands-agents/sdk/storage'
+import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
 
 // =====================
 // Basic usage
@@ -55,6 +56,22 @@ async function searchAndAdd() {
   // --8<-- [end:search_and_add]
 }
 void searchAndAdd
+
+// =====================
+// Custom search strategy (BM25 via QMD)
+// =====================
+
+function customSearch() {
+  // --8<-- [start:custom_search]
+  const store = new FileMemoryStore({
+    name: 'agent-memory',
+    search: new QmdSearchStrategy(),
+  })
+  // --8<-- [end:custom_search]
+
+  void store
+}
+void customSearch
 
 // =====================
 // Extraction with defaults

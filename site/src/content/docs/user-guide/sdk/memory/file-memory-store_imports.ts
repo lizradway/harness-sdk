@@ -14,6 +14,11 @@ import { S3Storage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 // --8<-- [end:search_and_add_imports]
 
+// --8<-- [start:custom_search_imports]
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
+// --8<-- [end:custom_search_imports]
+
 // --8<-- [start:extraction_imports]
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 // --8<-- [end:extraction_imports]
