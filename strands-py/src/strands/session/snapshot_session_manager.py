@@ -608,6 +608,7 @@ class SnapshotSessionManager(SessionManager):
         """
         if self._agent_stash is not None:
             try:
+                await self._agent_stash.clear()
                 await self._agent_stash.clear_session()
             except Exception:
                 logger.warning(
