@@ -609,7 +609,9 @@ class SnapshotSessionManager(SessionManager):
 
         When the manager was never initialized (no agent attached), falls back to
         deleting the ``context/<session_id>/`` prefix directly on the base storage so
-        stash data is not orphaned.
+        stash data is not orphaned. This assumes the stash shares the same storage backend
+        as the session manager; if the stash was configured with a separate storage, the
+        fallback will not find its data.
 
         Storage errors are logged and swallowed so a stash failure never prevents session deletion.
         """
