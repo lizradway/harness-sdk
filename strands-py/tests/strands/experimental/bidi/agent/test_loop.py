@@ -8,19 +8,25 @@ import pytest_asyncio
 from strands import tool
 from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
+from strands.experimental.bidi.hooks.events import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
+from strands.experimental.bidi.hooks.events import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks.events import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types.events import (
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionWarningEvent,
+    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.experimental.hooks.events import BidiBeforeConnectionRestartEvent
+from strands.hooks import MessageAddedEvent
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
+from tests.fixtures.mock_hook_provider import MockHookProvider
 
 
 @pytest.fixture
@@ -35,6 +41,7 @@ def time_tool():
 @pytest.fixture
 def agent(time_tool):
     model = unittest.mock.AsyncMock(spec=BidiModel)
+    model.get_connection_config.return_value = {}
     model.restart = unittest.mock.AsyncMock()
     return BidiAgent(model=model, tools=[time_tool])
 
@@ -42,6 +49,129 @@ def agent(time_tool):
 @pytest_asyncio.fixture
 async def loop(agent):
     return agent._loop
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["complete", "interrupted", "error", "tool_use"])
+async def test_response_complete_hook(agent, agenerator, stop_reason):
+    hooks = MockHookProvider([BidiResponseCompleteHookEvent])
+    agent.hooks.add_hook(hooks)
+    completion = BidiResponseCompleteEvent(response_id="response-1", stop_reason=stop_reason)
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    try:
+        async for event in agent.receive():
+            if event == completion:
+                break
+    finally:
+        await agent.stop()
+
+    tru_events = hooks.events_received
+    exp_events = [BidiResponseCompleteHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+@pytest.mark.parametrize(
+    "stream_event,hook_type",
+    [
+        (BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"), BidiResponseCompleteHookEvent),
+        (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
+        (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
+    ],
+)
+async def test_model_event_waits_for_hook_and_checks_generation(
+    loop, agent, agenerator, stream_event, hook_type, superseded
+):
+    hook_started = asyncio.Event()
+    finish_hook = asyncio.Event()
+
+    async def on_event(event):
+        hook_started.set()
+        await finish_hook.wait()
+
+    agent.hooks.add_callback(hook_type, on_event)
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([stream_event]))
+    await loop.start()
+    try:
+        await asyncio.wait_for(hook_started.wait(), timeout=2)
+        assert loop._event_queue.empty()
+
+        if superseded:
+            # A new connection starts a response while the old reader is awaiting a hook.
+            loop._generation += 1
+            loop._response_active = True
+            loop._update_turn_state()
+
+        finish_hook.set()
+        await asyncio.wait_for(loop._model_task, timeout=2)
+        if superseded:
+            assert loop._event_queue.empty()
+            assert loop._response_active
+            assert not loop._turn_complete.is_set()
+        else:
+            assert loop._event_queue.get_nowait() == stream_event
+    finally:
+        finish_hook.set()
+        await loop.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_tool_starts_after_request_is_queued(loop, agent, superseded):
+    tool_use = {"toolUseId": "tool-1", "name": "time_tool", "input": {}}
+    request = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    first = BidiTextInputEvent(text="first")
+    request_received = asyncio.Event()
+
+    async def receive():
+        yield first
+        request_received.set()
+        yield request
+
+    agent.model.receive = receive
+    with unittest.mock.patch.object(loop, "_run_tool", new_callable=unittest.mock.AsyncMock) as run_tool:
+        await loop.start()
+        try:
+            await asyncio.wait_for(request_received.wait(), timeout=2)
+            run_tool.assert_not_called()
+            if superseded:
+                loop._generation += 1
+
+            assert loop._event_queue.get_nowait() == first
+            await asyncio.wait_for(loop._model_task, timeout=2)
+            assert loop._event_queue.get_nowait() == request
+            if superseded:
+                run_tool.assert_not_called()
+            else:
+                run_tool.assert_awaited_once_with(tool_use, loop._generation)
+        finally:
+            await loop.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_agent_stop_hook(agent, agenerator, cleanup_fails):
+    hooks = MockHookProvider([BidiAgentStopEvent, BidiResponseCompleteHookEvent])
+    agent.hooks.add_hook(hooks)
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
+    if cleanup_fails:
+        agent.model.stop.side_effect = RuntimeError("cleanup failed")
+
+    await agent.start()
+    assert hooks.events_received == []
+    if cleanup_fails:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            await agent.stop()
+    else:
+        await agent.stop()
+
+    agent.model.stop.assert_awaited_once()
+    tru_events = hooks.events_received
+    exp_events = [BidiAgentStopEvent(agent=agent)]
+    assert tru_events == exp_events
 
 
 @pytest.mark.asyncio
@@ -80,7 +210,7 @@ async def test_reactive_restart_failure_yields_event_before_raising(loop, agent,
     """A failed reactive restart still notifies the caller before surfacing the failure."""
     timeout_error = BidiModelTimeoutError("test timeout")
     restart_error = RuntimeError("restart failed")
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(side_effect=timeout_error)
     agent.model.restart.side_effect = restart_error
 
@@ -98,9 +228,8 @@ async def test_reactive_restart_failure_yields_event_before_raising(loop, agent,
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator):
     """Auto reconnect is the default: a timeout triggers reconnect without any opt-in."""
-    # AsyncMock(spec=BidiModel) generates connection_config as a Mock; force the realistic
-    # "provider declared nothing" case so the loop falls back to its default (reconnect).
-    agent.model.connection_config = {}
+    # An empty connection config uses the default reconnect behavior.
+    agent.model.get_connection_config.return_value = {}
     timeout_error = BidiModelTimeoutError("test timeout")
     text_event = BidiTextInputEvent(text="after restart")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([text_event])])
@@ -119,7 +248,7 @@ async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_auto_reconnect_opt_out_surfaces_timeout(loop, agent, agenerator):
     """A provider opting out with auto_reconnect=False surfaces the timeout instead of reconnecting."""
-    agent.model.connection_config = {"auto_reconnect": False}
+    agent.model.get_connection_config.return_value = {"auto_reconnect": False}
     timeout_error = BidiModelTimeoutError("test timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
 
@@ -135,7 +264,7 @@ async def test_bidi_agent_loop_auto_reconnect_opt_out_surfaces_timeout(loop, age
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_proactive_reconnect_before_deadline(loop, agent, agenerator):
     """A declared limit arms the timer, which emits a warning and reconnects proactively."""
-    agent.model.connection_config = {"restart_after_s": 5}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 5}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     # Drive timing without wall time: the first cycle's sleeps return immediately; the re-armed
@@ -168,7 +297,7 @@ async def test_bidi_agent_loop_proactive_reconnect_before_deadline(loop, agent, 
 @pytest.mark.asyncio
 async def test_scheduled_restart_event_emitted_before_model_restart(loop, agent, agenerator):
     """The scheduled restart event precedes provider restart and new-connection output."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     output = BidiTextInputEvent(text="new-connection output")
     agent.model.receive = unittest.mock.Mock(side_effect=[agenerator([]), agenerator([output])])
     order = []
@@ -199,7 +328,7 @@ async def test_scheduled_restart_event_emitted_before_model_restart(loop, agent,
 @pytest.mark.asyncio
 async def test_no_proactive_timer_when_restart_after_not_positive(loop, agent, agenerator):
     """A non-positive restart_after_s must not arm a zero-deadline hot reconnect loop."""
-    agent.model.connection_config = {"restart_after_s": 0}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 0}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     await loop.start()
@@ -212,7 +341,7 @@ async def test_no_proactive_timer_when_restart_after_not_positive(loop, agent, a
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_no_timer_without_declared_limit(loop, agent, agenerator):
     """A provider that declares no limit arms no proactive timer; reconnect stays reactive-only."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     await loop.start()
@@ -225,7 +354,7 @@ async def test_bidi_agent_loop_no_timer_without_declared_limit(loop, agent, agen
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_no_timer_when_auto_reconnect_disabled(loop, agent, agenerator):
     """auto_reconnect=False is the only opt-out: no proactive timer arms."""
-    agent.model.connection_config = {"restart_after_s": 420, "auto_reconnect": False}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 420, "auto_reconnect": False}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     await loop.start()
@@ -239,10 +368,13 @@ class _NonRestartableModel(BidiModel):
     """A provider without an optimized restart implementation."""
 
     def __init__(self):
-        self.config = {}
-        self.connection_config = {}
         self.started: list = []
         self.stopped = 0
+
+    def update_config(self, **model_config): ...
+
+    def get_config(self):
+        return {"model_id": "test-model"}
 
     async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
         self.started.append(system_prompt)
@@ -275,11 +407,14 @@ class _StreamModel(BidiModel):
     """
 
     def __init__(self):
-        self.config = {}
-        self.connection_config = {}
         self.restart_calls = 0
         self._closed = asyncio.Event()
         self._inbox: asyncio.Queue = asyncio.Queue()
+
+    def update_config(self, **model_config): ...
+
+    def get_config(self):
+        return {"model_id": "test-model"}
 
     async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
         self._closed = asyncio.Event()
@@ -341,11 +476,7 @@ async def test_reconnect_fences_superseded_reader_stream_close_error():
 
 @pytest.mark.asyncio
 async def test_stale_reader_event_does_not_corrupt_state_across_reconnect():
-    """A reader suspended in the full-queue put across a swap must not record its stale event.
-
-    Guards the generation re-check after the queue put: without it, a cumulative-usage provider
-    double-counts the old connection's running total onto the already-folded baseline.
-    """
+    """Usage is recorded before enqueueing and must not be counted again after a reconnect."""
     model = _StreamModel()
     model.usage_is_cumulative = True  # like Nova: usage events report a running total
     agent = BidiAgent(model=model, system_prompt="hi")
@@ -358,8 +489,8 @@ async def test_stale_reader_event_does_not_corrupt_state_across_reconnect():
     await model.emit(BidiUsageEvent(input_tokens=90, output_tokens=60, total_tokens=150))
     for _ in range(30):
         await asyncio.sleep(0)
-    # usage1 recorded; the reader is now suspended inside put(usage2) on the full queue.
-    assert loop._accumulated_total_tokens == 100
+    # Both cumulative updates are recorded; put(usage2) is suspended on the full queue.
+    assert loop._accumulated_total_tokens == 150
 
     swap = asyncio.create_task(loop._restart_connection(None, loop._generation))
     for _ in range(30):
@@ -369,8 +500,8 @@ async def test_stale_reader_event_does_not_corrupt_state_across_reconnect():
     for _ in range(30):
         await asyncio.sleep(0)
 
-    # The stale usage2 must not be recorded onto the new connection (no cumulative double count).
-    assert loop._accumulated_total_tokens == 100
+    # Resuming the old reader must not record usage2 onto the new connection a second time.
+    assert loop._accumulated_total_tokens == 150
 
     await loop.stop()
 
@@ -424,7 +555,7 @@ async def test_current_reader_error_is_surfaced(loop, agent, agenerator):
 @pytest.mark.asyncio
 async def test_stale_reactive_timeout_dropped_after_proactive_swap(loop, agent, agenerator):
     """A timeout raised on an old generation, dequeued after a proactive swap, must not reconnect again."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     await loop.start()
     loop._reconnect_timer.cancel()
@@ -449,7 +580,7 @@ async def test_stale_reactive_timeout_dropped_after_proactive_swap(loop, agent, 
 @pytest.mark.asyncio
 async def test_reactive_timeout_during_scheduled_restart_emits_no_duplicate(loop, agent, agenerator):
     """A timeout cannot emit another restart event after a scheduled restart is accepted."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     hook_started = asyncio.Event()
     release_hook = asyncio.Event()
@@ -548,7 +679,7 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
 
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.restart = unittest.mock.AsyncMock(side_effect=lambda *a, **k: order.append("restart"))
-    model.connection_config = {}
+    model.get_connection_config.return_value = {}
     model.send.side_effect = lambda event: order.append("send")
     model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
@@ -585,7 +716,7 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
 @pytest.mark.asyncio
 async def test_stale_reactive_restart_ignored_after_proactive_swap(agent, agenerator):
     """A stale timeout restart (raised for an old generation) must not tear down the new connection."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     loop = agent._loop
@@ -606,7 +737,7 @@ async def test_stale_reactive_restart_ignored_after_proactive_swap(agent, agener
 @pytest.mark.asyncio
 async def test_deadline_callback_does_not_reconnect_after_stop(agent, agenerator):
     """A proactive deadline callback in flight during stop() must not reconnect the model."""
-    agent.model.connection_config = {"restart_after_s": 415}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 415}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     loop = agent._loop
@@ -630,7 +761,7 @@ async def test_deadline_callback_does_not_reconnect_after_stop(agent, agenerator
 @pytest.mark.asyncio
 async def test_deadline_callback_does_not_restart_after_stop_while_queue_full(agent, agenerator):
     """A restart blocked on event backpressure must not restart the model after stop()."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     loop = agent._loop
@@ -681,12 +812,9 @@ async def test_send_assistant_text_does_not_mark_awaiting_response(loop, agent, 
 
 
 @pytest.mark.asyncio
-async def test_user_transcript_marks_turn_awaiting_response_before_final(loop, agent, agenerator):
-    """A non-final user transcript owes a reply, so a proactive reconnect holds even when the
-    provider never flags is_final on user speech (the Gemini case). History is not appended yet."""
-    partial = BidiTranscriptStreamEvent(
-        delta={"text": "what's the"}, text="what's the", role="user", is_final=False, current_transcript="what's the"
-    )
+async def test_user_transcript_marks_turn_awaiting_response(loop, agent, agenerator):
+    """An incremental user transcript owes a reply but is not committed to history."""
+    partial = BidiTranscriptStreamEvent(delta="what's the", role="user")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
 
     await loop.start()
@@ -703,9 +831,7 @@ async def test_user_transcript_marks_turn_awaiting_response_before_final(loop, a
 @pytest.mark.asyncio
 async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent, agenerator):
     """A model (assistant) transcript is output, not an owed user turn, so it must not hold."""
-    partial = BidiTranscriptStreamEvent(
-        delta={"text": "hi there"}, text="hi there", role="assistant", is_final=False, current_transcript="hi there"
-    )
+    partial = BidiTranscriptStreamEvent(delta="hi there", role="assistant")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
 
     await loop.start()
@@ -726,11 +852,8 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
         BidiResponseStartEvent(response_id="r1"),
         # A lagging user input transcript arrives during the reply and re-latches awaiting.
         BidiTranscriptStreamEvent(
-            delta={"text": "earlier question"},
-            text="earlier question",
+            delta="earlier question",
             role="user",
-            is_final=False,
-            current_transcript="earlier question",
         ),
         BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
     ]
@@ -742,10 +865,6 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
     async for event in loop.receive():
         if isinstance(event, BidiResponseCompleteEvent):
             break
-    # Let _run_model apply the post-dequeue turn-state update for the complete event.
-    for _ in range(10):
-        await asyncio.sleep(0)
-
     assert loop._awaiting_response is False
     assert loop._turn_complete.is_set()  # turn is idle, so a proactive reconnect fires immediately
 
@@ -753,9 +872,29 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
 
 
 @pytest.mark.asyncio
+async def test_transcript_complete_appends_one_message(loop, agent, agenerator):
+    """A complete transcript is committed to history exactly once."""
+    complete = BidiTranscriptCompleteEvent(transcript="Hello there", role="assistant")
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([complete]))
+
+    await loop.start()
+    async for event in loop.receive():
+        if isinstance(event, BidiTranscriptCompleteEvent):
+            break
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert len(agent.messages) == 1
+    assert agent.messages[0]["role"] == "assistant"
+    assert agent.messages[0]["content"] == [{"text": "Hello there"}]
+
+    await loop.stop()
+
+
+@pytest.mark.asyncio
 async def test_forced_swap_flags_interrupted_turn(agent, agenerator):
     """A swap forced while a turn is owed sets turn_interrupted so the app can re-prompt."""
-    agent.model.connection_config = {"restart_after_s": 415}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 415}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     loop = agent._loop
     await loop.start()
@@ -779,7 +918,7 @@ async def test_proactive_reconnect_waits_for_turn_boundary(loop, agent, agenerat
     """A proactive reconnect defers until the in-progress turn completes (turn alignment)."""
     # The real timer is cancelled so the deadline is driven manually; the turn state is set
     # directly, and _await_turn_boundary waits up to _MODEL_RESTART_TURN_TIMEOUT_S for the boundary.
-    agent.model.connection_config = {"restart_after_s": 60}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 60}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     await loop.start()
     loop._reconnect_timer.cancel()
@@ -805,13 +944,13 @@ async def test_proactive_reconnect_waits_for_turn_boundary(loop, agent, agenerat
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_restart_hook_reports_reason(loop, agent, agenerator):
     """The reactive path reports reason='timeout' with the error; proactive reports 'scheduled' with None."""
-    from strands.experimental.hooks.events import BidiBeforeConnectionRestartEvent
+    from strands.experimental.bidi.hooks.events import BidiBeforeConnectionRestartEvent
 
     before_events = []
     agent.hooks.add_callback(
         BidiBeforeConnectionRestartEvent, lambda event: before_events.append((event.reason, event.timeout_error))
     )
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     await loop.start()
@@ -829,7 +968,7 @@ async def test_bidi_agent_loop_restart_hook_reports_reason(loop, agent, agenerat
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_reconnect_is_reentrancy_guarded(loop, agent, agenerator):
     """A second trigger arriving while a reconnect is in flight is a no-op, not a racing duplicate."""
-    agent.model.connection_config = {}
+    agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     # Block the restart so the first call holds the guard while the second is attempted.
@@ -869,7 +1008,7 @@ async def test_bidi_agent_loop_proactive_reconnect_completes_when_reconnect_susp
     Guards against the timer cancelling the very task running its deadline callback: with a
     reconnect that actually suspends, a self-cancel would abort the swap and leave the gate closed.
     """
-    agent.model.connection_config = {"restart_after_s": 5}
+    agent.model.get_connection_config.return_value = {"restart_after_s": 5}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     restart_done = False
