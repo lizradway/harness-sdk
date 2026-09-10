@@ -4,6 +4,7 @@ import json
 import unittest.mock
 
 import pytest
+
 from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
@@ -330,3 +331,17 @@ class TestClearSession:
 
         assert await stash_s1.list() == []
         assert await stash_s2.list() == ["tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_prefix_boundary_does_not_broaden(self):
+        """Clearing session 's1' must not affect session 's10'."""
+        storage = InMemoryStorage()
+        stash_s1 = Stash(storage, "s1", "agent-a")
+        stash_s10 = Stash(storage, "s10", "agent-a")
+        await stash_s1.store("tool-1", 0, json.dumps({"text": "s1"}).encode("utf-8"))
+        await stash_s10.store("tool-1", 0, json.dumps({"text": "s10"}).encode("utf-8"))
+
+        await stash_s1.clear_session()
+
+        assert await stash_s1.list() == []
+        assert await stash_s10.list() == ["tool-1_0"]

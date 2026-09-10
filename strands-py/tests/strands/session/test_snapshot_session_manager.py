@@ -951,23 +951,6 @@ class TestSnapshotStashIntegration:
         agent2 = Agent(model=_model("x"), session_manager=manager2, agent_id="a1")
         assert _texts(agent2) == _texts(agent)
 
-    @pytest.mark.asyncio
-    async def test_save_succeeds_when_stash_storage_fails(self, storage):
-        """A stash storage error during save logs a warning but the snapshot is still persisted."""
-        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
-        manager = SnapshotSessionManager("s1", storage=storage)
-        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
-        agent("go")
-
-        context_manager.stash._storage.list = AsyncMock(side_effect=RuntimeError("disk full"))
-        manager.sync_agent(agent)
-
-        key = _on_disk_key("s1", "a1")
-        raw = await storage.read(key)
-        assert raw is not None
-        snapshot_data = json.loads(raw)
-        assert "stash" not in snapshot_data["data"]
-
     def test_restore_succeeds_when_stash_load_fails(self, storage):
         """A stash storage error during restore logs a warning but the agent is still restored."""
         context_manager = ContextManager(stash={"storage": InMemoryStorage()})
@@ -988,3 +971,44 @@ class TestSnapshotStashIntegration:
             model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1"
         )
         assert _texts(agent2) == _texts(agent)
+
+    @pytest.mark.asyncio
+    async def test_immutable_snapshot_includes_stash(self, temp_dir):
+        """A snapshot_trigger produces an immutable checkpoint with inline stash data."""
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager(
+            "s1", storage=session_storage, snapshot_trigger=lambda **_: True
+        )
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "immutable data"}})
+        agent("go")
+
+        immutable_prefix = f"session/{_session_prefix('s1')}scopes/agent/a1/snapshots/immutable_history/"
+        keys = await session_storage.list(immutable_prefix)
+        assert len(keys) >= 1
+
+        raw = await session_storage.read(keys[0])
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"
+        assert "ref-1" in snapshot_data["data"]["stash"]["entries"]
+
+    @pytest.mark.asyncio
+    async def test_ephemeral_detection_survives_namespacing(self, storage):
+        """An InMemoryStorage wrapped with .namespace() is still detected as ephemeral."""
+        from strands.storage.storage import _NamespacedStorage
+
+        namespaced = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash={"storage": namespaced})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})
+        manager.sync_agent(agent)
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"

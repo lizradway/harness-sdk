@@ -406,9 +406,15 @@ class Agent(AgentBase, LocalAgent):
 
         from .._context_manager.context_manager import ContextManager as _ContextManager
 
-        self._context_manager: ContextManager | None = (
-            context_manager if isinstance(context_manager, _ContextManager) else None
-        )
+        if isinstance(context_manager, _ContextManager):
+            self._context_manager: ContextManager | None = context_manager
+        elif plugins and any(isinstance(plugin, _ContextManager) for plugin in plugins):
+            raise ValueError(
+                "A ContextManager was passed via plugins; pass it through the context_manager parameter instead "
+                "so session persistence can detect it"
+            )
+        else:
+            self._context_manager = None
 
         self.conversation_manager: ConversationManager
         if self.model.stateful:

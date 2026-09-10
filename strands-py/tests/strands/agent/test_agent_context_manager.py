@@ -119,3 +119,10 @@ class TestContextManagerProperty:
     def test_returns_none_for_auto_mode(self, mock_model):
         agent = Agent(model=mock_model, context_manager="auto")
         assert agent.context_manager is None
+
+    def test_rejects_context_manager_passed_via_plugins(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        context_manager = ContextManager()
+        with pytest.raises(ValueError, match="passed via plugins"):
+            Agent(model=mock_model, plugins=[context_manager])

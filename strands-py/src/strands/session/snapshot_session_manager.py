@@ -544,31 +544,26 @@ class SnapshotSessionManager(SessionManager):
         If the stash storage is durable, writes a lightweight external reference.
         If ephemeral (e.g. InMemoryStorage), serializes all entries inline.
 
-        Storage errors are logged and swallowed so a stash failure never prevents a snapshot save.
+        Raises on failure so the caller never persists a snapshot with missing stash data
+        while the agent messages still carry ``[ref: ...]`` placeholders.
         """
         context_manager = agent.context_manager
         if context_manager is None or context_manager.stash is None:
             return
 
-        try:
-            if context_manager.stash_is_durable:
-                snapshot.data["stash"] = {
-                    "location": "external",
-                    "storage_type": context_manager.stash.storage_type_name,
-                }
-                return
+        if context_manager.stash_is_durable:
+            snapshot.data["stash"] = {
+                "location": "external",
+                "storage_type": context_manager.stash.storage_type_name,
+            }
+            return
 
-            entries = await context_manager.stash.take_snapshot()
-            if entries:
-                snapshot.data["stash"] = {
-                    "location": "inline",
-                    "entries": entries,
-                }
-        except Exception:
-            logger.warning(
-                "session_id=<%s> | failed to include stash data in snapshot, saving without stash",
-                self.session_id,
-            )
+        entries = await context_manager.stash.take_snapshot()
+        if entries:
+            snapshot.data["stash"] = {
+                "location": "inline",
+                "entries": entries,
+            }
 
     async def _restore_stash_data(self, agent: "Agent", snapshot: Snapshot) -> None:
         """Restore context-manager stash data from a snapshot.

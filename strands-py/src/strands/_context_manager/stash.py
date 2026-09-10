@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _resolve_namespace
+from ..storage.storage import _NamespacedStorage
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class Stash:
     def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        self._storage = _resolve_namespace(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
 
     @property
     def storage_type_name(self) -> str:

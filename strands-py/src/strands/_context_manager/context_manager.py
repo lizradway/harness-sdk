@@ -95,7 +95,9 @@ class ContextManager(Plugin):
         """Register strategy hooks for proactive compression and overflow recovery."""
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
-            self._stash_is_durable = not isinstance(storage, InMemoryStorage)
+            from ..storage.storage import _EPHEMERAL
+
+            self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
             self._stash = Stash(storage, agent.session_id, agent.agent_id)
 
         # Stash hook must register before strategy init so it captures pre-offload content.

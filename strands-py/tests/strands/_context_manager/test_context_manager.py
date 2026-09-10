@@ -423,6 +423,16 @@ class TestStashIsDurable:
         context_manager.init_agent(mock_agent)
         assert context_manager.stash_is_durable is True
 
+    def test_false_with_namespaced_in_memory_storage(self, mock_agent):
+        from strands.storage.in_memory_storage import InMemoryStorage
+        from strands.storage.storage import _NamespacedStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash=True)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is False
+
     def test_false_before_init(self):
         context_manager = ContextManager()
         assert context_manager.stash_is_durable is False
