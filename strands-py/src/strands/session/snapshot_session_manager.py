@@ -241,6 +241,7 @@ class SnapshotSessionManager(SessionManager):
             # Silently accepting an unknown value would register no save hooks — the session
             # would persist nothing with no error.
             raise ValueError(f"save_latest_on must be one of {_SAVE_LATEST_STRATEGIES}, got {save_latest_on!r}")
+        self._raw_storage: Storage | None = storage
         self._storage: Storage | None = _resolve_storage(storage) if storage is not None else None
         self._save_latest_on: SaveLatestStrategy = save_latest_on
         self._snapshot_trigger = snapshot_trigger
@@ -306,7 +307,9 @@ class SnapshotSessionManager(SessionManager):
             **kwargs: Additional keyword arguments for future extensibility.
         """
         if self._storage is None:
-            self._storage = _resolve_storage(agent.storage if agent.storage is not None else LocalFileStorage())
+            raw = agent.storage if agent.storage is not None else LocalFileStorage()
+            self._raw_storage = raw
+            self._storage = _resolve_storage(raw)
         context_manager = agent.context_manager
         if context_manager is not None:
             self._agent_stash = context_manager.stash
@@ -604,14 +607,31 @@ class SnapshotSessionManager(SessionManager):
     async def _delete_stash_data(self) -> None:
         """Delete all stash data during session deletion.
 
+        When the manager was never initialized (no agent attached), falls back to
+        deleting the ``context/<session_id>/`` prefix directly on the base storage so
+        stash data is not orphaned.
+
         Storage errors are logged and swallowed so a stash failure never prevents session deletion.
         """
-        if self._agent_stash is not None:
-            try:
+        try:
+            if self._agent_stash is not None:
                 await self._agent_stash.clear()
                 await self._agent_stash.clear_session()
-            except Exception:
-                logger.warning(
-                    "session_id=<%s> | failed to delete stash data during session deletion",
-                    self.session_id,
-                )
+            elif self._raw_storage is not None:
+                from .._context_manager.stash import STASH_PREFIX
+
+                prefix = f"{STASH_PREFIX}/{self.session_id}/"
+                keys = await self._raw_storage.list(prefix)
+                for key in keys:
+                    await self._raw_storage.delete(key)
+                if keys:
+                    logger.debug(
+                        "session_id=<%s>, keys=<%s> | deleted orphaned stash data via storage fallback",
+                        self.session_id,
+                        len(keys),
+                    )
+        except Exception:
+            logger.warning(
+                "session_id=<%s> | failed to delete stash data during session deletion",
+                self.session_id,
+            )

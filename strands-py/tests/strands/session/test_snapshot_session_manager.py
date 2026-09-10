@@ -941,6 +941,23 @@ class TestSnapshotStashIntegration:
 
         assert await context_manager.stash.list() == []
 
+    @pytest.mark.asyncio
+    async def test_delete_session_without_initialize_clears_stash(self, temp_dir):
+        """delete_session on an uninitialized manager still clears stash data via storage fallback."""
+        shared_storage = LocalFileStorage(f"{temp_dir}/shared")
+        context_manager = ContextManager(stash={"storage": shared_storage})
+        manager = SnapshotSessionManager("s1", storage=shared_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "orphan"}})
+        assert await shared_storage.list("context/s1/") != []
+
+        bare_manager = SnapshotSessionManager("s1", storage=shared_storage)
+        await bare_manager.delete_session()
+
+        assert await shared_storage.list("context/s1/") == []
+
     def test_no_context_manager_save_restore_works(self, storage):
         """Save/restore works normally when no ContextManager is present."""
         manager = SnapshotSessionManager("s1", storage=storage)
