@@ -44,6 +44,7 @@ from ..types._snapshot import (
     SnapshotPreset,
     resolve_snapshot_fields,
 )
+from .harness import Harness, apply_harness_defaults, resolve_harness
 
 if TYPE_CHECKING:
     from ..tools import ToolProvider
@@ -219,6 +220,7 @@ class Agent(AgentBase, LocalAgent):
         load_tools_from_directory: bool = False,
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
+        harness: Harness | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -240,7 +242,12 @@ class Agent(AgentBase, LocalAgent):
         """Initialize the Agent with the specified configuration.
 
         Args:
-            model: Provider for running inference or a string representing the model-id for Bedrock to use.
+            model: Provider for running inference, a ``"provider/model-id"`` string (e.g.
+                ``"anthropic/claude-sonnet-4-6"``, ``"openai/gpt-5.6-luna"``,
+                ``"google/gemini-3.5-flash"``), or a bare Bedrock model id.
+                Supported provider prefixes: ``bedrock``, ``anthropic``, ``openai``,
+                ``google``, ``ollama``, ``litellm``. A string without a recognized prefix
+                is treated as a Bedrock model id for backward compatibility.
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
             messages: List of initial messages to pre-load into the conversation.
@@ -345,9 +352,52 @@ class Agent(AgentBase, LocalAgent):
                 collisions. Storage specified directly on a subsystem always takes
                 precedence over this agent-level default. Defaults to None.
 
+            harness: A configuration preset that supplies defaults for any Agent
+                parameter the caller does not provide. Can be a ``Harness`` instance
+                (e.g. ``Stan()``) or a registered name (e.g. ``"stan"``). Explicit
+                Agent kwargs always win over harness defaults; list-valued options
+                (tools, plugins, hooks, interventions) are unioned.
+                Defaults to None (no preset applied).
+
         Raises:
             ValueError: If agent id contains path separators.
         """
+        if harness is not None:
+            resolved = resolve_harness(harness)
+            harness_kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "system_prompt": system_prompt,
+                "structured_output_model": structured_output_model,
+                "callback_handler": callback_handler,
+                "conversation_manager": conversation_manager,
+                "context_manager": context_manager,
+                "plugins": plugins,
+                "hooks": hooks,
+                "interventions": interventions,
+                "session_manager": session_manager,
+                "memory_manager": memory_manager,
+                "sandbox": sandbox,
+                "storage": storage,
+            }
+            apply_harness_defaults(resolved, harness_kwargs)
+            model = harness_kwargs["model"]
+            messages = harness_kwargs["messages"]
+            tools = harness_kwargs["tools"]
+            system_prompt = harness_kwargs["system_prompt"]
+            structured_output_model = harness_kwargs["structured_output_model"]
+            callback_handler = harness_kwargs["callback_handler"]
+            conversation_manager = harness_kwargs["conversation_manager"]
+            context_manager = harness_kwargs["context_manager"]
+            plugins = harness_kwargs["plugins"]
+            hooks = harness_kwargs["hooks"]
+            interventions = harness_kwargs["interventions"]
+            session_manager = harness_kwargs["session_manager"]
+            memory_manager = harness_kwargs["memory_manager"]
+            sandbox = harness_kwargs["sandbox"]
+            storage = harness_kwargs["storage"]
+
         self._model_router: ModelRouter | None = None
         if isinstance(model, ModelRouter):
             self._model_router = model
@@ -355,7 +405,9 @@ class Agent(AgentBase, LocalAgent):
         elif not model:
             self.model = BedrockModel()
         elif isinstance(model, str):
-            self.model = BedrockModel(model_id=model)
+            from ..models._resolve import resolve_model_string
+
+            self.model = resolve_model_string(model)
         else:
             self.model = model
         self.messages = messages if messages is not None else []

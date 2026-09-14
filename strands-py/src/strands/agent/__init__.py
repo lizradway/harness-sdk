@@ -19,12 +19,14 @@ from .conversation_manager import (
     SlidingWindowConversationManager,
     SummarizingConversationManager,
 )
+from .harness import Harness
 
 __all__ = [
     "Agent",
     "AgentBase",
     "AgentResult",
     "ConversationManager",
+    "Harness",
     "NullConversationManager",
     "SlidingWindowConversationManager",
     "SummarizingConversationManager",

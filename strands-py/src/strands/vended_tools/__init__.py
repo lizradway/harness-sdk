@@ -16,12 +16,16 @@ analyst's answer to a prompt about the page content (``mode='agentic'``); use
 requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``)
 and is imported lazily, so accessing it without that extra raises :class:`ImportError`:
 
+The :data:`read`, :data:`write`, and :data:`edit` tools provide simple,
+individual file operations — each as its own tool — routed through the same
+sandbox mechanism.
+
 Example Usage:
     ```python
     from strands import Agent
-    from strands.vended_tools import file_editor, http_request, shell, sleep, web_fetch
+    from strands.vended_tools import file_editor, http_request, read, shell, sleep, web_fetch, write, edit
 
-    agent = Agent(tools=[file_editor, http_request, shell, sleep, web_fetch])
+    agent = Agent(tools=[file_editor, http_request, read, shell, sleep, web_fetch, write, edit])
     ```
 """
 
@@ -30,6 +34,7 @@ from typing import Any
 
 from ._bash import _RENAME_RATIONALE, make_bash  # noqa: F401  deprecated tool, kept importable until v2.0.0
 from .file_editor import file_editor, make_file_editor
+from .file_tools import edit, make_edit, make_read, make_write, read, write
 from .http_request import http_request, make_http_request
 from .shell import make_shell, shell
 from .sleep import make_sleep, sleep
@@ -59,12 +64,18 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "edit",
     "file_editor",
     "http_request",
+    "make_edit",
     "make_file_editor",
     "make_http_request",
+    "make_read",
     "make_shell",
     "make_sleep",
+    "make_write",
+    "read",
     "shell",
     "sleep",
+    "write",
 ]
