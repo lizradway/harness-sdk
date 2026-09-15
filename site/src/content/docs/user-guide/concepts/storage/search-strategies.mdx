@@ -3,6 +3,7 @@ title: Search Strategies
 description: "Plug in keyword, BM25, or custom search algorithms
   to find relevant content across storage backends."
 tags: [session-management]
+addedDate: 2026-09-15
 sourceLinks:
   - path: strands-py/src/strands/storage/search/types.py
   - path: strands-py/src/strands/storage/search/keyword.py
@@ -68,9 +69,10 @@ strategy.
 
 BM25 full-text search backed by a SQLite inverted
 index. Scores results by term frequency, inverse
-document frequency, and document length normalization
---- significantly better relevance ranking than keyword
-overlap for large stores. Entries are indexed at write
+document frequency, and document length normalization,
+producing significantly better relevance ranking than
+keyword overlap for large stores. Entries are indexed at
+write
 time, so searches query a pre-built index instead of
 scanning storage.
 
