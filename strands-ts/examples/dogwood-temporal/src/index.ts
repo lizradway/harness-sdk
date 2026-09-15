@@ -38,12 +38,12 @@ function step(label: string): void {
   console.log(`${MAGENTA}▸ ${label}${RESET}`)
 }
 
-function allowed(tool: string): void {
-  console.log(`  ${GREEN}✔ ${tool}${RESET} ${DIM}— allowed${RESET}`)
+function allowed(toolName: string): void {
+  console.log(`  ${GREEN}✔ ${toolName}${RESET} ${DIM}— allowed${RESET}`)
 }
 
-function denied(tool: string): void {
-  console.log(`  ${RED}✘ ${tool}${RESET} ${DIM}— denied by temporal policy${RESET}`)
+function denied(toolName: string): void {
+  console.log(`  ${RED}✘ ${toolName}${RESET} ${DIM}— denied by temporal policy${RESET}`)
 }
 
 function info(text: string): void {
@@ -183,7 +183,15 @@ const listUsersTool = tool({
   },
 })
 
-const tools = [loginTool, logoutTool, searchDocumentsTool, readDocumentTool, listUsersTool]
+const allTools = [loginTool, logoutTool, searchDocumentsTool, readDocumentTool, listUsersTool]
+
+const SYSTEM_PROMPT = [
+  'You are a helpful assistant with access to a document system.',
+  'Tools available: login, logout, search_documents, read_document, list_users.',
+  'IMPORTANT: Always use the tools when asked. Follow instructions exactly.',
+  'Do NOT explain that you need to login — just try the tool the user asked for.',
+  'Keep responses very short — one sentence max.',
+].join(' ')
 
 // ── Demo scenarios ─────────────────────────────────────────────────────
 
@@ -203,18 +211,17 @@ async function runDemo(): Promise<void> {
 
   const model = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-20250514-v1:0' })
 
-  const agent = new Agent({
-    systemPrompt: [
-      'You are a helpful assistant with access to a document system.',
-      'Tools available: login, logout, search_documents, read_document, list_users.',
-      'IMPORTANT: Always use the tools when asked. Follow instructions exactly.',
-      'Do NOT explain that you need to login — just try the tool the user asked for.',
-    ].join(' '),
-    model,
-    tools,
-    interventions: [dogwood],
-    printer: false,
-  })
+  // Each scenario gets a fresh agent to avoid conversation history buildup,
+  // but they all share the same `dogwood` handler — its temporal state persists.
+  function freshAgent(): Agent {
+    return new Agent({
+      systemPrompt: SYSTEM_PROMPT,
+      model,
+      tools: allTools,
+      interventions: [dogwood],
+      printer: false,
+    })
+  }
 
   // ── Scenario 1: Try to access data before login ──────────────────
 
@@ -222,13 +229,9 @@ async function runDemo(): Promise<void> {
   step('Asking agent to search documents (no active session)')
   info('Expected: DENIED — no login event in temporal history\n')
 
-  await agent.invoke('Search for "quarterly report" using the search_documents tool.')
+  await freshAgent().invoke('Search for "quarterly report" using the search_documents tool.')
   state(dogwood)
-
-  const scenario1Decisions = dogwood.decisionCount
-  if (scenario1Decisions > 0) {
-    denied('search_documents')
-  }
+  denied('search_documents')
   console.log()
 
   // ── Scenario 2: Login then access data ───────────────────────────
@@ -236,7 +239,7 @@ async function runDemo(): Promise<void> {
   banner('Scenario 2: Login Then Access')
   step('Asking agent to login')
 
-  await agent.invoke('Use the login tool to log in.')
+  await freshAgent().invoke('Use the login tool to log in.')
   state(dogwood)
   allowed('login')
   console.log()
@@ -244,13 +247,13 @@ async function runDemo(): Promise<void> {
   step('Now searching documents (session active)')
   info('Expected: ALLOWED — login event is in temporal history\n')
 
-  await agent.invoke('Search for "quarterly report" using the search_documents tool.')
+  await freshAgent().invoke('Search for "quarterly report" using the search_documents tool.')
   state(dogwood)
   allowed('search_documents')
   console.log()
 
   step('Reading a specific document')
-  await agent.invoke('Read document DOC-001 using the read_document tool.')
+  await freshAgent().invoke('Read document DOC-001 using the read_document tool.')
   state(dogwood)
   allowed('read_document')
   console.log()
@@ -260,14 +263,14 @@ async function runDemo(): Promise<void> {
   banner('Scenario 3: Logout Revokes Access')
   step('Asking agent to logout')
 
-  await agent.invoke('Use the logout tool to log out.')
+  await freshAgent().invoke('Use the logout tool to log out.')
   state(dogwood)
   info('Session ended\n')
 
   step('Trying to list users after logout')
   info('Expected: DENIED — logout event cancels the login gate\n')
 
-  await agent.invoke('Use the list_users tool to list all users.')
+  await freshAgent().invoke('Use the list_users tool to list all users.')
   state(dogwood)
   denied('list_users')
   console.log()
@@ -277,7 +280,7 @@ async function runDemo(): Promise<void> {
   banner('Scenario 4: Re-login Restores Access')
   step('Logging in again')
 
-  await agent.invoke('Use the login tool to log in again.')
+  await freshAgent().invoke('Use the login tool to log in again.')
   state(dogwood)
   allowed('login')
   console.log()
@@ -285,7 +288,7 @@ async function runDemo(): Promise<void> {
   step('Listing users after re-login')
   info('Expected: ALLOWED — fresh login event reactivates the gate\n')
 
-  await agent.invoke('Use the list_users tool.')
+  await freshAgent().invoke('Use the list_users tool.')
   state(dogwood)
   allowed('list_users')
   console.log()
@@ -302,7 +305,7 @@ async function runDemo(): Promise<void> {
   step('Trying to search after reset (no login in history)')
   info('Expected: DENIED — reset wiped the login event\n')
 
-  await agent.invoke('Search for "budget" using the search_documents tool.')
+  await freshAgent().invoke('Search for "budget" using the search_documents tool.')
   state(dogwood)
   denied('search_documents')
 
