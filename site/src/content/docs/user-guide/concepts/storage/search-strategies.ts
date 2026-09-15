@@ -12,8 +12,8 @@ async function keywordSearch() {
   // --8<-- [end:keyword_search]
 }
 
-async function qmdSearch() {
-  // --8<-- [start:qmd_search]
+async function bm25Search() {
+  // --8<-- [start:bm25_search]
   const search = new QmdSearchStrategy()
   const storage = new LocalFileStorage(
     './memory/',
@@ -32,7 +32,7 @@ async function qmdSearch() {
   )
 
   await search.close()
-  // --8<-- [end:qmd_search]
+  // --8<-- [end:bm25_search]
 }
 
 async function storageWithStrategy() {

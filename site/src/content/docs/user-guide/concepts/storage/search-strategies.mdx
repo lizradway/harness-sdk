@@ -61,25 +61,30 @@ index, embedding model, or external dependency required.
 
 Because it reads every entry on each search, keyword
 search is best suited for small-to-medium stores (up to
-a few thousand keys). For larger stores, use a BM25
+a few thousand keys). For larger stores, use the BM25
 strategy.
 
-## BM25 search
+## Bm25SearchStrategy
 
-BM25 strategies maintain a SQLite-backed inverted index
-and score results by term frequency, inverse document
-frequency, and document length normalization ---
-significantly better relevance ranking than keyword
-overlap for large stores. Both strategies index entries
-at write time, so searches query a pre-built index
-instead of scanning storage.
+BM25 full-text search backed by a SQLite inverted
+index. Scores results by term frequency, inverse
+document frequency, and document length normalization
+--- significantly better relevance ranking than keyword
+overlap for large stores. Entries are indexed at write
+time, so searches query a pre-built index instead of
+scanning storage.
 
-### Bm25SearchStrategy (Python)
+Both SDKs ship a BM25 strategy that works with
+`LocalFileStorage` (needs a filesystem directory to
+locate the index file). The Python implementation uses
+the built-in `sqlite3` FTS5 module (zero external
+dependencies). The TypeScript implementation uses
+[QMD](https://github.com/nicholasgasior/qmd) and
+requires `@tobilu/qmd` as a peer dependency:
 
-Uses Python's built-in `sqlite3` FTS5 support --- zero
-external dependencies. Works with `LocalFileStorage`
-(needs
-<Syntax py="base_dir" /> to locate the index file).
+```bash
+npm install @tobilu/qmd
+```
 
 <Tabs>
 <Tab label="Python">
@@ -89,27 +94,12 @@ external dependencies. Works with `LocalFileStorage`
 ```
 
 </Tab>
-</Tabs>
-
-### QmdSearchStrategy (TypeScript)
-
-Uses [QMD](https://github.com/nicholasgasior/qmd), a
-SQLite-backed full-text engine. Works with
-`LocalFileStorage` (needs
-<Syntax ts="baseDir" /> to locate the index). Requires
-`@tobilu/qmd` as a peer dependency:
-
-```bash
-npm install @tobilu/qmd
-```
-
-<Tabs>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage/search-strategies_imports.ts:qmd_search_imports"
+--8<-- "user-guide/concepts/storage/search-strategies_imports.ts:bm25_search_imports"
 
---8<-- "user-guide/concepts/storage/search-strategies.ts:qmd_search"
+--8<-- "user-guide/concepts/storage/search-strategies.ts:bm25_search"
 ```
 
 </Tab>
