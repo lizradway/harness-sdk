@@ -79,7 +79,7 @@ Both SDKs ship a BM25 strategy that works with
 locate the index file). The Python implementation uses
 the built-in `sqlite3` FTS5 module (zero external
 dependencies). The TypeScript implementation uses
-[QMD](https://github.com/nicholasgasior/qmd) and
+[QMD](https://github.com/tobi/qmd) and
 requires `@tobilu/qmd` as a peer dependency:
 
 ```bash
@@ -105,8 +105,8 @@ npm install @tobilu/qmd
 </Tab>
 </Tabs>
 
-Both strategies persist a SQLite database alongside the
-storage directory. Call
+Both SDKs' BM25 strategies persist a SQLite database
+alongside the storage directory. Call
 <Syntax py="close()" ts="close()" /> when the strategy
 is no longer needed to release the database connection.
 
