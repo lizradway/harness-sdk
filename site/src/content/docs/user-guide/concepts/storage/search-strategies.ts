@@ -1,7 +1,6 @@
 import { KeywordSearchStrategy } from '@strands-agents/sdk/storage/search'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
-import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 
 async function keywordSearch() {
   // --8<-- [start:keyword_search]
@@ -15,24 +14,33 @@ async function keywordSearch() {
 
 async function qmdSearch() {
   // --8<-- [start:qmd_search]
-  const storage = new LocalFileStorage('./memory/')
   const search = new QmdSearchStrategy()
+  const storage = new LocalFileStorage(
+    './memory/',
+    undefined,
+    search,
+  )
 
-  const results = await search.search(
-    storage,
-    'authentication flow',
+  await storage.write(
+    'auth.md',
+    new TextEncoder().encode(
+      'OAuth2 authentication flow',
+    ),
+  )
+  const results = await storage.search(
+    'authentication',
   )
 
   await search.close()
   // --8<-- [end:qmd_search]
 }
 
-async function fileMemoryQmd() {
-  // --8<-- [start:file_memory_qmd]
-  const store = new FileMemoryStore({
-    name: 'agent-memory',
-    storage: new LocalFileStorage('./memory/'),
-    search: new QmdSearchStrategy(),
-  })
-  // --8<-- [end:file_memory_qmd]
+async function storageWithStrategy() {
+  // --8<-- [start:storage_with_strategy]
+  const storage = new LocalFileStorage(
+    './memory/',
+    undefined,
+    new QmdSearchStrategy(),
+  )
+  // --8<-- [end:storage_with_strategy]
 }

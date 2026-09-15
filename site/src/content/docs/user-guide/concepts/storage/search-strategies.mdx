@@ -6,26 +6,31 @@ tags: [session-management]
 sourceLinks:
   - path: strands-py/src/strands/storage/search/types.py
   - path: strands-py/src/strands/storage/search/keyword.py
+  - path: strands-py/src/strands/storage/search/bm25.py
   - path: strands-ts/src/storage/search/types.ts
   - path: strands-ts/src/storage/search/keyword.ts
   - path: strands-ts/src/storage/search/qmd.ts
 ---
 
-Storage backends expose an optional
+Storage backends expose a
 <Syntax py="search()" ts="search()" /> method that
 delegates to a pluggable search strategy. A strategy
 implements the
 <Syntax py="SearchStrategy" ts="SearchStrategy" />
 protocol/interface: given a storage backend and a query
 string, it returns a ranked list of matching keys with
-relevance scores.
+relevance scores. Strategies that maintain an index can
+also implement
+<Syntax py="index()" ts="index()" /> to update
+incrementally on each write.
 
 All shipped backends default to
-`KeywordSearchStrategy`. You can swap in a different
-strategy at the consumer level (for example, when
-configuring a memory store) or by overriding
-<Syntax py="search()" ts="search()" /> in a custom
-backend.
+`KeywordSearchStrategy`. Pass a different strategy via
+the
+<Syntax
+  py="search_strategy"
+  ts="searchStrategy"
+/> parameter on any built-in backend to override it.
 
 ## KeywordSearchStrategy
 
@@ -56,28 +61,50 @@ index, embedding model, or external dependency required.
 
 Because it reads every entry on each search, keyword
 search is best suited for small-to-medium stores (up to
-a few thousand keys). For larger stores, consider a
-full-text strategy.
+a few thousand keys). For larger stores, use a BM25
+strategy.
 
-## QmdSearchStrategy
+## BM25 search
 
-:::note
-`QmdSearchStrategy` is available in TypeScript only.
-:::
+BM25 strategies maintain a SQLite-backed inverted index
+and score results by term frequency, inverse document
+frequency, and document length normalization ---
+significantly better relevance ranking than keyword
+overlap for large stores. Both strategies index entries
+at write time, so searches query a pre-built index
+instead of scanning storage.
 
-BM25 full-text search powered by QMD, a SQLite-backed
-inverted index. Accounts for term frequency, inverse
-document frequency, and document length normalization
---- significantly better relevance ranking than keyword
-overlap for large stores.
+### Bm25SearchStrategy (Python)
 
-Works only with `LocalFileStorage` because it needs a
-filesystem directory to index. Requires `@tobilu/qmd`
-as a peer dependency:
+Uses Python's built-in `sqlite3` FTS5 support --- zero
+external dependencies. Works with `LocalFileStorage`
+(needs
+<Syntax py="base_dir" /> to locate the index file).
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/concepts/storage/search-strategies.py:bm25_search"
+```
+
+</Tab>
+</Tabs>
+
+### QmdSearchStrategy (TypeScript)
+
+Uses [QMD](https://github.com/nicholasgasior/qmd), a
+SQLite-backed full-text engine. Works with
+`LocalFileStorage` (needs
+<Syntax ts="baseDir" /> to locate the index). Requires
+`@tobilu/qmd` as a peer dependency:
 
 ```bash
 npm install @tobilu/qmd
 ```
+
+<Tabs>
+<Tab label="TypeScript">
 
 ```typescript
 --8<-- "user-guide/concepts/storage/search-strategies_imports.ts:qmd_search_imports"
@@ -85,30 +112,48 @@ npm install @tobilu/qmd
 --8<-- "user-guide/concepts/storage/search-strategies.ts:qmd_search"
 ```
 
-The strategy maintains a persistent SQLite index that
-syncs with the backing directory before each search.
-Call <Syntax ts="close()" /> when the strategy is no
-longer needed to release the database connection.
+</Tab>
+</Tabs>
 
-## Custom strategies in FileMemoryStore
+Both strategies persist a SQLite database alongside the
+storage directory. Call
+<Syntax py="close()" ts="close()" /> when the strategy
+is no longer needed to release the database connection.
 
-:::note
-The <Syntax ts="search" /> config parameter on
-`FileMemoryStore` is available in TypeScript only. In
-Python, `FileMemoryStore` delegates to the storage
-backend's
-<Syntax py="search()" /> method; override it in a
-custom backend to change the strategy.
-:::
+## Passing a strategy to a storage backend
 
-Pass a strategy to `FileMemoryStore` through its
-<Syntax ts="search" /> config parameter. The store's
-<Syntax ts="search()" /> delegates to it instead of
-the default keyword scan, while the underlying storage
-backend stays unchanged.
+Every built-in backend (`InMemoryStorage`,
+`LocalFileStorage`, `S3Storage`) accepts a
+<Syntax
+  py="search_strategy"
+  ts="searchStrategy"
+/> parameter. When set, writes automatically call the
+strategy's
+<Syntax py="index()" ts="index()" /> method, and
+<Syntax py="search()" ts="search()" /> delegates to
+the strategy instead of the default keyword scan.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/concepts/storage/search-strategies.py:storage_with_strategy"
+```
+
+</Tab>
+<Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage/search-strategies_imports.ts:file_memory_qmd_imports"
+--8<-- "user-guide/concepts/storage/search-strategies_imports.ts:storage_with_strategy_imports"
 
---8<-- "user-guide/concepts/storage/search-strategies.ts:file_memory_qmd"
+--8<-- "user-guide/concepts/storage/search-strategies.ts:storage_with_strategy"
 ```
+
+</Tab>
+</Tabs>
+
+You can also pass the strategy through a memory store
+that wraps storage. In TypeScript, `FileMemoryStore`
+accepts a
+<Syntax ts="search" /> config parameter that overrides
+the store's search independently of the backend.
