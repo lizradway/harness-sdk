@@ -144,9 +144,12 @@ the strategy instead of the default keyword scan.
 </Tab>
 </Tabs>
 
-:::note[TypeScript]
-You can also pass the strategy through
-`FileMemoryStore`, which accepts a `search` config
-parameter that overrides the store's search
-independently of the backend.
-:::
+When a memory store wraps a storage backend, the
+search strategy flows through automatically. In
+Python, `FileMemoryStore` delegates to the underlying
+storage backend's
+<Syntax py="search()" ts="search()" /> method, so the
+strategy you set on the backend applies to memory
+searches too. In TypeScript, `FileMemoryStore` also
+accepts a `search` config parameter that overrides the
+store's search independently of the backend.
