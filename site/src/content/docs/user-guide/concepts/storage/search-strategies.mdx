@@ -144,12 +144,40 @@ the strategy instead of the default keyword scan.
 </Tab>
 </Tabs>
 
-When a memory store wraps a storage backend, the
-search strategy flows through automatically. In
-Python, `FileMemoryStore` delegates to the underlying
-storage backend's
-<Syntax py="search()" ts="search()" /> method, so the
-strategy you set on the backend applies to memory
-searches too. In TypeScript, `FileMemoryStore` also
-accepts a `search` config parameter that overrides the
-store's search independently of the backend.
+`FileMemoryStore` also accepts a search strategy
+override. When set,
+<Syntax py="search()" ts="search()" /> delegates to
+that strategy instead of the storage backend's
+default. The backend itself is unaffected: only the
+memory store's search behavior changes.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.storage.search import Bm25SearchStrategy
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(
+    name="agent-memory",
+    search_strategy=Bm25SearchStrategy(),
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
+
+const store = new FileMemoryStore({
+  name: 'agent-memory',
+  search: new QmdSearchStrategy(),
+})
+```
+
+</Tab>
+</Tabs>

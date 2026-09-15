@@ -240,6 +240,26 @@ class TestSearch:
         assert len(results) == 2
 
 
+    @pytest.mark.asyncio
+    async def test_delegates_to_search_strategy_when_set(self, storage):
+        strategy = AsyncMock()
+        strategy.search.return_value = [
+            type("Result", (), {"key": "custom.md", "score": 0.9, "data": b"custom result"})()
+        ]
+        store = FileMemoryStore(name="strategy-test", storage=storage, search_strategy=strategy)
+        await store.add("some content to write")
+        results = await store.search("anything")
+        strategy.search.assert_awaited_once()
+        assert len(results) == 1
+        assert results[0].content == "custom result"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_storage_search_without_strategy(self, store):
+        await store.add("User prefers dark mode for all editors")
+        results = await store.search("dark mode")
+        assert results[0].content == "User prefers dark mode for all editors"
+
+
 class TestExtraction:
     @pytest.mark.asyncio
     async def test_extraction_true_creates_key_aware_extractor(self, storage):
