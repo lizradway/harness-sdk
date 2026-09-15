@@ -202,6 +202,9 @@ class FileMemoryStore(MemoryStore):
             else:
                 merged = content
 
-            await self._storage.write(key, merged.encode("utf-8"))
+            data = merged.encode("utf-8")
+            await self._storage.write(key, data)
+            if self._search_strategy:
+                await self._search_strategy.index(self._storage, key, data)
 
         return key

@@ -254,6 +254,17 @@ class TestSearch:
         assert results[0].content == "custom result"
 
     @pytest.mark.asyncio
+    async def test_indexes_on_add_when_search_strategy_set(self, storage):
+        strategy = AsyncMock()
+        strategy.search.return_value = []
+        store = FileMemoryStore(name="idx-test", storage=storage, search_strategy=strategy)
+        await store.add("User prefers dark mode")
+        strategy.index.assert_awaited_once()
+        call_args = strategy.index.call_args
+        assert call_args[0][1].endswith(".md")
+        assert b"User prefers dark mode" in call_args[0][2]
+
+    @pytest.mark.asyncio
     async def test_falls_back_to_storage_search_without_strategy(self, store):
         await store.add("User prefers dark mode for all editors")
         results = await store.search("dark mode")
