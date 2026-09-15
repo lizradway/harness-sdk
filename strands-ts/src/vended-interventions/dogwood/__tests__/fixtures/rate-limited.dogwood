@@ -1,0 +1,12 @@
+permit (principal, action == App::Action::"send_email", resource)
+when temporal {
+  !(App::Action::"revoke_email"::request{ })
+    since
+  App::Action::"grant_email"::request{ }
+};
+
+permit(principal, action == App::Action::"search", resource);
+
+permit(principal, action == App::Action::"grant_email", resource);
+
+permit(principal, action == App::Action::"revoke_email", resource);

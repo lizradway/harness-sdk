@@ -1,0 +1,49 @@
+namespace App {
+  entity User = { role: String };
+  entity Resource;
+
+  action "search" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: { query: String } }
+  };
+
+  action "read_data" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: { document: String } }
+  };
+
+  action "login" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: {} }
+  };
+
+  action "logout" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: {} }
+  };
+
+  action "send_email" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: { to: String } }
+  };
+
+  action "grant_email" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: {} }
+  };
+
+  action "revoke_email" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: {} }
+  };
+
+  action "delete_record" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: { id: String } }
+  };
+
+  action "query" appliesTo {
+    principal: [User], resource: [Resource],
+    context: { input: {} }
+  };
+}

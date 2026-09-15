@@ -1,0 +1,26 @@
+entity User = { role: String };
+entity Resource;
+
+action "search" appliesTo {
+  principal: [User],
+  resource: [Resource],
+  context: { input: { query: String } }
+};
+
+action "delete_record" appliesTo {
+  principal: [User],
+  resource: [Resource],
+  context: { input: { id: String } }
+};
+
+action "query" appliesTo {
+  principal: [User],
+  resource: [Resource],
+  context: { input: {} }
+};
+
+action "send_email" appliesTo {
+  principal: [User],
+  resource: [Resource],
+  context: { input: { to: String } }
+};

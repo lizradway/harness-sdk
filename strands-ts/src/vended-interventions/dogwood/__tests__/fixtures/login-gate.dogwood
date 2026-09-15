@@ -1,0 +1,10 @@
+permit (principal, action == App::Action::"read_data", resource)
+when temporal {
+  !(App::Action::"logout"::request{ })
+    since within 1h
+  App::Action::"login"::request{ }
+};
+
+permit(principal, action == App::Action::"login", resource);
+permit(principal, action == App::Action::"logout", resource);
+permit(principal, action == App::Action::"search", resource);
