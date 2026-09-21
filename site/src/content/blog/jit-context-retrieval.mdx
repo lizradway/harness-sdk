@@ -1,0 +1,48 @@
+---
+title: "Cut your token costs in half: Just In Time Context Retrieval with Strands"
+date: 2026-09-21
+description: "A tiered approach to context window curation that ensures context is dropped but never forgotten, cutting token costs while preserving agent performance."
+authors:
+  - liz-radway
+tags:
+  - Context Management
+draft: true
+---
+
+When developing agentic systems, the limited width of the context window quickly becomes of your most sacred and scare resources. The Strands team has come to know this well: Model performance degrades under context bloat, causing bugs to bubble up in code; Applications hit context window overflows and crash; Agents get stuck in loops attempting to access the context they just shrunk. Meanwhile, token costs continue to rise.
+
+With this in mind, we developed a tiered approach to the curation of the model's context window, ensuring context is dropped, but never forgotten.
+
+## Philosophy
+
+Historically, at their inception, agentic systems relied upon rudimentary "Conversation Managers", which acted as a stopgap between the application and the dreaded Context Window Overflow Error. In Strands, a Conversation Manager would merely catch a Context Window Overflow Error returned by the model call once the context window had surpassed its limit, then either it would drop (or summarize) the latest 30% of its context to be able to free up space in the context window, reinvoke the model, and recover gracefully.
+
+[diagram]
+
+While this approach enabled the advent of model-driven applications, it was far from ideal. Each Context Window Overflow Error meant that an entire turn as wasted, requiring re-invocation of the model at a high token cost,
+
+Applying the Just-In-Time standard to context management, we hypothesized that in an ideal world, the context window would exclusively contain only the information that is purely sufficient and necessary for the next model call. Any information that is not necessary for the current turn, would remain accessible and lossless outside of the limited context window space. This would minimize not only token spending, but the "lost-in-the-middle effect" where model performance degrades (especially over information located in the middle of a data source) when faced with larger inputs.
+
+### Context Compression
+
+The first step in our methodology required determining representations of data in the context window. Dependent on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, ______ one can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use Abstract Syntax Trees or language native-APIs to maintain only function headers.
+
+[insert code for this here]
+
+[]
+
+### Context Persistence
+
+Although compressing context clears out room for further conversations, it loses critical data, leading to forgetfulness, duplicate tool calls, and increased token usage.
+
+We resolved this in Strands by maintaining a lossless copy of any context that has been sent to the agent in a log colloquially known as the "stash". Since this "stash" is maintained in storage independently of the agent's context window, the agent is able to empty its context window without sacrificing any information. Now, the compacted versions of context are able to act as previews for the agent to retrieve the full context blocks as needed.
+
+[insert diagram of how this changes the context window here]
+
+
+## Context Relevance
+
+Yet, this begets a new set of problems: how does the agent know what full context to retrieve?
+
+
+## Context Isolation
