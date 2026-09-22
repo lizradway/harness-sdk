@@ -53,12 +53,18 @@ agent = Agent(
 ```text
 [Truncated: 1 block, ~12,500 tokens]
 
-$ terraform plan
-module.network.aws_vpc.main: Refreshing state... [id=vpc-0a1b2c3d]
+$ pytest tests/
+============================= test session starts ==============================
+collected 219 items
 
-[... 48,231 chars elided ...]
+tests/test_agent.py ....................................................  [ 24%]
 
-Plan: 3 to add, 0 to change, 0 to destroy.
+[... 47,000 chars elided ...]
+
+=========================== short test summary info ============================
+FAILED tests/test_streaming.py::test_partial_chunk_reassembly
+FAILED tests/test_tools.py::test_concurrent_tool_execution
+======================== 2 failed, 217 passed in 41.28s ========================
 ```
 
 ### Context Persistence
