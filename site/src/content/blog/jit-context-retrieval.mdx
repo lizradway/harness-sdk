@@ -153,8 +153,6 @@ flowchart TB
     W --> WS["./.strands/writer"]
 ```
 
-The Context Window Overflow Error was never the problem; it was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window stops being the agent's memory and becomes what it always should have been: a working set, assembled for the turn in front of it.
+The Context Window Overflow Error was never the problem; it was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window stops being the bottleneck of agentic capability and becomes what it always should have been: a working set, assembled for the turn in front of it.
 
-Storage is cheap and the context window is not. The tiered approach is just the discipline of keeping each piece of context in whichever of the two it belongs to this turn: compressed in the window, lossless in the stash, retrieved only when the turn actually needs it, and isolated when it belongs to another task entirely.
-
-None of this is a knob you have to turn. `context_manager="auto"` gets you previews, a stash, and on-demand retrieval with no configuration and no path to choose; everything above is what tuning looks like once you know which of your agents is drowning, and in what. Surfacing Search Strategies on the Context Manager is landing next, and we would rather hear what your agents are actually choking on than guess — find us on [Discord](https://discord.gg/strands) or in [GitHub Discussions](https://github.com/strands-agents/harness-sdk/discussions).
+Storage is cheap and the context window is not. The tiered approach is just the relevance classification problem of keeping each piece of context in whichever tier it belongs to this turn. In Strands, start with `context_manager="auto"` and drop down to fine-grained context configurations as you determine what your agentic workflow needs at each step.
