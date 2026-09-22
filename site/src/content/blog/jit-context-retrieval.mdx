@@ -92,7 +92,7 @@ agent = Agent(
 
 ## Context Relevance
 
-Yet, this begets a new set of problems: how does the agent know what full context to retrieve? In Strands, our built-in Search Strategies handle this on your behalf, vending algorithms to return the top-k relevant results, including BM25, lexical search, and with extension support for any custom search. Using this, your agent can search and retrieve relevant context to its current work.
+Yet, this begets a new set of problems: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. In Strands, our built-in Search Strategies handle this on your behalf, vending algorithms to return the top-k relevant results, including BM25, lexical search, and with extension support for any custom search. Surfacing these on the Context Manager, so your agent can search and retrieve relevant context to its current work, is landing next.
 
 ```python
 from strands.storage import LocalFileStorage
