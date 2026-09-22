@@ -87,13 +87,13 @@ flowchart LR
 
 ```python
 from strands import Agent
-from strands.storage import LocalFileStorage
+from strands.storage import S3Storage
 
 # The stash needs no configuration: it is on by default, and falls back to the
 # agent's own storage, then to in-memory. Name a backend to make it durable.
 agent = Agent(
     context_manager={
-        "stash": {"storage": LocalFileStorage("./.strands/stash")},
+        "stash": {"storage": S3Storage("my-agent-context")},
     },
 )
 ```
