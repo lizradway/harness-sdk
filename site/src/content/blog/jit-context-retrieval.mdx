@@ -89,6 +89,8 @@ flowchart LR
 from strands import Agent
 from strands.storage import LocalFileStorage
 
+# The stash needs no configuration: it is on by default, and falls back to the
+# agent's own storage, then to in-memory. Name a backend to make it durable.
 agent = Agent(
     context_manager={
         "stash": {"storage": LocalFileStorage("./.strands/stash")},
@@ -128,15 +130,17 @@ Once the context window has been curated specifically for a task, an orchestrato
 from strands import Agent
 from strands.storage import LocalFileStorage
 
+storage = LocalFileStorage("./.strands")
+
 researcher = Agent(
     agent_id="researcher",
-    storage=LocalFileStorage("./.strands/researcher"),
+    storage=storage.namespace("researcher"),
     context_manager="auto",
 )
 
 writer = Agent(
     agent_id="writer",
-    storage=LocalFileStorage("./.strands/writer"),
+    storage=storage.namespace("writer"),
     context_manager="auto",
 )
 ```
