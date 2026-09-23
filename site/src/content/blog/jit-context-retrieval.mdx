@@ -26,13 +26,13 @@ flowchart LR
     E --> B
 ```
 
-While this approach enabled the advent of model-driven applications, it was far from ideal. Each Context Window Overflow Error meant that an entire turn was wasted, requiring re-invocation of the model at a high token cost,
+While this approach enabled the advent of model-driven applications, it was far from ideal. Each Context Window Overflow Error meant that an entire turn was wasted, requiring re-invocation of the model at a high token cost.
 
 Applying the Just-In-Time standard to context management, we hypothesized that in an ideal world, the context window would exclusively contain only the information that is purely sufficient and necessary for the next model call. Any information that is not necessary for the current turn, would remain accessible and lossless outside of the limited context window space. This would minimize not only token spending, but the "lost-in-the-middle effect" where model performance degrades (especially over information located in the middle of a data source) when faced with larger inputs.
 
 ### Context Compression
 
-The first step in our methodology required determining representations of data in the context window. Depending on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, \_\_\_\_\_\_ one can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use tree-sitters or language-native APIs to maintain only function headers.
+The first step in our methodology required determining representations of data in the context window. Depending on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, \_\_\_\_\_\_ one can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use Tree-sitter or language-native APIs to maintain only function headers.
 
 ```python
 from strands import Agent
@@ -124,7 +124,7 @@ flowchart LR
 
 ## Context Isolation
 
-Once the context window has been curated specifically for a task, an orchestrator agent may launch sub-agents for isolated tasks, allowing the context window to remain task-specific and minimal. In Strands, Storage is decoupled from any one construct, so a user can isolate their agent's context across sessions, multi-agent patterns, or subagents simply through passing a different path into the Context Manager.
+Once the context window has been curated specifically for a task, an orchestrator agent may launch sub-agents for isolated tasks, allowing the context window to remain task-specific and minimal. In Strands, Storage is decoupled from any one construct, so a user can isolate their agent's context across sessions, multi-agent patterns, or sub-agents simply through passing a different path into the Context Manager.
 
 ```python
 from strands import Agent
