@@ -11,7 +11,7 @@ draft: true
 
 When developing agentic systems, the limited width of the context window quickly becomes one of your most sacred and scarce resources. The Strands team has come to know this well: Model performance degrades under context bloat, causing bugs to bubble up in code; Applications hit context window overflows and crash; Agents get stuck in loops attempting to access the context they just shrunk. Meanwhile, token costs continue to rise.
 
-With this in mind, we developed a tiered approach to the curation of the model's context window, ensuring context is dropped, but never forgotten.
+With this in mind, we developed a tiered approach to the curation of the model's context window, ensuring context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs 28% less than other harnesses across six benchmarks.
 
 ## Philosophy
 
