@@ -1,6 +1,6 @@
 ---
 title: "Dropped, never forgotten: the context engine behind the Strands harness"
-date: 2026-09-22
+date: 2026-09-23
 description: "The Strands harness reports 28% lower token cost than other harnesses. Context management is a large part of why. Here is the tiered approach behind it."
 authors:
   - liz-radway
@@ -30,9 +30,9 @@ While this approach enabled the advent of model-driven applications, it was far 
 
 Applying the Just-In-Time standard to context management, we hypothesized that in an ideal world, the context window would exclusively contain only the information that is purely sufficient and necessary for the next model call. Any information that is not necessary for the current turn, would remain accessible and lossless outside of the limited context window space. This would minimize not only token spending, but the "lost-in-the-middle effect" where model performance degrades (especially over information located in the middle of a data source) when faced with larger inputs.
 
-### Context Compression
+## Context Compression
 
-The first step in our methodology required determining representations of data in the context window. Depending on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, \_\_\_\_\_\_ one can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use Tree-sitter or language-native APIs to maintain only function headers.
+The first step in our methodology required determining representations of data in the context window. Depending on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, command-line agents can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use Tree-sitter or language-native APIs to maintain only function headers.
 
 ```python
 from strands import Agent
@@ -67,7 +67,7 @@ FAILED tests/test_tools.py::test_concurrent_tool_execution
 ======================== 2 failed, 217 passed in 41.28s ========================
 ```
 
-### Context Persistence
+## Context Persistence
 
 Although compressing context clears out room for further conversations, it loses critical data, leading to forgetfulness, duplicate tool calls, and increased token usage.
 
