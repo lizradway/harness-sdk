@@ -155,4 +155,4 @@ flowchart TB
 
 The Context Window Overflow Error was never the problem; it was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window stops being the bottleneck of agentic capability and becomes what it always should have been: a working set, assembled for the turn in front of it.
 
-Storage is cheap and the context window is not. The tiered approach is just the relevance classification problem of keeping each piece of context in whichever tier it belongs to this turn. In Strands, start with `context_manager="auto"` and drop down to fine-grained context configurations as you determine what your agentic workflow needs at each step.
+Storage is cheap and the context window is not. The tiered approach then becomes a relevance classification problem of keeping each piece of context in whichever tier it belongs to this turn. In Strands, start with `context_manager="auto"` and drop down to fine-grained context configurations as you determine what your agentic workflow needs at each step.
