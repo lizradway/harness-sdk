@@ -47,17 +47,20 @@ export class Stash {
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
 
+  /** The resolved stash root: everything under it belongs to the stash. */
+  readonly root: Storage
+
   /**
    * @param storage - Storage backend or scoped view
    * @param sessionId - Session the stash belongs to
    * @param agentId - Agent the stash belongs to
-   * @param viewIsRoot - Use a scoped view as the stash root verbatim. Pass false for
-   *   storage inherited from the agent: an agent-level namespace is shared by every
-   *   subsystem, so the stash keeps its own `context/<sessionId>/scopes/agent/<agentId>/`
-   *   layout under it.
+   * @param inherited - Whether `storage` came from `agent.storage`. An inherited view is
+   *   shared by every subsystem, so the stash keeps its `context/<sessionId>/scopes/agent/<agentId>/`
+   *   layout under it; only a view passed in `StashConfig.storage` is the stash root verbatim.
    */
-  constructor(storage: Storage, sessionId: string, agentId: string, viewIsRoot = true) {
-    const root = viewIsRoot ? resolveNamespace(storage, STASH_PREFIX) : namespaceStorage(storage, STASH_PREFIX)
+  constructor(storage: Storage, sessionId: string, agentId: string, inherited = false) {
+    const root = resolveNamespace(storage, STASH_PREFIX, inherited)
+    this.root = root
     // raw storage:  context/<sessionId>/scopes/agent/<agentId>/<ref>
     // scoped view:  <view>/<ref>
     if (root === storage) {

@@ -18,6 +18,81 @@ export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced'
 export const EPHEMERAL: unique symbol = Symbol.for('strands.storage.ephemeral')
 
 /**
+ * Symbol carrying a storage view's comparable location, used to detect two
+ * subsystems of one agent resolving to overlapping storage. Set by
+ * {@link "namespace"} and by backends that can name their own location.
+ *
+ * @internal
+ */
+export const LOCATION: unique symbol = Symbol.for('strands.storage.location')
+
+/**
+ * A storage view's location: the backend it writes to and its `/`-terminated
+ * key prefix there (empty for a backend root).
+ *
+ * @internal
+ */
+export interface StorageLocation {
+  backend: object | string
+  path: string
+}
+
+/**
+ * Returns the comparable location of a storage view. A backend that names no
+ * location is identified by the instance itself, so it never collides with
+ * another backend.
+ *
+ * @internal
+ */
+export function storageLocation(storage: Storage): StorageLocation {
+  const own = (storage as { [LOCATION]?: StorageLocation })[LOCATION]
+  return own ?? { backend: storage, path: '' }
+}
+
+interface StorageClaim extends StorageLocation {
+  owner: object
+  name: string
+  exclusive: boolean
+}
+
+const storageClaims = new WeakMap<object, StorageClaim[]>()
+
+/**
+ * Records that `owner` uses `storage` for `agent`, refusing an overlap with
+ * another subsystem on the same agent.
+ *
+ * Two claims conflict when they resolve to the same location, or when one sits
+ * under the other and the outer one is `exclusive` (it lists or deletes
+ * everything under its root, so it would read or delete the inner subsystem's
+ * keys). Claims are per agent: agents that share a view on purpose, such as a
+ * stash shared by an orchestrator and its subagents, never conflict.
+ *
+ * @internal
+ * @param agent - The agent the subsystem is attached to
+ * @param owner - The subsystem instance; re-claiming by the same owner replaces its earlier claim
+ * @param name - Subsystem name for the error message
+ * @param storage - The subsystem's resolved storage view
+ * @param exclusive - Whether the subsystem lists or deletes everything under its root
+ * @throws Error if the location overlaps another subsystem's storage on the same agent
+ */
+export function claimStorage(agent: object, owner: object, name: string, storage: Storage, exclusive = false): void {
+  const { backend, path } = storageLocation(storage)
+  const claims = (storageClaims.get(agent) ?? []).filter((claim) => claim.owner !== owner)
+  for (const existing of claims) {
+    if (existing.backend !== backend) continue
+    const nested = path.startsWith(existing.path) && existing.exclusive
+    const encloses = existing.path.startsWith(path) && exclusive
+    if (path === existing.path || nested || encloses) {
+      throw new Error(
+        `${name} storage at '${path || '<root>'}' overlaps ${existing.name} storage at '${existing.path || '<root>'}' on the same agent. Give each subsystem its own namespace.`
+      )
+    }
+  }
+  claims.push({ owner, name, backend, path, exclusive })
+  storageClaims.set(agent, claims)
+}
+
+/**
  * Validates and normalizes a storage key for path-based backends: collapses
  * runs of `/`, strips leading and trailing `/`, and rejects empty keys and
  * any `..` segment.
@@ -193,13 +268,15 @@ export interface Storage<ListQuery = string, SearchQuery = string> {
 export function namespace(storage: Storage, prefix: string): Storage {
   const normalized = normalizePrefix(prefix)
   const p = normalized ? `${normalized}/` : ''
-  const view: Storage & { [NAMESPACED]: true } = {
+  const parent = storageLocation(storage)
+  const view: Storage & { [NAMESPACED]: true; [LOCATION]: StorageLocation } = {
     write: (key, data) => storage.write(`${p}${key}`, data),
     read: (key) => storage.read(`${p}${key}`),
     delete: (key) => storage.delete(`${p}${key}`),
     list: (query) => storage.list(`${p}${query}`).then((keys) => keys.map((key) => key.slice(p.length))),
     namespace: (sub) => namespace(storage, `${p}${sub}`),
     [NAMESPACED]: true,
+    [LOCATION]: { backend: parent.backend, path: `${parent.path}${p}` },
   }
   if (EPHEMERAL in storage) {
     ;(view as unknown as Record<symbol, boolean>)[EPHEMERAL] = true
@@ -216,17 +293,21 @@ export function namespace(storage: Storage, prefix: string): Storage {
 }
 
 /**
- * Returns a namespaced view of `storage` under `prefix`, unless the storage is already namespaced.
+ * Scopes a subsystem's storage under its own `prefix`.
  *
- * Consolidates the common pattern: if already marked with {@link NAMESPACED}, return as-is;
- * otherwise delegate to the storage's own `namespace()` method or the standalone `namespace` helper.
+ * Storage handed directly to a subsystem and already marked with {@link NAMESPACED}
+ * is used as given. Storage the subsystem inherited from `agent.storage` is always
+ * prefixed, namespaced or not: an agent-level view is shared by every subsystem, so
+ * each keeps its own prefix under it. Otherwise delegates to the storage's own
+ * `namespace()` method or the standalone `namespace` helper.
  *
  * @param storage - The storage to scope
  * @param prefix - Prefix to apply
- * @returns A namespaced Storage view (or the original if already namespaced)
+ * @param inherited - Whether the storage came from `agent.storage` rather than the subsystem's config
+ * @returns A namespaced Storage view (or the original if it is an explicitly passed namespaced view)
  */
-export function resolveNamespace(storage: Storage, prefix: string): Storage {
-  if (NAMESPACED in storage) return storage
+export function resolveNamespace(storage: Storage, prefix: string, inherited = false): Storage {
+  if (!inherited && NAMESPACED in storage) return storage
   if (storage.namespace) return storage.namespace(prefix)
   return namespace(storage, prefix)
 }

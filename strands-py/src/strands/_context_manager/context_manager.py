@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
-from ..storage.storage import _EPHEMERAL
+from ..storage.storage import _EPHEMERAL, _claim_storage
 from ..types.exceptions import ContextWindowOverflowException
 from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
@@ -197,8 +197,10 @@ class ContextManager(Plugin):
                 storage,
                 agent.session_id,
                 agent.agent_id,
-                view_is_root=self._stash_explicit_storage is not None,
+                inherited=self._stash_explicit_storage is None,
             )
+            # The stash lists and deletes everything under its root, so nothing else may live there.
+            _claim_storage(agent, self, "ContextManager stash", self._stash._root, exclusive=True)
 
         if self._stash is not None:
             stash = self._stash

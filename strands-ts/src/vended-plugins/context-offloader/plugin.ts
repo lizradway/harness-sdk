@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { logger } from '../../logging/logger.js'
 import type { JSONValue } from '../../types/json.js'
 import { FileStorage, InMemoryStorage as LegacyInMemoryStorage, type Storage as OffloaderStorage } from './storage.js'
-import { resolveNamespace, type Storage } from '../../storage/storage.js'
+import { claimStorage, resolveNamespace, type Storage } from '../../storage/storage.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { isSearchableContent, searchContent } from './search.js'
 import { AgentAsTool } from '../../agent/agent-as-tool.js'
@@ -246,11 +246,11 @@ export class ContextOffloader implements Plugin {
     this._evictAfterCycles = evictAfterCycles
   }
 
-  private _resolveAndSetStorage(storage: Storage | OffloaderStorage): void {
+  private _resolveAndSetStorage(storage: Storage | OffloaderStorage, inherited = false): void {
     if (isOffloaderStorage(storage)) {
       this._storage = storage
     } else {
-      this._storage = resolveNamespace(storage, 'offloader')
+      this._storage = resolveNamespace(storage, 'offloader', inherited)
     }
     this._sandboxableStorage =
       !isOffloaderStorage(this._storage) && 'forSandbox' in this._storage
@@ -260,7 +260,14 @@ export class ContextOffloader implements Plugin {
 
   initAgent(agent: LocalAgent): void {
     if (!this._storage) {
-      this._resolveAndSetStorage(agent.storage ?? new InMemoryStorage())
+      if (agent.storage) {
+        this._resolveAndSetStorage(agent.storage, true)
+      } else {
+        this._resolveAndSetStorage(new InMemoryStorage())
+      }
+    }
+    if (!isOffloaderStorage(this._storage)) {
+      claimStorage(agent, this, 'ContextOffloader', this._storage)
     }
     if (this._storage instanceof LegacyInMemoryStorage) {
       this._storage._bind(agent, this._evictAfterCycles)

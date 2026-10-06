@@ -126,7 +126,8 @@ class BidiAgent(LocalAgent):
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
                 (e.g., SessionManager) resolve from this value. Each subsystem
-                auto-namespaces under its own prefix to avoid key collisions.
+                auto-namespaces under its own prefix to avoid key collisions, even when this
+                is a namespaced view.
                 Storage specified directly on a subsystem always takes precedence over
                 this agent-level default. Defaults to None.
 

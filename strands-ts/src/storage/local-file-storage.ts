@@ -1,9 +1,9 @@
 import type { Sandbox } from '../sandbox/base.js'
 import type { SearchStrategy } from './search/types.js'
-import type { Storage, StorageSearchResult } from './storage.js'
+import type { Storage, StorageLocation, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
-import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
+import { LOCATION, NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
@@ -43,6 +43,11 @@ export class LocalFileStorage implements Storage {
   /** The resolved root directory for this storage instance. */
   get baseDir(): string {
     return this._baseDir
+  }
+
+  /** @internal Location for overlap detection: two instances on one directory compare equal. */
+  get [LOCATION](): StorageLocation {
+    return { backend: 'file', path: `${this._baseDir.replace(/\/$/, '')}/` }
   }
 
   /**

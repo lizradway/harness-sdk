@@ -309,7 +309,8 @@ export interface LocalAgent {
    *
    * When set, subsystems that do not have their own explicit storage (e.g.,
    * SessionManager, ContextOffloader) resolve from this. Each subsystem
-   * auto-namespaces under its own prefix to avoid key collisions.
+   * auto-namespaces under its own prefix to avoid key collisions, even when
+   * this is a namespaced view.
    */
   readonly storage?: Storage | undefined
 

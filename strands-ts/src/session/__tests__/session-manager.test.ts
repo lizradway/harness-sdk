@@ -1036,7 +1036,7 @@ describe('SessionManager — stash integration', () => {
         storage: namespacedRoot,
       })
       // Inherited agent storage: the stash keeps its context/<sessionId>/ layout under the namespace
-      const stash = new Stash(namespacedRoot, 'test-session', 'agent', false)
+      const stash = new Stash(namespacedRoot, 'test-session', 'agent', true)
       const mockAgent = createMockAgentWithHooks({
         extra: {
           storage: namespacedRoot,

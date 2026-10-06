@@ -10,7 +10,7 @@ import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
-import { EPHEMERAL } from '../storage/storage.js'
+import { EPHEMERAL, claimStorage } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
@@ -126,7 +126,9 @@ export class ContextManager implements Plugin {
     if (this._stashStorage !== false) {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
-      this._stash = new Stash(storage, agent.sessionId, agent.id, this._stashStorage !== undefined)
+      this._stash = new Stash(storage, agent.sessionId, agent.id, this._stashStorage === undefined)
+      // The stash lists and deletes everything under its root, so nothing else may live there.
+      claimStorage(agent, this, 'ContextManager stash', this._stash.root, true)
     }
 
     if (this._stash) {

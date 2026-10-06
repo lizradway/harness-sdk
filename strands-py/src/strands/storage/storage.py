@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import builtins
+import os
 import re
+import weakref
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from typing_extensions import TypeVar
@@ -259,23 +262,95 @@ class _NamespacedStorage:
         return _NamespacedStorage(bound, self._prefix.rstrip("/"))
 
 
-def _resolve_namespace(storage: Storage, prefix: str) -> Storage:
-    """Return a namespaced view unless the storage is already namespaced.
+def _resolve_namespace(storage: Storage, prefix: str, *, inherited: bool = False) -> Storage:
+    """Scope a subsystem's storage under its own ``prefix``.
 
-    If already marked with the internal ``_NAMESPACED`` sentinel, return as-is;
-    otherwise delegate to the storage's own ``namespace()`` method or wrap with
-    ``_NamespacedStorage``.
+    Storage handed directly to a subsystem and already marked with the internal ``_NAMESPACED``
+    sentinel is used as given. Storage the subsystem inherited from ``agent.storage`` is always
+    prefixed, namespaced or not: an agent-level view is shared by every subsystem, so each keeps
+    its own prefix under it. Otherwise delegates to the storage's own ``namespace()`` method or
+    wraps with ``_NamespacedStorage``.
 
     Args:
         storage: The storage to scope.
         prefix: Prefix to apply.
+        inherited: Whether the storage came from ``agent.storage`` rather than the subsystem's config.
 
     Returns:
-        A namespaced Storage view (or the original if already namespaced).
+        A namespaced Storage view (or the original if it is an explicitly passed namespaced view).
     """
-    if getattr(storage, "_namespaced", None) is _NAMESPACED:
+    if not inherited and getattr(storage, "_namespaced", None) is _NAMESPACED:
         return storage
     if hasattr(storage, "namespace"):
         result: Storage = storage.namespace(prefix)
         return result
     return _NamespacedStorage(storage, prefix)
+
+
+@dataclass(frozen=True)
+class _StorageClaim:
+    """One subsystem's claim on a storage location for an agent."""
+
+    owner: object
+    name: str
+    backend: object
+    path: str
+    exclusive: bool
+
+
+_STORAGE_CLAIMS: weakref.WeakKeyDictionary[object, builtins.list[_StorageClaim]] = weakref.WeakKeyDictionary()
+
+
+def _storage_location(storage: Storage) -> tuple[object, str]:
+    """Return a comparable ``(backend, path)`` for a storage view.
+
+    ``path`` is ``/``-terminated (or empty for a backend root). File storage is identified by its
+    resolved directory so two instances on the same directory compare equal; any other backend is
+    identified by the instance, so a backend this function cannot see through never collides.
+    """
+    from .local_file_storage import LocalFileStorage
+
+    if isinstance(storage, _NamespacedStorage):
+        backend, path = _storage_location(storage._storage)
+        return backend, f"{path}{storage._prefix}"
+    if isinstance(storage, LocalFileStorage):
+        return "file", f"{Path(os.path.realpath(storage.base_dir)).as_posix().rstrip('/')}/"
+    return storage, ""
+
+
+def _claim_storage(agent: object, owner: object, name: str, storage: Storage, *, exclusive: bool = False) -> None:
+    """Record that ``owner`` uses ``storage`` for ``agent``, refusing an overlap with another subsystem.
+
+    Two claims on one agent conflict when they resolve to the same location, or when one sits under
+    the other and the outer one is ``exclusive`` (it lists or deletes everything under its root, so
+    it would read or delete the inner subsystem's keys). Claims are per agent: agents that share a
+    view on purpose, such as a stash shared by an orchestrator and its subagents, never conflict.
+
+    Args:
+        agent: The agent the subsystem is attached to.
+        owner: The subsystem instance; re-claiming by the same owner replaces its earlier claim.
+        name: Subsystem name for the error message.
+        storage: The subsystem's resolved storage view.
+        exclusive: Whether the subsystem lists or deletes everything under its root.
+
+    Raises:
+        ValueError: If the location overlaps another subsystem's storage on the same agent.
+    """
+    backend, path = _storage_location(storage)
+    claim = _StorageClaim(owner, name, backend, path, exclusive)
+    try:
+        claims = _STORAGE_CLAIMS.setdefault(agent, [])
+    except TypeError:
+        return  # agent cannot be weakly referenced; skip the check
+    claims[:] = [existing for existing in claims if existing.owner is not owner]
+    for existing in claims:
+        if existing.backend is not backend and existing.backend != backend:
+            continue
+        nested = path.startswith(existing.path) and existing.exclusive
+        encloses = existing.path.startswith(path) and exclusive
+        if path == existing.path or nested or encloses:
+            raise ValueError(
+                f"{name} storage at '{path or '<root>'}' overlaps {existing.name} storage at "
+                f"'{existing.path or '<root>'}' on the same agent. Give each subsystem its own namespace."
+            )
+    claims.append(claim)

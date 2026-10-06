@@ -1,6 +1,6 @@
 import type { SnapshotStorage, SnapshotLocation } from './storage.js'
 import type { Storage } from '../storage/storage.js'
-import { NAMESPACED, namespace } from '../storage/storage.js'
+import { NAMESPACED, claimStorage, namespace } from '../storage/storage.js'
 import { SnapshotStorageAdapter } from './snapshot-storage-adapter.js'
 import { validateIdentifier } from './validation.js'
 import type { SnapshotTriggerCallback } from './types.js'
@@ -124,6 +124,7 @@ type StashSnapshotData = InlineStashSnapshot | ExternalStashSnapshot
 export class SessionManager implements Plugin, MultiAgentPlugin {
   private readonly _sessionId: string
   private _storage!: { snapshot: SnapshotStorage }
+  private _scopedStorage: Storage | undefined
   private readonly _configStorage?: Storage | { snapshot: SnapshotStorage } | undefined
   private _agentStash: Stash | undefined
   private readonly _saveLatestOn: SaveLatestStrategy
@@ -165,9 +166,14 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     return this._storage.snapshot
   }
 
-  private _resolveSnapshotStorage(storage: Storage | { snapshot: SnapshotStorage }): SnapshotStorage {
+  private _resolveSnapshotStorage(
+    storage: Storage | { snapshot: SnapshotStorage },
+    inherited = false
+  ): SnapshotStorage {
     if ('snapshot' in storage) return storage.snapshot
-    const scoped = NAMESPACED in storage ? storage : namespace(storage, 'session')
+    // An explicitly passed view is used as given; inherited agent storage always gets the `session` prefix
+    const scoped = !inherited && NAMESPACED in storage ? storage : namespace(storage, 'session')
+    this._scopedStorage = scoped
     return new SnapshotStorageAdapter(scoped)
   }
 
@@ -179,7 +185,10 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
           'SessionManager requires a storage backend. Provide storage in SessionManagerConfig or set storage on the Agent.'
         )
       }
-      this._storage = { snapshot: this._resolveSnapshotStorage(agent.storage) }
+      this._storage = { snapshot: this._resolveSnapshotStorage(agent.storage, true) }
+    }
+    if (this._scopedStorage) {
+      claimStorage(agent, this, 'SessionManager', this._scopedStorage)
     }
     this._agentStash = agent.contextManager?.stash
     agent.addHook(InitializedEvent, async (event) => {

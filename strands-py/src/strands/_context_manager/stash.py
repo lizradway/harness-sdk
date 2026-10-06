@@ -57,21 +57,20 @@ def _format_stash_refs(refs: list[str]) -> str:
 class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
-    def __init__(self, storage: Storage, session_id: str, agent_id: str, *, view_is_root: bool = True) -> None:
+    def __init__(self, storage: Storage, session_id: str, agent_id: str, *, inherited: bool = False) -> None:
         """Create a stash over ``storage``.
 
         Args:
             storage: Storage backend or scoped view.
             session_id: Session the stash belongs to.
             agent_id: Agent the stash belongs to.
-            view_is_root: Use a scoped view as the stash root verbatim. Pass False for storage
-                inherited from the agent: an agent-level namespace is shared by every subsystem,
-                so the stash keeps its own ``context/<session_id>/scopes/agent/<agent_id>/`` layout under it.
+            inherited: Whether ``storage`` came from ``agent.storage``. An inherited view is shared by
+                every subsystem, so the stash keeps its ``context/<session_id>/scopes/agent/<agent_id>/``
+                layout under it; only a view passed in ``StashConfig.storage`` is the stash root verbatim.
         """
-        root = (
-            _resolve_namespace(storage, STASH_PREFIX) if view_is_root else _NamespacedStorage(storage, STASH_PREFIX)
-        )
+        root = _resolve_namespace(storage, STASH_PREFIX, inherited=inherited)
         self._base_storage = storage
+        self._root = root
         # raw storage:  context/<session_id>/scopes/agent/<agent_id>/<ref>
         # scoped view:  <view>/<ref>
         # _session_storage is None for a caller-supplied view: the stash cannot tell which

@@ -42,7 +42,7 @@ from ..hooks.events import (
 )
 from ..hooks.registry import HookOrder, HookRegistry
 from ..storage.local_file_storage import LocalFileStorage
-from ..storage.storage import _NAMESPACED, Storage, _NamespacedStorage
+from ..storage.storage import _NAMESPACED, Storage, _claim_storage, _NamespacedStorage
 from ..types._snapshot import Snapshot
 from ..types.agent import LocalAgent
 from ..types.content import Message
@@ -123,13 +123,14 @@ _DELETE_CONCURRENCY = 100
 # migration utility builds the same keys the manager reads.
 
 
-def _resolve_storage(storage: Storage) -> Storage:
-    """Namespace raw storage under ``"session"``; pass an already-namespaced view through.
+def _resolve_storage(storage: Storage, *, inherited: bool = False) -> Storage:
+    """Namespace storage under ``"session"``; pass an explicitly configured namespaced view through.
 
-    A view already marked with ``_NAMESPACED`` is used as-is; otherwise raw storage is wrapped
-    under the ``"session"`` namespace. Manager keys are relative to the resolved storage.
+    A view passed to the manager and marked with ``_NAMESPACED`` is used as-is. Raw storage, and any
+    storage inherited from ``agent.storage`` (namespaced or not), is wrapped under the ``"session"``
+    namespace. Manager keys are relative to the resolved storage.
     """
-    if getattr(storage, "_namespaced", None) is _NAMESPACED:
+    if not inherited and getattr(storage, "_namespaced", None) is _NAMESPACED:
         return storage
     return _NamespacedStorage(storage, _SESSIONS_NAMESPACE)
 
@@ -411,7 +412,8 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         if self._storage is None:
             raw = agent.storage if agent.storage is not None else LocalFileStorage()
             self._raw_storage = raw
-            self._storage = _resolve_storage(raw)
+            self._storage = _resolve_storage(raw, inherited=agent.storage is not None)
+        _claim_storage(agent, self, "SnapshotSessionManager", self._storage)
         if agent.context_manager is not None:
             self._agent_stash = agent.context_manager.stash
         run_async(lambda: self._initialize_async(agent))

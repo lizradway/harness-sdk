@@ -55,7 +55,7 @@ from ...agent._agent_as_tool import _AgentAsTool
 from ...hooks.events import AfterToolCallEvent, BeforeModelCallEvent
 from ...plugins import Plugin, hook
 from ...storage import Storage
-from ...storage.storage import _NAMESPACED, _NamespacedStorage
+from ...storage.storage import _NAMESPACED, _claim_storage, _NamespacedStorage
 from ...tools.decorator import tool
 from ...types.content import Message
 from ...types.tools import ToolContext, ToolResult, ToolResultContent
@@ -280,11 +280,14 @@ class ContextOffloader(Plugin):
         super().__init__()
 
     @staticmethod
-    def _resolve_storage(storage: Storage | _LegacyStorage) -> Storage | _LegacyStorage:
-        """Auto-namespace unified storage with 'offloader' if not already scoped."""
+    def _resolve_storage(storage: Storage | _LegacyStorage, *, inherited: bool = False) -> Storage | _LegacyStorage:
+        """Auto-namespace unified storage with 'offloader' unless it is an explicitly passed scoped view.
+
+        Storage inherited from ``agent.storage`` is always prefixed, namespaced or not.
+        """
         if _is_offloader_storage(storage):
             return storage
-        if getattr(storage, "_namespaced", None) is _NAMESPACED:
+        if not inherited and getattr(storage, "_namespaced", None) is _NAMESPACED:
             return storage
         return _NamespacedStorage(storage, "offloader")  # type: ignore[arg-type]
 
@@ -321,9 +324,11 @@ class ContextOffloader(Plugin):
         """
         if self._storage is None:
             if agent.storage is not None:
-                self._storage = self._resolve_storage(agent.storage)
+                self._storage = self._resolve_storage(agent.storage, inherited=True)
             else:
                 self._storage = InMemoryStorage()
+        if not _is_offloader_storage(self._storage):
+            _claim_storage(agent, self, "ContextOffloader", self._storage)  # type: ignore[arg-type]
         if isinstance(self._storage, InMemoryStorage):
             self._storage._bind(id(agent))
         # Bind file-based storage to this agent's sandbox up front (no-op for other backends).
