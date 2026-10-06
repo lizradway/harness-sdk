@@ -64,7 +64,7 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
-from ._validation import validate_config_keys  # noqa: E402
+from ._validation import _has_location_source, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -176,9 +176,11 @@ class OpenAIResponsesModel(Model):
                 For a complete list of supported arguments, see https://pypi.org/project/openai/.
                 May be combined with ``bedrock_mantle_config``; when both are set, the config
                 derives ``base_url`` and ``api_key`` (which must not appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request.
             **model_config: Configuration options for the OpenAI Responses API model.
         """
         validate_config_keys(model_config, self.OpenAIResponsesConfig)
@@ -655,12 +657,19 @@ class OpenAIResponsesModel(Model):
             if any("cachePoint" in content for content in contents):
                 logger.warning("cachePoint content block is not supported by OpenAI Responses | skipping")
 
-            formatted_contents = [
-                cls._format_request_message_content(content, role=role)
-                for content in contents
-                if not any(
+            filtered_contents = []
+            for content in contents:
+                if any(
                     block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent", "cachePoint"]
-                )
+                ):
+                    continue
+                if _has_location_source(content):
+                    logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+                    continue
+                filtered_contents.append(content)
+
+            formatted_contents = [
+                cls._format_request_message_content(content, role=role) for content in filtered_contents
             ]
 
             formatted_tool_calls = [
@@ -920,6 +929,11 @@ class OpenAIResponsesModel(Model):
                     cached = getattr(tokens_details, "cached_tokens", None)
                     if isinstance(cached, int) and cached:
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int) and cache_write:
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {
