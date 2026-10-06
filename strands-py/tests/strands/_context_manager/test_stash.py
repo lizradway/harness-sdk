@@ -219,13 +219,14 @@ class TestNamespacing:
         assert keys_b == ["tool-1_0"]
 
     @pytest.mark.asyncio
-    async def test_caller_scoped_view_roots_the_stash(self):
+    async def test_caller_scoped_view_is_the_stash_root_verbatim(self):
+        """The stash appends nothing to a caller-supplied view — no session or agent segment."""
         storage = InMemoryStorage()
         stash = Stash(storage.namespace("tenants/t1/context"), "sess-1", "agent-1")
 
         await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
 
-        assert await storage.list("") == ["tenants/t1/context/sess-1/tool-1_0"]
+        assert await storage.list("") == ["tenants/t1/context/tool-1_0"]
 
     @pytest.mark.asyncio
     async def test_agents_sharing_a_view_read_each_others_entries(self):
@@ -248,6 +249,17 @@ class TestNamespacing:
         await stash_a.store("tool-1", 0, json.dumps({"text": "a"}).encode("utf-8"))
 
         assert await stash_b.retrieve("tool-1_0") is None
+
+    @pytest.mark.asyncio
+    async def test_session_id_in_the_view_keeps_sessions_isolated(self):
+        """Session separation under a view is the caller's to compose, the same as agent separation."""
+        storage = InMemoryStorage()
+        stash_s1 = Stash(storage.namespace("team/sess-1"), "sess-1", "agent-a")
+        stash_s2 = Stash(storage.namespace("team/sess-2"), "sess-2", "agent-a")
+
+        await stash_s1.store("tool-1", 0, json.dumps({"text": "s1"}).encode("utf-8"))
+
+        assert await stash_s2.retrieve("tool-1_0") is None
 
 
 class TestFormatStashRefs:
@@ -405,8 +417,8 @@ class TestClearSession:
         assert await stash_s10.list() == ["tool-1_0"]
 
     @pytest.mark.asyncio
-    async def test_clears_a_shared_root_without_touching_caller_keys(self):
-        """On a caller-scoped root the scan stays inside the session directory."""
+    async def test_clears_the_whole_view_when_the_caller_supplied_the_root(self):
+        """A caller-supplied root is cleared wholesale: the stash owns no sub-directory to scope to."""
         storage = InMemoryStorage()
         orchestrator = Stash(storage.namespace("team"), "sess-1", "agent-a")
         subagent = Stash(storage.namespace("team"), "sess-1", "agent-b")
@@ -416,4 +428,18 @@ class TestClearSession:
         await orchestrator.clear_session()
 
         assert await subagent.list() == []
-        assert await storage.read("team/caller-owned") == b"{}"
+        assert await storage.read("team/caller-owned") is None
+
+    @pytest.mark.asyncio
+    async def test_a_view_per_session_keeps_cleanup_inside_that_session(self):
+        """Putting the session id in the view is how a caller scopes cleanup back to one session."""
+        storage = InMemoryStorage()
+        stash_s1 = Stash(storage.namespace("team/sess-1"), "sess-1", "agent-a")
+        stash_s2 = Stash(storage.namespace("team/sess-2"), "sess-2", "agent-a")
+        await stash_s1.store("tool-1", 0, json.dumps({"text": "s1"}).encode("utf-8"))
+        await stash_s2.store("tool-9", 0, json.dumps({"text": "s2"}).encode("utf-8"))
+
+        await stash_s1.clear_session()
+
+        assert await stash_s1.list() == []
+        assert await stash_s2.list() == ["tool-9_0"]

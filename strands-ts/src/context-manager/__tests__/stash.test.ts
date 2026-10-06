@@ -94,13 +94,13 @@ describe('Stash', () => {
       expect(topKeys).toContain('other-key')
     })
 
-    it('roots the stash at a caller-scoped view', async () => {
+    it('uses a caller-scoped view as the stash root verbatim', async () => {
       const storage = new InMemoryStorage()
       const stash = new Stash(namespace(storage, 'tenants/t1/context'), 'sess-1', 'agent-1')
 
       await stash.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('scoped')))
 
-      expect(await storage.list('')).toEqual(['tenants/t1/context/sess-1/tool-1_0'])
+      expect(await storage.list('')).toEqual(['tenants/t1/context/tool-1_0'])
     })
 
     it('lets agents sharing a view read each others entries', async () => {
@@ -122,6 +122,16 @@ describe('Stash', () => {
 
       expect(await stashB.retrieve('tool-1_0')).toBeNull()
     })
+
+    it('keeps sessions isolated when the view carries the session id', async () => {
+      const storage = new InMemoryStorage()
+      const stashS1 = new Stash(namespace(storage, 'team/sess-1'), 'sess-1', 'agent-a')
+      const stashS2 = new Stash(namespace(storage, 'team/sess-2'), 'sess-2', 'agent-a')
+
+      await stashS1.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('s1')))
+
+      expect(await stashS2.retrieve('tool-1_0')).toBeNull()
+    })
   })
 
   describe('clearSession', () => {
@@ -139,7 +149,7 @@ describe('Stash', () => {
       expect(await stashB.list()).toEqual([])
     })
 
-    it('clears a shared root without touching caller keys', async () => {
+    it('clears the whole view when the caller supplied the root', async () => {
       const storage = new InMemoryStorage()
       const orchestrator = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-a')
       const subagent = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-b')
@@ -149,7 +159,20 @@ describe('Stash', () => {
       await orchestrator.clearSession()
 
       expect(await subagent.list()).toEqual([])
-      expect(await storage.read('team/caller-owned')).not.toBeNull()
+      expect(await storage.read('team/caller-owned')).toBeNull()
+    })
+
+    it('stays inside one session when the view carries the session id', async () => {
+      const storage = new InMemoryStorage()
+      const stashS1 = new Stash(namespace(storage, 'team/sess-1'), 'sess-1', 'agent-a')
+      const stashS2 = new Stash(namespace(storage, 'team/sess-2'), 'sess-2', 'agent-a')
+      await stashS1.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('s1')))
+      await stashS2.store('tool-9', 0, new TextEncoder().encode(JSON.stringify('s2')))
+
+      await stashS1.clearSession()
+
+      expect(await stashS1.list()).toEqual([])
+      expect(await stashS2.list()).toEqual(['tool-9_0'])
     })
   })
 })

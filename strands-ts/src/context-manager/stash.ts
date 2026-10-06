@@ -47,12 +47,15 @@ export class Stash {
 
   constructor(storage: Storage, sessionId: string, agentId: string) {
     const root = resolveNamespace(storage, STASH_PREFIX)
-    this._sessionStorage = namespaceStorage(root, sessionId)
-    // Raw storage gets the agent segment appended. A caller-scoped view is the stash root as
-    // given, so the view's granularity decides how wide one stash is: agents handed the same view
-    // share a stash, and a view that already carries the agent id keeps them apart.
-    this._storage =
-      root !== storage ? namespaceStorage(this._sessionStorage, `scopes/agent/${agentId}`) : this._sessionStorage
+    // raw storage:  context/<sessionId>/scopes/agent/<agentId>/<ref>
+    // scoped view:  <view>/<ref>
+    if (root === storage) {
+      this._sessionStorage = root
+      this._storage = root
+    } else {
+      this._sessionStorage = namespaceStorage(root, sessionId)
+      this._storage = namespaceStorage(this._sessionStorage, `scopes/agent/${agentId}`)
+    }
     this.storageTypeName = storage.constructor.name || 'unknown'
   }
 
@@ -145,11 +148,10 @@ export class Stash {
   }
 
   /**
-   * Delete all stash data for this session, across every agent sharing the stash root.
+   * Delete every key under the stash root, across all agents.
    *
-   * This covers the session directory under the stash root, so an agent that wrote to the session
-   * from a different namespace is cleaned up too. Keys the caller stores outside that directory are
-   * left alone.
+   * Raw storage: everything under `context/<sessionId>/`.
+   * Scoped view: everything under the view, including keys that are not stash entries.
    */
   async clearSession(): Promise<void> {
     const keys = await this._sessionStorage.list('')

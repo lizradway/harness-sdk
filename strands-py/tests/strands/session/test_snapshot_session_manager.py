@@ -1375,7 +1375,7 @@ class TestSnapshotStashIntegration:
 
     @pytest.mark.asyncio
     async def test_delete_session_clears_a_caller_scoped_stash(self, temp_dir):
-        """A stash rooted at a caller-scoped view is cleared, bounded by the session directory."""
+        """delete_session clears a caller-rooted stash wholesale, including other keys under it."""
         shared_storage = LocalFileStorage(f"{temp_dir}/shared")
         context_manager = ContextManager(stash={"storage": shared_storage.namespace("team")})
         manager = SnapshotSessionManager("s1", storage=shared_storage)
@@ -1388,7 +1388,7 @@ class TestSnapshotStashIntegration:
         await manager.delete_session()
 
         assert await context_manager.stash.list() == []
-        assert await shared_storage.read("team/caller-owned") == b"{}"
+        assert await shared_storage.read("team/caller-owned") is None
 
     @pytest.mark.asyncio
     async def test_delete_session_without_initialize_clears_stash(self, temp_dir):

@@ -60,15 +60,14 @@ class Stash:
     def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
         root = _resolve_namespace(storage, STASH_PREFIX)
         self._base_storage = storage
-        self._session_storage = _NamespacedStorage(root, session_id)
-        # Raw storage gets the agent segment appended. A caller-scoped view is the stash root as
-        # given, so the view's granularity decides how wide one stash is: agents handed the same
-        # view share a stash, and a view that already carries the agent id keeps them apart.
-        self._storage = (
-            _NamespacedStorage(self._session_storage, f"scopes/agent/{agent_id}")
-            if root is not storage
-            else self._session_storage
-        )
+        # raw storage:  context/<session_id>/scopes/agent/<agent_id>/<ref>
+        # scoped view:  <view>/<ref>
+        if root is storage:
+            self._session_storage = root
+            self._storage = root
+        else:
+            self._session_storage = _NamespacedStorage(root, session_id)
+            self._storage = _NamespacedStorage(self._session_storage, f"scopes/agent/{agent_id}")
 
     @property
     def storage_type_name(self) -> str:
@@ -165,11 +164,10 @@ class Stash:
             await self._storage.write(key, _encode(data))
 
     async def clear_session(self) -> None:
-        """Delete all stash data for this session, across every agent sharing the stash root.
+        """Delete every key under the stash root, across all agents.
 
-        This covers the session directory under the stash root, so an agent that wrote to the
-        session from a different namespace is cleaned up too. Keys the caller stores outside that
-        directory are left alone.
+        Raw storage: everything under ``context/<session_id>/``.
+        Scoped view: everything under the view, including keys that are not stash entries.
         """
         keys = await self._session_storage.list("")
         for key in keys:

@@ -72,12 +72,11 @@ class StashConfig(TypedDict, total=False):
     """Configuration for the L1 stash.
 
     Attributes:
-        storage: Storage backend. Defaults to InMemoryStorage when omitted. Raw storage is
-            namespaced under ``context/<session_id>/scopes/agent/<agent_id>/``, isolating each
-            agent. A view already scoped with ``storage.namespace(...)`` is used as the stash root
-            as-is, so the view decides how wide one stash is: pass the same view to several agents
-            and they share a stash — which is how an orchestrator and its subagents exchange refs
-            — or include the agent id in the view to keep them apart.
+        storage: Storage backend. Defaults to InMemoryStorage when omitted.
+
+            - ``storage`` -> ``context/<session_id>/scopes/agent/<agent_id>/<ref>``
+            - ``storage.namespace("team")`` -> ``team/<ref>``, shared by every agent given it
+            - ``storage.namespace(f"team/{session_id}")`` -> one stash per session
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
     """
 

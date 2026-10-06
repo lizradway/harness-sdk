@@ -69,11 +69,9 @@ export interface StashConfig {
   /**
    * Storage backend. Defaults to InMemoryStorage when omitted.
    *
-   * Raw storage is namespaced under `context/<sessionId>/scopes/agent/<agentId>/`, isolating
-   * each agent. A view already scoped with `namespace(...)` is used as the stash root as-is, so
-   * the view decides how wide one stash is: pass the same view to several agents and they share a
-   * stash — which is how an orchestrator and its subagents exchange refs — or include the agent
-   * id in the view to keep them apart.
+   * - `storage` → `context/<sessionId>/scopes/agent/<agentId>/<ref>`
+   * - `namespace(storage, 'team')` → `team/<ref>`, shared by every agent given it
+   * - `namespace(storage, 'team/' + sessionId)` → one stash per session
    */
   storage?: Storage
 
