@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { namespace } from '../../storage/storage.js'
 
 describe('Stash', () => {
   describe('store and retrieve', () => {
@@ -91,6 +92,64 @@ describe('Stash', () => {
       const topKeys = await storage.list('')
       expect(topKeys.some((key) => key.startsWith('context/'))).toBe(true)
       expect(topKeys).toContain('other-key')
+    })
+
+    it('roots the stash at a caller-scoped view', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(namespace(storage, 'tenants/t1/context'), 'sess-1', 'agent-1')
+
+      await stash.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('scoped')))
+
+      expect(await storage.list('')).toEqual(['tenants/t1/context/sess-1/tool-1_0'])
+    })
+
+    it('lets agents sharing a view read each others entries', async () => {
+      const storage = new InMemoryStorage()
+      const orchestrator = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-a')
+      const subagent = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-b')
+
+      await orchestrator.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('shared')))
+
+      expect(await subagent.retrieve('tool-1_0')).toEqual({ data: 'shared' })
+    })
+
+    it('keeps agents isolated when the view carries the agent id', async () => {
+      const storage = new InMemoryStorage()
+      const stashA = new Stash(namespace(storage, 'team/agent-a'), 'sess-1', 'agent-a')
+      const stashB = new Stash(namespace(storage, 'team/agent-b'), 'sess-1', 'agent-b')
+
+      await stashA.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('a')))
+
+      expect(await stashB.retrieve('tool-1_0')).toBeNull()
+    })
+  })
+
+  describe('clearSession', () => {
+    it('deletes entries across agents in the session', async () => {
+      const storage = new InMemoryStorage()
+      const stashA = new Stash(storage, 'sess-1', 'agent-a')
+      const stashB = new Stash(storage, 'sess-1', 'agent-b')
+      const content = new TextEncoder().encode(JSON.stringify('data'))
+      await stashA.store('tool-1', 0, content)
+      await stashB.store('tool-1', 0, content)
+
+      await stashA.clearSession()
+
+      expect(await stashA.list()).toEqual([])
+      expect(await stashB.list()).toEqual([])
+    })
+
+    it('clears a shared root without touching caller keys', async () => {
+      const storage = new InMemoryStorage()
+      const orchestrator = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-a')
+      const subagent = new Stash(namespace(storage, 'team'), 'sess-1', 'agent-b')
+      await subagent.store('tool-1', 0, new TextEncoder().encode(JSON.stringify('shared')))
+      await storage.write('team/caller-owned', new TextEncoder().encode('{}'))
+
+      await orchestrator.clearSession()
+
+      expect(await subagent.list()).toEqual([])
+      expect(await storage.read('team/caller-owned')).not.toBeNull()
     })
   })
 })

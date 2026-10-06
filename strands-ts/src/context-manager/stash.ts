@@ -8,7 +8,7 @@
  * @internal
  */
 
-import { namespace as namespaceStorage, type Storage } from '../storage/storage.js'
+import { namespace as namespaceStorage, resolveNamespace, type Storage } from '../storage/storage.js'
 import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
@@ -40,16 +40,19 @@ export function formatStashRefs(refs: string[]): string {
  */
 export class Stash {
   private readonly _storage: Storage
-  private readonly _baseStorage: Storage
-  private readonly _sessionId: string
+  private readonly _sessionStorage: Storage
 
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
 
   constructor(storage: Storage, sessionId: string, agentId: string) {
-    this._baseStorage = storage
-    this._sessionId = sessionId
-    this._storage = namespaceStorage(storage, `${STASH_PREFIX}/${sessionId}/scopes/agent/${agentId}`)
+    const root = resolveNamespace(storage, STASH_PREFIX)
+    this._sessionStorage = namespaceStorage(root, sessionId)
+    // Raw storage gets the agent segment appended. A caller-scoped view is the stash root as
+    // given, so the view's granularity decides how wide one stash is: agents handed the same view
+    // share a stash, and a view that already carries the agent id keeps them apart.
+    this._storage =
+      root !== storage ? namespaceStorage(this._sessionStorage, `scopes/agent/${agentId}`) : this._sessionStorage
     this.storageTypeName = storage.constructor.name || 'unknown'
   }
 
@@ -150,16 +153,15 @@ export class Stash {
   }
 
   /**
-   * Delete all stash data for this session across all agents.
+   * Delete all stash data for this session, across every agent sharing the stash root.
    *
-   * Unlike {@link clear}, which is scoped to this agent's namespace,
-   * this scans `context/<sessionId>/` on the base storage to catch data
-   * from every agent that wrote to the session.
+   * Unlike {@link clear}, which is scoped to this agent, this covers the session directory under
+   * the stash root, so an agent that wrote to the session from a different namespace is cleaned up
+   * too. Keys the caller stores outside that directory are left alone.
    */
   async clearSession(): Promise<void> {
-    const prefix = `${STASH_PREFIX}/${this._sessionId}/`
-    const keys = await this._baseStorage.list(prefix)
-    await Promise.all(keys.map((key) => this._baseStorage.delete(key)))
+    const keys = await this._sessionStorage.list('')
+    await Promise.all(keys.map((key) => this._sessionStorage.delete(key)))
   }
 
   /**

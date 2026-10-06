@@ -218,6 +218,37 @@ class TestNamespacing:
         assert keys_a == ["tool-1_0"]
         assert keys_b == ["tool-1_0"]
 
+    @pytest.mark.asyncio
+    async def test_caller_scoped_view_roots_the_stash(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("tenants/t1/context"), "sess-1", "agent-1")
+
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenants/t1/context/sess-1/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_agents_sharing_a_view_read_each_others_entries(self):
+        """Agents handed the same scoped view share one stash, so an orchestrator can read a peer's refs."""
+        storage = InMemoryStorage()
+        orchestrator = Stash(storage.namespace("team"), "sess-1", "agent-a")
+        subagent = Stash(storage.namespace("team"), "sess-1", "agent-b")
+
+        await orchestrator.store("tool-1", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+
+        assert await subagent.retrieve("tool-1_0") == {"text": "shared"}
+
+    @pytest.mark.asyncio
+    async def test_agent_id_in_the_view_keeps_agents_isolated(self):
+        """Sharing is the caller's choice: a view carrying the agent id scopes the stash to one agent."""
+        storage = InMemoryStorage()
+        stash_a = Stash(storage.namespace("team/agent-a"), "sess-1", "agent-a")
+        stash_b = Stash(storage.namespace("team/agent-b"), "sess-1", "agent-b")
+
+        await stash_a.store("tool-1", 0, json.dumps({"text": "a"}).encode("utf-8"))
+
+        assert await stash_b.retrieve("tool-1_0") is None
+
 
 class TestFormatStashRefs:
     """Tests for the _format_stash_refs helper."""
@@ -383,3 +414,17 @@ class TestClearSession:
 
         assert await stash_s1.list() == []
         assert await stash_s10.list() == ["tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_clears_a_shared_root_without_touching_caller_keys(self):
+        """On a caller-scoped root the scan stays inside the session directory."""
+        storage = InMemoryStorage()
+        orchestrator = Stash(storage.namespace("team"), "sess-1", "agent-a")
+        subagent = Stash(storage.namespace("team"), "sess-1", "agent-b")
+        await subagent.store("tool-1", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        await storage.write("team/caller-owned", b"{}")
+
+        await orchestrator.clear_session()
+
+        assert await subagent.list() == []
+        assert await storage.read("team/caller-owned") == b"{}"

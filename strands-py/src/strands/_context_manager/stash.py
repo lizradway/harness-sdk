@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _NamespacedStorage
+from ..storage.storage import _NamespacedStorage, _resolve_namespace
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -58,9 +58,17 @@ class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
     def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
+        root = _resolve_namespace(storage, STASH_PREFIX)
         self._base_storage = storage
-        self._session_id = session_id
-        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        self._session_storage = _NamespacedStorage(root, session_id)
+        # Raw storage gets the agent segment appended. A caller-scoped view is the stash root as
+        # given, so the view's granularity decides how wide one stash is: agents handed the same
+        # view share a stash, and a view that already carries the agent id keeps them apart.
+        self._storage = (
+            _NamespacedStorage(self._session_storage, f"scopes/agent/{agent_id}")
+            if root is not storage
+            else self._session_storage
+        )
 
     @property
     def storage_type_name(self) -> str:
@@ -163,16 +171,15 @@ class Stash:
             await self._storage.delete(key)
 
     async def clear_session(self) -> None:
-        """Delete all stash data for this session across all agents.
+        """Delete all stash data for this session, across every agent sharing the stash root.
 
-        Unlike :meth:`clear`, which is scoped to this agent's namespace, this
-        scans ``context/<session_id>/`` on the base storage to remove data from
-        every agent that wrote to the session.
+        Unlike :meth:`clear`, which is scoped to this agent, this covers the session directory
+        under the stash root, so an agent that wrote to the session from a different namespace is
+        cleaned up too. Keys the caller stores outside that directory are left alone.
         """
-        prefix = f"{STASH_PREFIX}/{self._session_id}/"
-        keys = await self._base_storage.list(prefix)
+        keys = await self._session_storage.list("")
         for key in keys:
-            await self._base_storage.delete(key)
+            await self._session_storage.delete(key)
 
     async def _store_tool_result(self, block: ContentBlock, *, keep_existing: bool = False) -> None:
         """Store each sub-block of a tool result individually."""

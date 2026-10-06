@@ -18,6 +18,7 @@ from strands.types.tools import ToolResult, ToolUse
 def mock_agent():
     agent = unittest.mock.MagicMock()
     agent.agent_id = "test-agent"
+    agent.session_id = "test-session"
     agent.model = unittest.mock.AsyncMock()
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
