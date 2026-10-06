@@ -356,24 +356,13 @@ class TestLoadSnapshot:
         assert await new_stash.retrieve("tool-1_0") == {"text": "original"}
 
 
-class TestClear:
-    """Tests for clear — deleting all entries in the agent namespace."""
-
-    @pytest.mark.asyncio
-    async def test_deletes_all_entries(self, stash):
-        await stash.store("tool-1", 0, json.dumps({"text": "a"}).encode("utf-8"))
-        await stash.store("tool-2", 0, json.dumps({"text": "b"}).encode("utf-8"))
-        await stash.clear()
-        assert await stash.list() == []
+class TestClearSession:
+    """Tests for clear_session — deleting all stash data for the session."""
 
     @pytest.mark.asyncio
     async def test_clear_on_empty_stash(self, stash):
-        await stash.clear()
+        await stash.clear_session()
         assert await stash.list() == []
-
-
-class TestClearSession:
-    """Tests for clear_session — deleting all stash data for the session."""
 
     @pytest.mark.asyncio
     async def test_deletes_entries_across_agents(self):

@@ -1303,7 +1303,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.clear()
+        await context_manager.stash.clear_session()
         manager.sync_agent(agent)
 
         key = _on_disk_key("s1", "a1")

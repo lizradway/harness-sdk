@@ -145,19 +145,11 @@ export class Stash {
   }
 
   /**
-   * Delete all entries in this stash instance.
-   */
-  async clear(): Promise<void> {
-    const keys = await this.list()
-    await Promise.all(keys.map((key) => this.delete(key)))
-  }
-
-  /**
    * Delete all stash data for this session, across every agent sharing the stash root.
    *
-   * Unlike {@link clear}, which is scoped to this agent, this covers the session directory under
-   * the stash root, so an agent that wrote to the session from a different namespace is cleaned up
-   * too. Keys the caller stores outside that directory are left alone.
+   * This covers the session directory under the stash root, so an agent that wrote to the session
+   * from a different namespace is cleaned up too. Keys the caller stores outside that directory are
+   * left alone.
    */
   async clearSession(): Promise<void> {
     const keys = await this._sessionStorage.list('')

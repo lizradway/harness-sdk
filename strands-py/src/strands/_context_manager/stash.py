@@ -164,18 +164,12 @@ class Stash:
         for key, data in entries.items():
             await self._storage.write(key, _encode(data))
 
-    async def clear(self) -> None:
-        """Delete all entries in this agent's stash namespace."""
-        keys = await self.list()
-        for key in keys:
-            await self._storage.delete(key)
-
     async def clear_session(self) -> None:
         """Delete all stash data for this session, across every agent sharing the stash root.
 
-        Unlike :meth:`clear`, which is scoped to this agent, this covers the session directory
-        under the stash root, so an agent that wrote to the session from a different namespace is
-        cleaned up too. Keys the caller stores outside that directory are left alone.
+        This covers the session directory under the stash root, so an agent that wrote to the
+        session from a different namespace is cleaned up too. Keys the caller stores outside that
+        directory are left alone.
         """
         keys = await self._session_storage.list("")
         for key in keys:
