@@ -1,5 +1,5 @@
-import type { Storage, StorageSearchResult } from './storage.js'
 import type { Embedder, SearchStrategy } from './search/types.js'
+import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
 import { namespace, normalizeKey, normalizePrefix } from './storage.js'
@@ -26,8 +26,11 @@ export interface S3StorageConfig {
   region?: string
   /** Pre-configured S3 client. Cannot be combined with `region`. */
   s3Client?: import('@aws-sdk/client-s3').S3Client
-  /** Search strategy to use instead of the default keyword search. Takes precedence over `embeddings`. */
-  searchStrategy?: SearchStrategy
+  /**
+   * Optional search strategy. When set, `write()` indexes entries and `search()` delegates
+   * to the strategy. Takes precedence over `embeddings`.
+   */
+  searchStrategy?: SearchStrategy<S3Storage>
   /**
    * Shorthand for enabling native vector search via S3 Vectors.
    *
@@ -62,7 +65,7 @@ export class S3Storage implements Storage {
   private readonly _bucket: string
   private readonly _prefix: string
   private readonly _region: string | undefined
-  private readonly _searchStrategy: SearchStrategy
+  private readonly _searchStrategy: SearchStrategy<S3Storage> | undefined
   private _client: import('@aws-sdk/client-s3').S3Client | undefined
 
   /**
@@ -78,11 +81,10 @@ export class S3Storage implements Storage {
     this._prefix = config?.prefix ? config.prefix.split('/').filter(Boolean).join('/') + '/' : ''
     this._region = config?.region
     this._client = config?.s3Client
-    this._searchStrategy =
-      config?.searchStrategy ?? this._resolveEmbeddings(config?.embeddings) ?? KeywordSearchStrategy
+    this._searchStrategy = config?.searchStrategy ?? this._resolveEmbeddings(config?.embeddings)
   }
 
-  private _resolveEmbeddings(embeddings: S3EmbeddingsConfig | undefined): SearchStrategy | undefined {
+  private _resolveEmbeddings(embeddings: S3EmbeddingsConfig | undefined): SearchStrategy<S3Storage> | undefined {
     if (!embeddings) return undefined
     return new S3VectorSearchStrategy({
       embedder: embeddings.embedder,
@@ -109,7 +111,9 @@ export class S3Storage implements Storage {
     } catch (error: unknown) {
       throw new StorageError(`Failed to write '${normalized}' to S3 bucket '${this._bucket}'`, { cause: error })
     }
-    await this._searchStrategy.index?.(this, normalized, data)
+    if (this._searchStrategy) {
+      await this._searchStrategy.index?.(this, normalized, data)
+    }
   }
 
   /**
@@ -197,7 +201,10 @@ export class S3Storage implements Storage {
    * @returns All matches with relevance scores, ranked best-first
    */
   async search(query: string): Promise<StorageSearchResult[]> {
-    return this._searchStrategy.search(this, query)
+    if (this._searchStrategy) {
+      return this._searchStrategy.search(this, query)
+    }
+    return KeywordSearchStrategy.search(this, query)
   }
 
   private async _getClient(): Promise<import('@aws-sdk/client-s3').S3Client> {

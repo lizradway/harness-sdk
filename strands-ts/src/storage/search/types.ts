@@ -22,6 +22,19 @@ export type Embedder = (text: string) => Promise<number[]>
  */
 export interface SearchStrategy<S extends Storage = Storage, SearchQuery = string> {
   /**
+   * Indexes a single entry for future searches.
+   *
+   * Called on each write so strategies that maintain an index (FTS5, vector,
+   * etc.) can update incrementally. Strategies that search on the fly
+   * (keyword) or manage their own indexing (QMD) can omit this.
+   *
+   * @param storage - The storage backend the entry belongs to
+   * @param key - The storage key being written
+   * @param data - The raw bytes being stored
+   */
+  index?: (storage: S, key: string, data: Uint8Array) => Promise<void>
+
+  /**
    * Searches content in `storage` matching `query`.
    *
    * @param storage - The storage to search over
@@ -29,17 +42,4 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
    * @returns Matched keys with relevance scores, ranked best-first
    */
   search(storage: S, query: SearchQuery): Promise<StorageSearchResult[]>
-
-  /**
-   * Indexes content for future searches. Called by storage on every `write()`.
-   *
-   * Optional — strategies that maintain an external index (vector stores, full-text
-   * engines) implement this to keep the index in sync with storage writes. Strategies
-   * that scan storage on demand (e.g. keyword search) omit it.
-   *
-   * @param storage - The storage the content was written to
-   * @param key - The normalized key the content was written under
-   * @param data - The raw bytes that were written
-   */
-  index?(storage: S, key: string, data: Uint8Array): Promise<void>
 }

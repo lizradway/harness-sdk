@@ -43,7 +43,7 @@ strands-ts/
 
 ### 1. Environment Setup
 
-See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 20+, npm), installation, and verification commands.
+See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 22+, npm), installation, and verification commands.
 
 ### 2. Making Changes
 
@@ -233,6 +233,7 @@ The un-lintable rules an agent most often misses — every one is **enforced by 
 - Put unit tests in a separate `tests/` directory (use `src/**/__tests__/`)
 - Annotate local variables with redundant explicit types (infer locals; annotate signatures)
 - Let a raw vendor error escape a provider boundary
+- Use `invocationState` for SDK-internal state — it is user-only (see the [root AGENTS.md](../AGENTS.md))
 
 ## Development Commands
 

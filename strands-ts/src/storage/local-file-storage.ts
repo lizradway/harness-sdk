@@ -1,16 +1,10 @@
 import type { Sandbox } from '../sandbox/base.js'
-import type { Storage, StorageSearchResult } from './storage.js'
 import type { SearchStrategy } from './search/types.js'
+import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
 import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
-
-/** Configuration for {@link LocalFileStorage}. */
-export interface LocalFileStorageConfig {
-  /** Search strategy to use instead of the default keyword search. */
-  searchStrategy?: SearchStrategy
-}
 
 /**
  * Returns true if the error represents a missing or non-directory path (ENOENT or ENOTDIR).
@@ -44,7 +38,7 @@ function isNotFoundError(error: unknown): boolean {
 export class LocalFileStorage implements Storage {
   private readonly _baseDir: string
   private readonly _sandbox: Sandbox | undefined
-  private readonly _searchStrategy: SearchStrategy
+  private readonly _searchStrategy: SearchStrategy<LocalFileStorage> | undefined
 
   /** The resolved root directory for this storage instance. */
   get baseDir(): string {
@@ -54,12 +48,13 @@ export class LocalFileStorage implements Storage {
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.
-   * @param config - Optional configuration for search strategy.
+   * @param searchStrategy - Optional search strategy. When set, `write()` automatically indexes
+   *   entries and `search()` delegates to the strategy instead of the default keyword scan.
    */
-  constructor(baseDir: string = './.strands/', sandbox?: Sandbox, config?: LocalFileStorageConfig) {
+  constructor(baseDir: string = './.strands/', sandbox?: Sandbox, searchStrategy?: SearchStrategy<LocalFileStorage>) {
     this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
     this._sandbox = sandbox
-    this._searchStrategy = config?.searchStrategy ?? KeywordSearchStrategy
+    this._searchStrategy = searchStrategy
   }
 
   /**
@@ -72,7 +67,7 @@ export class LocalFileStorage implements Storage {
    */
   forSandbox(sandbox: Sandbox): LocalFileStorage {
     if (this._sandbox) return this
-    return new LocalFileStorage(this._baseDir, sandbox, { searchStrategy: this._searchStrategy })
+    return new LocalFileStorage(this._baseDir, sandbox, this._searchStrategy)
   }
 
   /**
@@ -91,7 +86,9 @@ export class LocalFileStorage implements Storage {
       } catch (error: unknown) {
         throw new StorageError(`Failed to write '${normalized}' to sandbox storage`, { cause: error })
       }
-      await this._searchStrategy.index?.(this, normalized, data)
+      if (this._searchStrategy) {
+        await this._searchStrategy.index?.(this, normalized, data)
+      }
       return
     }
     let tmpPath: string | undefined
@@ -110,7 +107,10 @@ export class LocalFileStorage implements Storage {
       }
       throw new StorageError(`Failed to write '${normalized}' to local storage`, { cause: error })
     }
-    await this._searchStrategy.index?.(this, normalized, data)
+
+    if (this._searchStrategy) {
+      await this._searchStrategy.index?.(this, normalized, data)
+    }
   }
 
   /**
@@ -248,13 +248,19 @@ export class LocalFileStorage implements Storage {
   }
 
   /**
-   * Searches stored content by keyword token-overlap scoring.
+   * Searches stored content using the configured strategy.
+   *
+   * Delegates to the search strategy when one is set, otherwise falls back
+   * to keyword token-overlap scoring.
    *
    * @param query - Natural-language search query
    * @returns All matches with relevance scores, ranked best-first
    */
   async search(query: string): Promise<StorageSearchResult[]> {
-    return this._searchStrategy.search(this, query)
+    if (this._searchStrategy) {
+      return this._searchStrategy.search(this, query)
+    }
+    return KeywordSearchStrategy.search(this, query)
   }
 
   /**
@@ -263,7 +269,7 @@ export class LocalFileStorage implements Storage {
   namespace(prefix: string): LocalFileStorage {
     const normalized = normalizePrefix(prefix)
     const subDir = normalized ? `${this._baseDir.replace(/\/$/, '')}/${normalized}` : this._baseDir
-    const scoped = new LocalFileStorage(subDir, this._sandbox, { searchStrategy: this._searchStrategy })
+    const scoped = new LocalFileStorage(subDir, this._sandbox, this._searchStrategy)
     Object.defineProperty(scoped, NAMESPACED, { value: true })
     return scoped
   }

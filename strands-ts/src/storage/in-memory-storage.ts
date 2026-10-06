@@ -1,14 +1,8 @@
-import type { Storage, StorageSearchResult } from './storage.js'
 import type { SearchStrategy } from './search/types.js'
+import type { Storage, StorageSearchResult } from './storage.js'
 
-import { namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { EPHEMERAL, namespace, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
-
-/** Configuration for {@link InMemoryStorage}. */
-export interface InMemoryStorageConfig {
-  /** Search strategy to use instead of the default keyword search. */
-  searchStrategy?: SearchStrategy
-}
 
 /**
  * In-memory {@link Storage} backend backed by a `Map`.
@@ -32,14 +26,16 @@ export interface InMemoryStorageConfig {
  * ```
  */
 export class InMemoryStorage implements Storage {
+  readonly [EPHEMERAL] = true as const
   private readonly _store = new Map<string, Uint8Array>()
-  private readonly _searchStrategy: SearchStrategy
+  private readonly _searchStrategy: SearchStrategy<InMemoryStorage> | undefined
 
   /**
-   * @param config - Optional configuration for search strategy.
+   * @param searchStrategy - Optional search strategy. When set, `write()` indexes entries
+   *   and `search()` delegates to the strategy instead of the default keyword scan.
    */
-  constructor(config?: InMemoryStorageConfig) {
-    this._searchStrategy = config?.searchStrategy ?? KeywordSearchStrategy
+  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>) {
+    this._searchStrategy = searchStrategy
   }
 
   /**
@@ -53,7 +49,9 @@ export class InMemoryStorage implements Storage {
   async write(key: string, data: Uint8Array): Promise<void> {
     const normalized = normalizeKey(key)
     this._store.set(normalized, data.slice())
-    await this._searchStrategy.index?.(this, normalized, data)
+    if (this._searchStrategy) {
+      await this._searchStrategy.index?.(this, normalized, data)
+    }
   }
 
   /**
@@ -108,7 +106,10 @@ export class InMemoryStorage implements Storage {
    * @returns All matches with relevance scores, ranked best-first
    */
   async search(query: string): Promise<StorageSearchResult[]> {
-    return this._searchStrategy.search(this, query)
+    if (this._searchStrategy) {
+      return this._searchStrategy.search(this, query)
+    }
+    return KeywordSearchStrategy.search(this, query)
   }
 
   /**
