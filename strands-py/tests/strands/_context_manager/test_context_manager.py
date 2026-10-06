@@ -481,6 +481,38 @@ class TestStashProperty:
         assert context_manager.stash is None
 
 
+class TestStashLayout:
+    """Tests for where the stash writes, depending on how its storage was supplied."""
+
+    @pytest.mark.asyncio
+    async def test_namespaced_agent_storage_keeps_the_stash_layout(self, mock_agent):
+        """An agent-level namespace is shared by every subsystem, so the stash keeps its own prefix under it."""
+        from strands.storage.in_memory_storage import InMemoryStorage
+
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant-a")
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["tenant-a/context/test-session/scopes/agent/test-agent/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_stash_view_is_the_stash_root(self, mock_agent):
+        """A view passed in StashConfig.storage is used verbatim, even when the agent has its own storage."""
+        from strands.storage.in_memory_storage import InMemoryStorage
+
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant-a")
+        context_manager = ContextManager(stash={"storage": storage.namespace("team")})
+        context_manager.init_agent(mock_agent)
+
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["team/tool-1_0"]
+
+
 class TestStashIsDurable:
     """Tests for the stash_is_durable property."""
 

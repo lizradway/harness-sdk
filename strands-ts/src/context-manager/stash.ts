@@ -40,17 +40,28 @@ export function formatStashRefs(refs: string[]): string {
  */
 export class Stash {
   private readonly _storage: Storage
-  private readonly _sessionStorage: Storage
+  // Undefined for a caller-supplied view: the stash cannot tell which keys under it
+  // belong to this session, so it never deletes from it.
+  private readonly _sessionStorage: Storage | undefined
 
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
 
-  constructor(storage: Storage, sessionId: string, agentId: string) {
-    const root = resolveNamespace(storage, STASH_PREFIX)
+  /**
+   * @param storage - Storage backend or scoped view
+   * @param sessionId - Session the stash belongs to
+   * @param agentId - Agent the stash belongs to
+   * @param viewIsRoot - Use a scoped view as the stash root verbatim. Pass false for
+   *   storage inherited from the agent: an agent-level namespace is shared by every
+   *   subsystem, so the stash keeps its own `context/<sessionId>/scopes/agent/<agentId>/`
+   *   layout under it.
+   */
+  constructor(storage: Storage, sessionId: string, agentId: string, viewIsRoot = true) {
+    const root = viewIsRoot ? resolveNamespace(storage, STASH_PREFIX) : namespaceStorage(storage, STASH_PREFIX)
     // raw storage:  context/<sessionId>/scopes/agent/<agentId>/<ref>
     // scoped view:  <view>/<ref>
     if (root === storage) {
-      this._sessionStorage = root
+      this._sessionStorage = undefined
       this._storage = root
     } else {
       this._sessionStorage = namespaceStorage(root, sessionId)
@@ -148,14 +159,22 @@ export class Stash {
   }
 
   /**
-   * Delete every key under the stash root, across all agents.
+   * Delete the stash data attributable to this session, across all agents.
    *
    * Raw storage: everything under `context/<sessionId>/`.
-   * Scoped view: everything under the view, including keys that are not stash entries.
+   * Scoped view: nothing. The view is owned by the caller, and its keys carry no
+   * session segment, so the caller is responsible for cleaning it up.
    */
   async clearSession(): Promise<void> {
-    const keys = await this._sessionStorage.list('')
-    await Promise.all(keys.map((key) => this._sessionStorage.delete(key)))
+    const sessionStorage = this._sessionStorage
+    if (!sessionStorage) {
+      logger.info(
+        `storage=<${this.storageTypeName}> | stash is rooted at a caller-supplied view, leaving it for the caller to clean up`
+      )
+      return
+    }
+    const keys = await sessionStorage.list('')
+    await Promise.all(keys.map((key) => sessionStorage.delete(key)))
   }
 
   /**

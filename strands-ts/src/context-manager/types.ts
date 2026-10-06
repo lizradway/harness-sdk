@@ -72,6 +72,9 @@ export interface StashConfig {
    * - `storage` → `context/<sessionId>/scopes/agent/<agentId>/<ref>`
    * - `namespace(storage, 'team')` → `team/<ref>`, shared by every agent given it
    * - `namespace(storage, 'team/' + sessionId)` → one stash per session
+   *
+   * Session deletion clears only `context/<sessionId>/` on raw storage. A
+   * caller-supplied view is never cleared by the SDK; the caller owns its lifecycle.
    */
   storage?: Storage
 

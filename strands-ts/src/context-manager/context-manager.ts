@@ -126,7 +126,7 @@ export class ContextManager implements Plugin {
     if (this._stashStorage !== false) {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
-      this._stash = new Stash(storage, agent.sessionId, agent.id)
+      this._stash = new Stash(storage, agent.sessionId, agent.id, this._stashStorage !== undefined)
     }
 
     if (this._stash) {

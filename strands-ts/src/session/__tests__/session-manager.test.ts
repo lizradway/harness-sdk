@@ -1000,7 +1000,7 @@ describe('SessionManager — stash integration', () => {
       expect(keysAfter).toHaveLength(0)
     })
 
-    it('deletes stash data when storage is pre-namespaced', async () => {
+    it('leaves an explicitly configured stash view in place', async () => {
       const shared = new InMemoryStorage()
       const namespacedStorage = shared.namespace('my-prefix')
       sessionManager = new SessionManager({
@@ -1023,8 +1023,9 @@ describe('SessionManager — stash integration', () => {
 
       await sessionManager.deleteSession()
 
+      // The caller owns a view it handed to the stash; nothing under it is attributable to the session
       const keysAfter = await stash.list()
-      expect(keysAfter).toHaveLength(0)
+      expect(keysAfter).toHaveLength(1)
     })
 
     it('does not over-delete when rootStorage is pre-namespaced', async () => {
@@ -1034,7 +1035,8 @@ describe('SessionManager — stash integration', () => {
         sessionId: 'test-session',
         storage: namespacedRoot,
       })
-      const stash = new Stash(namespacedRoot, 'test-session', 'agent')
+      // Inherited agent storage: the stash keeps its context/<sessionId>/ layout under the namespace
+      const stash = new Stash(namespacedRoot, 'test-session', 'agent', false)
       const mockAgent = createMockAgentWithHooks({
         extra: {
           storage: namespacedRoot,

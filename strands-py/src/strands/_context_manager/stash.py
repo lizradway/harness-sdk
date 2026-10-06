@@ -57,13 +57,28 @@ def _format_stash_refs(refs: list[str]) -> str:
 class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
-    def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
-        root = _resolve_namespace(storage, STASH_PREFIX)
+    def __init__(self, storage: Storage, session_id: str, agent_id: str, *, view_is_root: bool = True) -> None:
+        """Create a stash over ``storage``.
+
+        Args:
+            storage: Storage backend or scoped view.
+            session_id: Session the stash belongs to.
+            agent_id: Agent the stash belongs to.
+            view_is_root: Use a scoped view as the stash root verbatim. Pass False for storage
+                inherited from the agent: an agent-level namespace is shared by every subsystem,
+                so the stash keeps its own ``context/<session_id>/scopes/agent/<agent_id>/`` layout under it.
+        """
+        root = (
+            _resolve_namespace(storage, STASH_PREFIX) if view_is_root else _NamespacedStorage(storage, STASH_PREFIX)
+        )
         self._base_storage = storage
         # raw storage:  context/<session_id>/scopes/agent/<agent_id>/<ref>
         # scoped view:  <view>/<ref>
+        # _session_storage is None for a caller-supplied view: the stash cannot tell which
+        # keys under it belong to this session, so it never deletes from it.
+        self._session_storage: Storage | None
         if root is storage:
-            self._session_storage = root
+            self._session_storage = None
             self._storage = root
         else:
             self._session_storage = _NamespacedStorage(root, session_id)
@@ -164,11 +179,18 @@ class Stash:
             await self._storage.write(key, _encode(data))
 
     async def clear_session(self) -> None:
-        """Delete every key under the stash root, across all agents.
+        """Delete the stash data attributable to this session, across all agents.
 
         Raw storage: everything under ``context/<session_id>/``.
-        Scoped view: everything under the view, including keys that are not stash entries.
+        Scoped view: nothing. The view is owned by the caller, and its keys carry no session
+        segment, so the caller is responsible for cleaning it up.
         """
+        if self._session_storage is None:
+            logger.info(
+                "storage=<%s> | stash is rooted at a caller-supplied view, leaving it for the caller to clean up",
+                self.storage_type_name,
+            )
+            return
         keys = await self._session_storage.list("")
         for key in keys:
             await self._session_storage.delete(key)

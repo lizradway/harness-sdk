@@ -77,6 +77,9 @@ class StashConfig(TypedDict, total=False):
             - ``storage`` -> ``context/<session_id>/scopes/agent/<agent_id>/<ref>``
             - ``storage.namespace("team")`` -> ``team/<ref>``, shared by every agent given it
             - ``storage.namespace(f"team/{session_id}")`` -> one stash per session
+
+            Session deletion clears only ``context/<session_id>/`` on raw storage. A
+            caller-supplied view is never cleared by the SDK; the caller owns its lifecycle.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
     """
 

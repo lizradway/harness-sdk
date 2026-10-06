@@ -5,6 +5,7 @@ import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js
 import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -89,6 +90,32 @@ describe('ContextManager', () => {
       const agent = makeMockAgent()
       await cm.initAgent(agent)
       expect(initCalled).toBe(true)
+    })
+  })
+
+  describe('stash layout', () => {
+    it('keeps the stash layout under a namespaced agent storage', async () => {
+      const storage = new InMemoryStorage()
+      const agent = makeMockAgent()
+      Object.assign(agent, { storage: storage.namespace('tenant-a') })
+      const cm = new ContextManager()
+      await cm.initAgent(agent)
+
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toEqual(['tenant-a/context/test-ses/scopes/agent/test-agent/tool-1_0'])
+    })
+
+    it('uses an explicit stash view as the stash root', async () => {
+      const storage = new InMemoryStorage()
+      const agent = makeMockAgent()
+      Object.assign(agent, { storage: storage.namespace('tenant-a') })
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(agent)
+
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toEqual(['team/tool-1_0'])
     })
   })
 

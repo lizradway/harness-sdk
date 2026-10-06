@@ -417,29 +417,15 @@ class TestClearSession:
         assert await stash_s10.list() == ["tool-1_0"]
 
     @pytest.mark.asyncio
-    async def test_clears_the_whole_view_when_the_caller_supplied_the_root(self):
-        """A caller-supplied root is cleared wholesale: the stash owns no sub-directory to scope to."""
+    async def test_leaves_a_caller_supplied_view_untouched(self):
+        """A caller-supplied root carries no session segment, so nothing under it is attributable to the session."""
         storage = InMemoryStorage()
         orchestrator = Stash(storage.namespace("team"), "sess-1", "agent-a")
-        subagent = Stash(storage.namespace("team"), "sess-1", "agent-b")
-        await subagent.store("tool-1", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        subagent = Stash(storage.namespace("team"), "sess-2", "agent-b")
+        await orchestrator.store("tool-1", 0, json.dumps({"text": "own"}).encode("utf-8"))
+        await subagent.store("tool-9", 0, json.dumps({"text": "peer"}).encode("utf-8"))
         await storage.write("team/caller-owned", b"{}")
 
         await orchestrator.clear_session()
 
-        assert await subagent.list() == []
-        assert await storage.read("team/caller-owned") is None
-
-    @pytest.mark.asyncio
-    async def test_a_view_per_session_keeps_cleanup_inside_that_session(self):
-        """Putting the session id in the view is how a caller scopes cleanup back to one session."""
-        storage = InMemoryStorage()
-        stash_s1 = Stash(storage.namespace("team/sess-1"), "sess-1", "agent-a")
-        stash_s2 = Stash(storage.namespace("team/sess-2"), "sess-2", "agent-a")
-        await stash_s1.store("tool-1", 0, json.dumps({"text": "s1"}).encode("utf-8"))
-        await stash_s2.store("tool-9", 0, json.dumps({"text": "s2"}).encode("utf-8"))
-
-        await stash_s1.clear_session()
-
-        assert await stash_s1.list() == []
-        assert await stash_s2.list() == ["tool-9_0"]
+        assert sorted(await storage.list("")) == ["team/caller-owned", "team/tool-1_0", "team/tool-9_0"]
