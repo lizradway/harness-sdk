@@ -1,6 +1,7 @@
 import { KeywordSearchStrategy } from '@strands-agents/sdk/storage/search'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 
 async function keywordSearch() {
   // --8<-- [start:keyword_search]
@@ -43,4 +44,18 @@ async function storageWithStrategy() {
     new QmdSearchStrategy(),
   )
   // --8<-- [end:storage_with_strategy]
+}
+
+async function memoryStoreWithStrategy() {
+  // --8<-- [start:memory_store_with_strategy]
+  const search = new QmdSearchStrategy()
+  const store = new FileMemoryStore({
+    name: 'agent-memory',
+    search,
+  })
+
+  // ... use the store ...
+
+  await search.close()
+  // --8<-- [end:memory_store_with_strategy]
 }

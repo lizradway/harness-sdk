@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ...memory.types import MemoryStoreConfig
 
@@ -23,9 +23,10 @@ class FileMemoryStoreConfig(MemoryStoreConfig, total=False):
             separate storage) to isolate them.
         search_strategy: Override the search strategy used by this memory store.
             When set, ``search()`` delegates to this strategy instead of the
-            storage backend's ``search()``. The backend is unaffected -- only
-            this store's search behavior changes.
+            storage backend's ``search()``, and ``add()`` calls the strategy's
+            ``index()`` after each write so index-based strategies stay current.
+            The backend's own search strategy (if any) is not replaced.
     """
 
     storage: Storage
-    search_strategy: SearchStrategy
+    search_strategy: SearchStrategy[Any]

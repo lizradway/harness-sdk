@@ -20,10 +20,12 @@ implements the
 <Syntax py="SearchStrategy" ts="SearchStrategy" />
 protocol/interface: given a storage backend and a query
 string, it returns a ranked list of matching keys with
-relevance scores. Strategies that maintain an index can
-also implement
+relevance scores. Strategies that maintain an index use
 <Syntax py="index()" ts="index()" /> to update
-incrementally on each write.
+incrementally on each write. In Python, `index()` is a
+required protocol method (strategies that search on the
+fly implement it as a no-op); in TypeScript it is
+optional.
 
 All shipped backends default to
 `KeywordSearchStrategy`. Pass a different strategy via
@@ -71,10 +73,12 @@ BM25 full-text search backed by a SQLite inverted
 index. Scores results by term frequency, inverse
 document frequency, and document length normalization,
 producing significantly better relevance ranking than
-keyword overlap for large stores. Entries are indexed at
-write
-time, so searches query a pre-built index instead of
-scanning storage.
+keyword overlap for large stores. The Python strategy
+indexes entries at write time and never re-scans
+storage, so only content written after the strategy is
+attached is searchable (there is no backfill). The
+TypeScript strategy re-indexes the directory on each
+search.
 
 Both SDKs ship a BM25 strategy that works with
 `LocalFileStorage` (needs a filesystem directory to
@@ -147,36 +151,29 @@ the strategy instead of the default keyword scan.
 `FileMemoryStore` also accepts a search strategy
 override. When set,
 <Syntax py="search()" ts="search()" /> delegates to
-that strategy instead of the storage backend's
-default. The backend itself is unaffected: only the
-memory store's search behavior changes.
+that strategy instead of the storage backend's, and
+each <Syntax py="add()" ts="add()" /> passes the
+written entry to the strategy's
+<Syntax py="index()" ts="index()" />. The backend's
+own strategy, if it has one, is not replaced. Keep a
+reference to the strategy so you can call
+<Syntax py="close()" ts="close()" /> on it: the memory
+store does not close it for you.
 
 <Tabs>
 <Tab label="Python">
 
 ```python
-from strands.storage.search import Bm25SearchStrategy
-from strands.vended_memory_stores.file_memory_store import (
-    FileMemoryStore,
-)
-
-store = FileMemoryStore(
-    name="agent-memory",
-    search_strategy=Bm25SearchStrategy(),
-)
+--8<-- "user-guide/sdk/storage/search-strategies.py:memory_store_with_strategy"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
-import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
-import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
+--8<-- "user-guide/sdk/storage/search-strategies_imports.ts:memory_store_with_strategy_imports"
 
-const store = new FileMemoryStore({
-  name: 'agent-memory',
-  search: new QmdSearchStrategy(),
-})
+--8<-- "user-guide/sdk/storage/search-strategies.ts:memory_store_with_strategy"
 ```
 
 </Tab>

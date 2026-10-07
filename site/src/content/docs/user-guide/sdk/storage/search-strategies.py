@@ -40,3 +40,21 @@ storage = LocalFileStorage(
     search_strategy=Bm25SearchStrategy(),
 )
 # --8<-- [end:storage_with_strategy]
+
+
+# --8<-- [start:memory_store_with_strategy]
+from strands.storage.search import Bm25SearchStrategy
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+strategy = Bm25SearchStrategy()
+store = FileMemoryStore(
+    name="agent-memory",
+    search_strategy=strategy,
+)
+
+# ... use the store ...
+
+await strategy.close()
+# --8<-- [end:memory_store_with_strategy]

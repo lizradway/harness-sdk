@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { FileMemoryStore } from '../store.js'
 import { InMemoryStorage } from '../../../storage/in-memory-storage.js'
+import { StorageError } from '../../../errors.js'
 import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
 import type { Storage } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
@@ -294,8 +295,25 @@ describe('FileMemoryStore', () => {
         search: vi.fn().mockResolvedValue([]),
       }
       const strategyStore = new FileMemoryStore({ name: 'no-idx', storage, search: strategy })
-      await strategyStore.add('Some content')
-      // no error thrown — index is optional on SearchStrategy
+      // index is optional on SearchStrategy, so add() must still succeed and write the entry
+      const key = await strategyStore.add('Some content')
+      expect(key).toMatch(/\.md$/)
+      expect(decoder.decode((await storage.namespace('memory/no-idx').read(key))!)).toBe('Some content')
+    })
+
+    it('wraps index failures in StorageError after the write lands', async () => {
+      const cause = new Error('unable to open database file')
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockRejectedValue(cause),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'idx-fail', storage, search: strategy })
+      const error = await strategyStore.add('User prefers dark mode').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain('but indexing failed')
+      expect((error as StorageError).cause).toBe(cause)
+      const written = await storage.namespace('memory/idx-fail').read('user-prefers-dark-mode.md')
+      expect(decoder.decode(written!)).toBe('User prefers dark mode')
     })
   })
 

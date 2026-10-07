@@ -14,3 +14,8 @@ import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 // --8<-- [end:storage_with_strategy_imports]
+
+// --8<-- [start:memory_store_with_strategy_imports]
+import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+// --8<-- [end:memory_store_with_strategy_imports]
