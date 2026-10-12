@@ -148,15 +148,21 @@ the strategy instead of the default keyword scan.
 </Tab>
 </Tabs>
 
-`FileMemoryStore` also accepts a search strategy
-override. When set,
-<Syntax py="search()" ts="search()" /> delegates to
-that strategy instead of the storage backend's, and
-each <Syntax py="add()" ts="add()" /> passes the
-written entry to the strategy's
-<Syntax py="index()" ts="index()" />. The backend's
-own strategy, if it has one, is not replaced. Keep a
-reference to the strategy so you can call
+`FileMemoryStore` also accepts a search strategy.
+When set, <Syntax py="search()" ts="search()" />
+uses that strategy, and each
+<Syntax py="add()" ts="add()" /> passes the written
+entry to the strategy's
+<Syntax py="index()" ts="index()" />. In Python, the
+strategy is applied to the store's default
+`LocalFileStorage` and cannot be combined with
+`storage`. To use a strategy with your own backend,
+pass it to the backend as shown above, so the
+backend's checks (such as the sandbox check) apply.
+In TypeScript, the strategy overrides the backend's
+search, and the backend's own strategy, if it has
+one, is not replaced. Keep a reference to the
+strategy so you can call
 <Syntax py="close()" ts="close()" /> on it: the memory
 store does not close it for you.
 

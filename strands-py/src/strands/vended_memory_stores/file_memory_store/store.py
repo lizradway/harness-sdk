@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from typing_extensions import Unpack
 
@@ -18,11 +18,9 @@ from ...memory.extraction.types import ExtractionConfig, ExtractionResult, Extra
 from ...memory.types import MemoryEntry, MemoryStore, Metadata, SearchOptions
 from ...storage.local_file_storage import LocalFileStorage
 from ...storage.storage import _normalize_key, _resolve_namespace
-from ...types.exceptions import StorageError
 from .types import FileMemoryStoreConfig
 
 if TYPE_CHECKING:
-    from ...storage.search.types import SearchStrategy
     from ...storage.storage import Storage
     from ...types.content import Message
 
@@ -117,9 +115,18 @@ class FileMemoryStore(MemoryStore):
         self.description: str | None = config.get("description")
         self.max_search_results: int | None = config.get("max_search_results")
 
-        raw_storage = config.get("storage") or LocalFileStorage()
+        provided_storage = config.get("storage")
+        search_strategy = config.get("search_strategy")
+        if provided_storage is not None and search_strategy is not None:
+            # Configure the strategy on the backend instead, so the backend's own
+            # guards (e.g. LocalFileStorage rejecting host-fs strategies with a
+            # sandbox) apply to it.
+            raise ValueError(
+                "search_strategy cannot be combined with storage; pass the strategy to the storage backend"
+                " instead, e.g. LocalFileStorage(search_strategy=...)"
+            )
+        raw_storage = provided_storage or LocalFileStorage(search_strategy=search_strategy)
         self._storage: Storage = _resolve_namespace(raw_storage, f"{_STORAGE_NAMESPACE}/{self.name}")
-        self._search_strategy: SearchStrategy[Any] | None = config.get("search_strategy")
         self.extraction: ExtractionConfig | bool | None = self._resolve_extraction(config)
         self._write_lock = asyncio.Lock()
 
@@ -159,10 +166,7 @@ class FileMemoryStore(MemoryStore):
             else _DEFAULT_MAX_SEARCH_RESULTS
         )
 
-        if self._search_strategy:
-            results = await self._search_strategy.search(self._storage, query)
-        else:
-            results = await self._storage.search(query)
+        results = await self._storage.search(query)
         entries: list[MemoryEntry] = []
         for result in results[:max_results]:
             data = result.data if result.data is not None else await self._storage.read(result.key)
@@ -190,8 +194,9 @@ class FileMemoryStore(MemoryStore):
             The canonical storage key the entry was written under.
 
         Raises:
-            StorageError: If a configured ``search_strategy`` fails to index the
-                entry. The entry has already been written when this is raised.
+            StorageError: If the write fails, or if the storage backend's search
+                strategy fails to index the entry. In the indexing case the entry
+                has already been written when this is raised.
         """
         lines = content.split("\n")
         first_line = re.sub(r"^#+\s*", "", lines[0])
@@ -209,10 +214,5 @@ class FileMemoryStore(MemoryStore):
 
             data = merged.encode("utf-8")
             await self._storage.write(key, data)
-            if self._search_strategy:
-                try:
-                    await self._search_strategy.index(self._storage, key, data)
-                except Exception as error:
-                    raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
         return key

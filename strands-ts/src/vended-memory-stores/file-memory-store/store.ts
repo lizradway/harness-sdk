@@ -32,8 +32,9 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
   extraction?: boolean | FileMemoryExtractionConfig
   /**
    * Override the search strategy used by this memory store. When set, `search()` delegates to
-   * this strategy instead of the default keyword token-overlap scan. The underlying storage
-   * backend is unaffected — only this store's search behavior changes.
+   * this strategy instead of the default keyword token-overlap scan, and `add()` calls the
+   * strategy's `index()` (when it has one) after each write so index-based strategies stay
+   * current. The storage backend's own search is not replaced.
    */
   search?: SearchStrategy
 }

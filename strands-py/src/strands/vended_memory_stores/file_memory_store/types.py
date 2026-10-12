@@ -21,11 +21,13 @@ class FileMemoryStoreConfig(MemoryStoreConfig, total=False):
             stores with distinct names safely share one backend. Two stores with the same
             name on the same backend share storage -- give them different names (or
             separate storage) to isolate them.
-        search_strategy: Override the search strategy used by this memory store.
-            When set, ``search()`` delegates to this strategy instead of the
-            storage backend's ``search()``, and ``add()`` calls the strategy's
-            ``index()`` after each write so index-based strategies stay current.
-            The backend's own search strategy (if any) is not replaced.
+        search_strategy: Search strategy for the default storage backend. The
+            store builds its default ``LocalFileStorage`` with this strategy, so
+            ``add()`` indexes each write and ``search()`` delegates to it. Cannot
+            be combined with ``storage`` (raises ``ValueError``): to use a
+            strategy with your own backend, pass it to that backend instead, e.g.
+            ``LocalFileStorage(search_strategy=...)``, so the backend's guards
+            (such as rejecting host-filesystem strategies with a sandbox) apply.
     """
 
     storage: Storage

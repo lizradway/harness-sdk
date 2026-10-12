@@ -6,7 +6,7 @@ import pytest
 
 from strands.storage import Storage
 from strands.storage.in_memory_storage import InMemoryStorage
-from strands.storage.search import StorageSearchResult
+from strands.storage.search import Bm25SearchStrategy, StorageSearchResult
 from strands.types.exceptions import StorageError
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 
@@ -31,6 +31,13 @@ class _RecordingStrategy:
 @pytest.fixture
 def storage():
     return InMemoryStorage()
+
+
+@pytest.fixture
+def default_dir(tmp_path, monkeypatch):
+    """Run in a temp cwd so the store's default LocalFileStorage writes under ``tmp_path``."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
 
 
 @pytest.fixture
@@ -259,11 +266,17 @@ class TestSearch:
         results = await custom_store.search("fact")
         assert len(results) == 2
 
+    def test_rejects_search_strategy_with_custom_storage(self, storage):
+        # The strategy must go on the backend so the backend's guards (e.g. the
+        # LocalFileStorage sandbox check for host-fs strategies) apply to it.
+        with pytest.raises(ValueError, match="pass the strategy to the storage backend"):
+            FileMemoryStore(name="both", storage=storage, search_strategy=_RecordingStrategy())
+
     @pytest.mark.asyncio
-    async def test_delegates_to_search_strategy_when_set(self, storage):
+    async def test_delegates_to_search_strategy_when_set(self, default_dir):
         strategy = AsyncMock()
         strategy.search.return_value = [StorageSearchResult(key="custom.md", score=0.9, data=b"custom result")]
-        store = FileMemoryStore(name="strategy-test", storage=storage, search_strategy=strategy)
+        store = FileMemoryStore(name="strategy-test", search_strategy=strategy)
         await store.add("some content to write")
         results = await store.search("anything")
         strategy.search.assert_awaited_once()
@@ -271,10 +284,10 @@ class TestSearch:
         assert results[0].content == "custom result"
 
     @pytest.mark.asyncio
-    async def test_indexes_on_add_when_search_strategy_set(self, storage):
+    async def test_indexes_on_add_when_search_strategy_set(self, default_dir):
         strategy = AsyncMock()
         strategy.search.return_value = []
-        store = FileMemoryStore(name="idx-test", storage=storage, search_strategy=strategy)
+        store = FileMemoryStore(name="idx-test", search_strategy=strategy)
         await store.add("User prefers dark mode")
         strategy.index.assert_awaited_once()
         call_args = strategy.index.call_args
@@ -282,23 +295,36 @@ class TestSearch:
         assert b"User prefers dark mode" in call_args[0][2]
 
     @pytest.mark.asyncio
-    async def test_wraps_index_failure_in_storage_error(self, storage):
+    async def test_wraps_index_failure_in_storage_error(self, default_dir):
         strategy = AsyncMock()
         strategy.index.side_effect = RuntimeError("unable to open database file")
-        store = FileMemoryStore(name="idx-fail", storage=storage, search_strategy=strategy)
+        store = FileMemoryStore(name="idx-fail", search_strategy=strategy)
         with pytest.raises(StorageError, match="but indexing failed") as exc_info:
             await store.add("User prefers dark mode")
         assert isinstance(exc_info.value.__cause__, RuntimeError)
         # The write itself succeeded before indexing failed.
-        assert await storage.read("memory/idx-fail/user-prefers-dark-mode.md") == b"User prefers dark mode"
+        written = default_dir / ".strands" / "memory" / "idx-fail" / "user-prefers-dark-mode.md"
+        assert written.read_bytes() == b"User prefers dark mode"
 
     @pytest.mark.asyncio
-    async def test_indexes_with_real_strategy(self, storage):
+    async def test_indexes_with_real_strategy(self, default_dir):
         strategy = _RecordingStrategy()
-        store = FileMemoryStore(name="real-idx", storage=storage, search_strategy=strategy)
+        store = FileMemoryStore(name="real-idx", search_strategy=strategy)
         await store.add("User prefers dark mode")
         results = await store.search("dark")
         assert [entry.content for entry in results] == ["User prefers dark mode"]
+
+    @pytest.mark.asyncio
+    async def test_bm25_search_strategy_end_to_end(self, default_dir):
+        strategy = Bm25SearchStrategy()
+        try:
+            store = FileMemoryStore(name="bm25", search_strategy=strategy)
+            await store.add("User prefers dark mode")
+            await store.add("Deploys use blue-green strategy")
+            results = await store.search("dark mode")
+            assert [entry.content for entry in results] == ["User prefers dark mode"]
+        finally:
+            await strategy.close()
 
     @pytest.mark.asyncio
     async def test_falls_back_to_storage_search_without_strategy(self, store):
