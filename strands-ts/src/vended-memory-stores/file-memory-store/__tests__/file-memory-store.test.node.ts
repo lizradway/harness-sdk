@@ -5,6 +5,7 @@ import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
 import type { Storage, StorageSearchResult } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
 import type { MessageData } from '../../../types/messages.js'
+import { logger } from '../../../logging/logger.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -25,6 +26,27 @@ describe('FileMemoryStore', () => {
   })
 
   describe('constructor', () => {
+    it('warns that the search option is deprecated and still delegates to it', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const search = { search: vi.fn().mockResolvedValue([{ key: 'custom.md', score: 1 }]) }
+      await storage.write('memory/deprecated/custom.md', new TextEncoder().encode('custom result'))
+      const deprecatedStore = new FileMemoryStore({ name: 'deprecated', storage, search })
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0]![0]).toContain('deprecated')
+      const results = await deprecatedStore.search('anything')
+      expect(search.search).toHaveBeenCalledTimes(1)
+      expect(results.map((entry) => entry.content)).toEqual(['custom result'])
+      warnSpy.mockRestore()
+    })
+
+    it('does not warn when search is not set', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      new FileMemoryStore({ name: 'no-search', storage })
+      expect(warnSpy).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
+
     it('sets name and description from config', () => {
       expect(store.name).toBe('test-store')
       expect(store.description).toBe('A test file memory store')

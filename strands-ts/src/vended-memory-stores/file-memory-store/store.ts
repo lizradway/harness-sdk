@@ -34,6 +34,10 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
    * Override the search strategy used by this memory store. When set, `search()` delegates to
    * this strategy instead of the storage backend's `search()`. The underlying storage backend is
    * unaffected — only this store's search behavior changes.
+   *
+   * @deprecated Set the strategy on the storage backend instead, e.g.
+   *   `storage: new LocalFileStorage('./.strands/', { searchStrategy: new QmdSearchStrategy() })`.
+   *   The backend then indexes each write and `search()` delegates to it.
    */
   search?: SearchStrategy
 }
@@ -171,6 +175,12 @@ export class FileMemoryStore implements MemoryStore {
     if (config.description !== undefined) this.description = config.description
     if (config.maxSearchResults !== undefined) this.maxSearchResults = config.maxSearchResults
     this._storage = this._resolveStorage(config.storage ?? new LocalFileStorage())
+    if (config.search) {
+      logger.warn(
+        `store=<${config.name}> | search option is deprecated and will be removed in a future version | ` +
+          'set the search strategy on the storage backend instead'
+      )
+    }
     this._searchStrategy = config.search
     const extraction = this._resolveExtraction(config)
     if (extraction !== undefined) this.extraction = extraction
