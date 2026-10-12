@@ -1,6 +1,6 @@
 import { Agent, BedrockModel, MemoryManager } from '@strands-agents/sdk'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
-import { S3Storage } from '@strands-agents/sdk/storage'
+import { LocalFileStorage, S3Storage } from '@strands-agents/sdk/storage'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
 
 // =====================
@@ -61,12 +61,17 @@ void searchAndAdd
 // Custom search strategy (BM25 via QMD)
 // =====================
 
-function customSearch() {
+async function customSearch() {
   // --8<-- [start:custom_search]
+  const strategy = new QmdSearchStrategy()
   const store = new FileMemoryStore({
     name: 'agent-memory',
-    search: new QmdSearchStrategy(),
+    storage: new LocalFileStorage('./.strands/', undefined, strategy),
   })
+
+  // ... use the store ...
+
+  await strategy.close()
   // --8<-- [end:custom_search]
 
   void store

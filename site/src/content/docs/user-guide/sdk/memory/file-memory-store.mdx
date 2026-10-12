@@ -53,7 +53,7 @@ The store is writable by default, so the
 [automatic extraction](./managing-memory#automatic-extraction)
 work without extra setup.
 
-Search is keyword matching, not semantic. For
+Search defaults to keyword matching, not semantic. For
 embedding-based search over a managed vector store, use the
 [Bedrock Knowledge Base store](./bedrock-knowledge-base).
 
@@ -91,14 +91,26 @@ like `entry-1717459200000.md`.
 empty `name` (the store scopes under `memory//`, which is
 valid but not recommended).
 
-The TypeScript SDK accepts additional extraction options
-(<Syntax py="extraction" ts="extraction" /> as an object):
+To customize the built-in extractor:
+
+<Tabs>
+<Tab label="Python">
+
+Pass an `ExtractionConfig` with your own `ModelExtractor`
+(see [Extraction](#extraction)).
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass an object as `extraction` with these extra fields:
 
 | Field | Purpose |
 |-------|---------|
-| `search` | Override the search strategy. When set, <Syntax py="search" ts="search" /> delegates to this strategy instead of the default keyword scan. TypeScript only. |
-| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's own model; set a cheaper one to cut cost. TypeScript only. |
-| `extraction.systemPrompt` | Custom framing for what counts as a durable fact, replacing the default guidance. TypeScript only. |
+| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's own model; set a cheaper one to cut cost. |
+| `extraction.systemPrompt` | Custom framing for what counts as a durable fact, replacing the default guidance. |
+
+</Tab>
+</Tabs>
 
 ## Storage Backend
 
@@ -158,17 +170,43 @@ over a managed vector store, use the
 <Tabs>
 <Tab label="Python">
 
-Python uses the built-in keyword search. To change the
-search behavior, implement a custom `MemoryStore` that
-wraps `FileMemoryStore` and overrides `search`.
+To change the search behavior, give the storage backend a
+search strategy; the store's
+<Syntax py="search" ts="search" /> delegates to it and
+each <Syntax py="add" ts="add" /> is indexed as it is
+written. `Bm25SearchStrategy` ranks with BM25 using the
+built-in `sqlite3` FTS5 module. It only indexes content
+written after it is attached, so attach it before the
+store's first write:
+
+```python
+from strands.storage import LocalFileStorage
+from strands.storage.search import Bm25SearchStrategy
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+strategy = Bm25SearchStrategy()
+store = FileMemoryStore(
+    name="agent-memory",
+    storage=LocalFileStorage(search_strategy=strategy),
+)
+
+# ... use the store ...
+
+await strategy.close()
+```
 
 </Tab>
 <Tab label="TypeScript">
 
-Pass a `search` strategy to replace the default keyword
-scan. The SDK ships `QmdSearchStrategy` for BM25 ranking
-(requires `@tobilu/qmd`), or implement the
-`SearchStrategy` interface for your own backend:
+To change the search behavior, give the storage backend a
+search strategy; the store's
+<Syntax py="search" ts="search" /> delegates to it.
+`QmdSearchStrategy` ranks with BM25 using
+[QMD](https://github.com/tobi/qmd) (requires
+`@tobilu/qmd`) and re-indexes the storage directory on
+each search, so existing files are searchable:
 
 ```typescript
 --8<-- "user-guide/sdk/memory/file-memory-store_imports.ts:custom_search_imports"
@@ -177,6 +215,13 @@ scan. The SDK ships `QmdSearchStrategy` for BM25 ranking
 ```
 </Tab>
 </Tabs>
+
+You can also implement the
+<Syntax py="SearchStrategy" ts="SearchStrategy" /> interface
+for your own ranking. Keep a reference to the
+strategy so you can call
+<Syntax py="close()" ts="close()" /> on it: the store does
+not close it for you.
 
 ## Writing Memories
 
