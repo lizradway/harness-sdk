@@ -66,7 +66,9 @@ async function customSearch() {
   const strategy = new QmdSearchStrategy()
   const store = new FileMemoryStore({
     name: 'agent-memory',
-    storage: new LocalFileStorage('./.strands/', undefined, strategy),
+    storage: new LocalFileStorage('./.strands/', {
+      searchStrategy: strategy,
+    }),
   })
 
   // ... use the store ...
