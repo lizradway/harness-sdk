@@ -29,14 +29,14 @@ export interface QmdSearchStrategyConfig {
  * ```typescript
  * import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
  * import { LocalFileStorage } from '@strands-agents/sdk/storage'
+ * import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
  *
- * const storage = new LocalFileStorage('./memory/')
- * const store = new FileMemoryStore({
- *   storage,
- *   search: new QmdSearchStrategy(),
- * })
+ * const strategy = new QmdSearchStrategy()
+ * const storage = new LocalFileStorage('./memory/', undefined, strategy)
+ * const store = new FileMemoryStore({ name: 'agent-memory', storage })
  *
  * const results = await store.search('authentication flow')
+ * await strategy.close()
  * ```
  */
 export class QmdSearchStrategy implements SearchStrategy<LocalFileStorage> {

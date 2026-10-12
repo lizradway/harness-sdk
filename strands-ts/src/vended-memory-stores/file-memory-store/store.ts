@@ -32,9 +32,12 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
   extraction?: boolean | FileMemoryExtractionConfig
   /**
    * Override the search strategy used by this memory store. When set, `search()` delegates to
-   * this strategy instead of the default keyword token-overlap scan, and `add()` calls the
-   * strategy's `index()` (when it has one) after each write so index-based strategies stay
-   * current. The storage backend's own search is not replaced.
+   * this strategy instead of the default keyword token-overlap scan. The underlying storage
+   * backend is unaffected — only this store's search behavior changes.
+   *
+   * @deprecated Set the strategy on the storage backend instead, e.g.
+   *   `storage: new LocalFileStorage('./.strands/', undefined, new QmdSearchStrategy())`. The backend
+   *   then indexes each write and delegates `search()` to the strategy.
    */
   search?: SearchStrategy
 }
@@ -55,7 +58,6 @@ export interface FileMemoryExtractionConfig extends ExtractionConfig {
   systemPrompt?: string
 }
 import { LocalFileStorage } from '../../storage/local-file-storage.js'
-import { StorageError } from '../../errors.js'
 import { ModelExtractor } from '../../memory/extraction/model-extractor.js'
 import { normalizeKey, resolveNamespace } from '../../storage/storage.js'
 import { tokenize, tokenOverlapScore } from '../../storage/search/keyword.js'
@@ -173,6 +175,13 @@ export class FileMemoryStore implements MemoryStore {
     if (config.description !== undefined) this.description = config.description
     if (config.maxSearchResults !== undefined) this.maxSearchResults = config.maxSearchResults
     this._storage = this._resolveStorage(config.storage ?? new LocalFileStorage())
+    if (config.search) {
+      logger.warn(
+        "Passing 'search' to FileMemoryStore is deprecated and will be removed in a future version. " +
+          'Set the search strategy on the storage backend instead, e.g. ' +
+          "new LocalFileStorage('./.strands/', undefined, strategy)."
+      )
+    }
     this._searchStrategy = config.search
     const extraction = this._resolveExtraction(config)
     if (extraction !== undefined) this.extraction = extraction
@@ -274,8 +283,6 @@ export class FileMemoryStore implements MemoryStore {
    * @param content - The knowledge content to store
    * @param _metadata - Unused; accepted for interface compatibility with the ExtractionCoordinator
    * @returns The canonical storage key the entry was written under
-   * @throws {@link StorageError} if the configured search strategy fails to index the entry;
-   *   the entry has already been written when this is thrown
    */
   async add(content: string, _metadata?: Record<string, JSONValue>): Promise<string> {
     const lines = content.split(/\n/)
@@ -297,15 +304,7 @@ export class FileMemoryStore implements MemoryStore {
         } else {
           merged = content
         }
-        const data = encoder.encode(merged)
-        await this._storage.write(canonicalKey, data)
-        if (this._searchStrategy?.index) {
-          try {
-            await this._searchStrategy.index(this._storage, canonicalKey, data)
-          } catch (error) {
-            throw new StorageError(`Wrote '${canonicalKey}' but indexing failed`, { cause: error })
-          }
-        }
+        await this._storage.write(canonicalKey, encoder.encode(merged))
         return canonicalKey
       })
     this._writeLocks.set(canonicalKey, current)

@@ -115,17 +115,7 @@ class FileMemoryStore(MemoryStore):
         self.description: str | None = config.get("description")
         self.max_search_results: int | None = config.get("max_search_results")
 
-        provided_storage = config.get("storage")
-        search_strategy = config.get("search_strategy")
-        if provided_storage is not None and search_strategy is not None:
-            # Configure the strategy on the backend instead, so the backend's own
-            # guards (e.g. LocalFileStorage rejecting host-fs strategies with a
-            # sandbox) apply to it.
-            raise ValueError(
-                "search_strategy cannot be combined with storage; pass the strategy to the storage backend"
-                " instead, e.g. LocalFileStorage(search_strategy=...)"
-            )
-        raw_storage = provided_storage or LocalFileStorage(search_strategy=search_strategy)
+        raw_storage = config.get("storage") or LocalFileStorage()
         self._storage: Storage = _resolve_namespace(raw_storage, f"{_STORAGE_NAMESPACE}/{self.name}")
         self.extraction: ExtractionConfig | bool | None = self._resolve_extraction(config)
         self._write_lock = asyncio.Lock()
@@ -192,11 +182,6 @@ class FileMemoryStore(MemoryStore):
 
         Returns:
             The canonical storage key the entry was written under.
-
-        Raises:
-            StorageError: If the write fails, or if the storage backend's search
-                strategy fails to index the entry. In the indexing case the entry
-                has already been written when this is raised.
         """
         lines = content.split("\n")
         first_line = re.sub(r"^#+\s*", "", lines[0])
@@ -212,7 +197,6 @@ class FileMemoryStore(MemoryStore):
             else:
                 merged = content
 
-            data = merged.encode("utf-8")
-            await self._storage.write(key, data)
+            await self._storage.write(key, merged.encode("utf-8"))
 
         return key
