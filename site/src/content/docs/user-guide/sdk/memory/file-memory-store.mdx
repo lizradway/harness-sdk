@@ -106,7 +106,7 @@ Pass an object as `extraction` with these extra fields:
 
 | Field | Purpose |
 |-------|---------|
-| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's own model; set a cheaper one to cut cost. |
+| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's `auxModel` if set, otherwise the agent's own model; set a cheaper one to cut cost. |
 | `extraction.systemPrompt` | Custom framing for what counts as a durable fact, replacing the default guidance. |
 
 </Tab>
@@ -327,6 +327,13 @@ store = FileMemoryStore(
     ),
 )
 ```
+
+A custom extractor replaces the key-aware one, so the
+store no longer injects existing headings into the
+prompt. The store names each file after the first line
+of an entry, so to keep facts grouped by topic, have
+your prompt start each entry with a markdown heading
+naming its topic.
 </Tab>
 <Tab label="TypeScript">
 
@@ -357,8 +364,8 @@ small team: hundreds to low thousands of files. Each
 depends on the storage backend, not the store itself.
 
 Separate instances or processes writing the same storage
-namespace are not coordinated beyond the per-key lock
-within a single process. Avoid pointing two instances at
+namespace are not coordinated beyond in-process write
+locking. Avoid pointing two instances at
 the same namespace; the last write wins.
 
 ## Related
