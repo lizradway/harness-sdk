@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { FileMemoryStore } from '../store.js'
 import { InMemoryStorage } from '../../../storage/in-memory-storage.js'
 import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
-import type { Storage } from '../../../storage/storage.js'
+import type { Storage, StorageSearchResult } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
 import type { MessageData } from '../../../types/messages.js'
 
@@ -260,6 +260,80 @@ describe('FileMemoryStore', () => {
       const results = await throwingStore.search('deploy')
       expect(results).toHaveLength(1)
       expect(results[0]!.content).toBe('valid content about deploy')
+    })
+
+    it('delegates to a search strategy configured on the storage backend', async () => {
+      const strategy = {
+        search: vi
+          .fn()
+          .mockResolvedValue([{ key: 'memory/strategy-store/user-prefers-dark-mode-for-all-editors.md', score: 0.9 }]),
+      }
+      const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
+      const strategyStore = new FileMemoryStore({ name: 'strategy-store', storage: strategyStorage })
+      await strategyStore.add('User prefers dark mode for all editors')
+
+      const results = await strategyStore.search('editor theme')
+
+      expect(strategy.search).toHaveBeenCalledWith(strategyStorage, 'editor theme')
+      expect(results).toEqual([
+        {
+          content: 'User prefers dark mode for all editors',
+          metadata: { path: 'user-prefers-dark-mode-for-all-editors.md', score: 0.9 },
+        },
+      ])
+    })
+
+    it("uses data returned by the storage's search without re-reading it", async () => {
+      const read = vi.fn().mockResolvedValue(null)
+      const searchingStorage: Storage = {
+        async write(): Promise<void> {},
+        read,
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [{ key: 'memory/searching-store/hit.md', score: 1, data: encoder.encode('content from search\n') }]
+        },
+      }
+      const searchingStore = new FileMemoryStore({ name: 'searching-store', storage: searchingStorage })
+
+      const results = await searchingStore.search('anything')
+
+      expect(results).toEqual([{ content: 'content from search', metadata: { path: 'hit.md', score: 1 } }])
+      expect(read).not.toHaveBeenCalled()
+    })
+
+    it('applies maxSearchResults to results from the storage backend', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([
+          { key: 'memory/strategy-store/user-prefers-dark-mode-for-all-editors.md', score: 2 },
+          { key: 'memory/strategy-store/deploy-process-uses-blue-green-strategy.md', score: 1 },
+        ]),
+      }
+      const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
+      const strategyStore = new FileMemoryStore({ name: 'strategy-store', storage: strategyStorage })
+      await strategyStore.add('User prefers dark mode for all editors')
+      await strategyStore.add('Deploy process uses blue-green strategy')
+
+      const results = await strategyStore.search('anything', { maxSearchResults: 1 })
+
+      expect(results.map((result) => result.metadata?.['path'])).toEqual(['user-prefers-dark-mode-for-all-editors.md'])
+    })
+
+    it('prefers the store-level search strategy over the storage backend', async () => {
+      const storageStrategy = { search: vi.fn().mockResolvedValue([]) }
+      const storeStrategy = { search: vi.fn().mockResolvedValue([]) }
+      const strategyStore = new FileMemoryStore({
+        name: 'strategy-store',
+        storage: new InMemoryStorage({ searchStrategy: storageStrategy }),
+        search: storeStrategy,
+      })
+
+      await strategyStore.search('query')
+
+      expect(storeStrategy.search).toHaveBeenCalledTimes(1)
+      expect(storageStrategy.search).not.toHaveBeenCalled()
     })
   })
 
