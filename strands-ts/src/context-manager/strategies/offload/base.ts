@@ -234,6 +234,7 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
  * joins message 0, and the last message is never removed, so a new marker never ends the history.
  */
 export function insertMarker(messages: Message[], index: number, text: string): void {
+  index = Math.max(1, Math.min(index, messages.length))
   const block = new TextBlock(text)
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
@@ -410,7 +411,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
     const marker = this._makeRemovalMarker(removed)
     if (marker) {
-      insertMarker(messages, Math.max(1, Math.min(lowestIndex, messages.length)), marker)
+      insertMarker(messages, lowestIndex, marker)
     }
 
     repairAlternation(messages)

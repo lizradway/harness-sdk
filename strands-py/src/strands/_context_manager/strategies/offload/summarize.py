@@ -109,11 +109,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if removed == 0:
             return False
 
-        _insert_marker(
-            messages,
-            max(1, min(lowest_index, len(messages))),
-            _format_summarized(f"{removed} messages", total_tokens, summary),
-        )
+        _insert_marker(messages, lowest_index, _format_summarized(f"{removed} messages", total_tokens, summary))
 
         _repair_alternation(messages)
         logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)

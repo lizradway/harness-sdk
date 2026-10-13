@@ -78,11 +78,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const totalTokens = await model.countTokens(safe)
     const { lowestIndex } = spliceWithPairs(messages, safe)
-    insertMarker(
-      messages,
-      Math.max(1, Math.min(lowestIndex, messages.length)),
-      formatSummarized(`${safe.length} messages`, totalTokens, summary)
-    )
+    insertMarker(messages, lowestIndex, formatSummarized(`${safe.length} messages`, totalTokens, summary))
 
     repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)

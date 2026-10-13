@@ -825,12 +825,18 @@ describe('insertMarker', () => {
   })
 
   it('appends to the assistant message before the gap', () => {
-    const original = new Message({ role: 'assistant', content: [new TextBlock('a1')], trackingId: 'msg-1' })
+    const original = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a1')],
+      trackingId: 'msg-1',
+      metadata: { custom: { k: 'v' } },
+    })
     const messages = [text('user', 'task'), original, text('user', 'u1')]
     insertMarker(messages, 2, 'marker')
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
     expect(messages[1]!.trackingId).toBe('msg-1')
+    expect(messages[1]!.metadata).toEqual({ custom: { k: 'v' } })
     expect(original.content).toEqual([new TextBlock('a1')])
   })
 
@@ -839,6 +845,15 @@ describe('insertMarker', () => {
     insertMarker(messages, 1, 'marker')
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+  })
+
+  it.each([
+    [0, ['task', 'marker', 'u1']],
+    [5, ['task', 'u1', 'marker']],
+  ])('clamps index %i into the history after message 0', (index, expected) => {
+    const messages = [text('user', 'task'), text('user', 'u1')]
+    insertMarker(messages, index, 'marker')
+    expect(messages.map((message) => (message.content[0] as TextBlock).text)).toEqual(expected)
   })
 })
 

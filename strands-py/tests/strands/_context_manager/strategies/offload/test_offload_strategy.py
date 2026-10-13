@@ -1079,10 +1079,12 @@ class TestInsertMarker:
         assert messages == [_text("user", "task"), _text("assistant", "marker"), _text("user", "u1")]
 
     def test_appends_to_assistant_message_before_gap(self):
-        original = _text("assistant", "a1")
+        original: Message = {**_text("assistant", "a1"), "tracking_id": "msg-1", "metadata": {"custom": {"k": "v"}}}
         messages: Messages = [_text("user", "task"), original, _text("user", "u1")]
         _insert_marker(messages, 2, "marker")
         assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
+        assert messages[1]["tracking_id"] == "msg-1"
+        assert messages[1]["metadata"] == {"custom": {"k": "v"}}
         assert original["content"] == [ContentBlock(text="a1")]
         assert len(messages) == 3
 
@@ -1091,6 +1093,15 @@ class TestInsertMarker:
         _insert_marker(messages, 1, "marker")
         assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
         assert len(messages) == 3
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(0, ["task", "marker", "u1"]), (5, ["task", "u1", "marker"])],
+    )
+    def test_clamps_index_into_history_after_message_zero(self, index, expected):
+        messages: Messages = [_text("user", "task"), _text("user", "u1")]
+        _insert_marker(messages, index, "marker")
+        assert [message["content"][0]["text"] for message in messages] == expected
 
 
 class TestRepeatedReductionKeepsMessageZeroVerbatim:

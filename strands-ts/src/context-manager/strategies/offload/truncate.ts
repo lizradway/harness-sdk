@@ -67,7 +67,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     if (removed === 0) return false
 
     const marker = this._makeRemovalMarker(removed)
-    insertMarker(messages, Math.max(1, Math.min(lowestIndex, messages.length)), marker)
+    insertMarker(messages, lowestIndex, marker)
 
     repairAlternation(messages)
     return true

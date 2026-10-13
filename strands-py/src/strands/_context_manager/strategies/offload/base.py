@@ -224,6 +224,7 @@ def _insert_marker(messages: Messages, index: int, text: str) -> None:
     tracking id and block indices for stash refs, or becomes its own assistant message. It never
     joins message 0, and the last message is never removed, so a new marker never ends the history.
     """
+    index = max(1, min(index, len(messages)))
     block = ContentBlock(text=text)
     for neighbor in (index - 1, index):
         if 0 < neighbor < len(messages) and messages[neighbor]["role"] == "assistant":
@@ -398,7 +399,7 @@ class BaseOffloadStrategy(ABC):
 
         marker = self._make_removal_marker(removed)
         if marker:
-            _insert_marker(messages, max(1, min(lowest_index, len(messages))), marker)
+            _insert_marker(messages, lowest_index, marker)
 
         _repair_alternation(messages)
         return True
