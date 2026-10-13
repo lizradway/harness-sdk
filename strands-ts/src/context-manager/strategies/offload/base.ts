@@ -175,7 +175,7 @@ export function getOldestMatches(
 export function collectRemovableWithPair(messages: Message[], index: number): Message[] {
   const message = messages[index]
   if (!message) return []
-  if (index === 0) return []
+  if (index === 0 || index === messages.length - 1) return []
 
   const result: Message[] = [message]
 
@@ -189,14 +189,15 @@ export function collectRemovableWithPair(messages: Message[], index: number): Me
   }
 
   const hasToolUse = message.content.some((block) => block instanceof ToolUseBlock)
-  if (hasToolUse && index < messages.length - 1) {
+  if (hasToolUse) {
     const next = messages[index + 1]
     if (next && next.content.some((block) => block instanceof ToolResultBlock)) {
-      result.push(next)
+      if (index + 1 < messages.length - 1) result.push(next)
+      else return []
     }
   }
 
-  return result.includes(messages.at(-1)!) ? [] : result
+  return result
 }
 
 /**

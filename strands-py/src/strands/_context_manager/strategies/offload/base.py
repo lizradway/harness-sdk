@@ -168,7 +168,7 @@ def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message
 
     Never collects message 0 or the last message, which the next model call responds to.
     """
-    if index <= 0 or index >= len(messages):
+    if index <= 0 or index >= len(messages) - 1:
         return []
 
     message = messages[index]
@@ -184,12 +184,15 @@ def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message
                 return []
 
     has_tool_use = any(is_tool_use_block(b) for b in message["content"])
-    if has_tool_use and index < len(messages) - 1:
+    if has_tool_use:
         next_msg = messages[index + 1]
         if any(is_tool_result_block(b) for b in next_msg["content"]):
-            result.append(next_msg)
+            if index + 1 < len(messages) - 1:
+                result.append(next_msg)
+            else:
+                return []
 
-    return [] if any(msg is messages[-1] for msg in result) else result
+    return result
 
 
 def _splice_with_pairs(messages: Messages, to_remove: list[Message]) -> tuple[int, int]:
