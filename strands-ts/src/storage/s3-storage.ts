@@ -4,6 +4,7 @@ import type { Storage, StorageSearchResult } from './storage.js'
 import { StorageError } from '../errors.js'
 import { namespace, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
+import { S3VectorSearchStrategy } from './search/s3-vector.js'
 
 /** Configuration for {@link S3Storage}. */
 export interface S3StorageConfig {
@@ -13,7 +14,11 @@ export interface S3StorageConfig {
   region?: string
   /** Pre-configured S3 client. Cannot be combined with `region`. */
   s3Client?: import('@aws-sdk/client-s3').S3Client
-  /** Optional search strategy. When set, `write()` indexes entries and `search()` delegates to the strategy. */
+  /**
+   * Optional search strategy. When set, `write()` indexes entries and `search()` delegates
+   * to the strategy. Defaults to keyword search. Use {@link S3VectorSearchStrategy} for
+   * natural-language search via S3 Vectors; `delete()` then removes the matching vector.
+   */
   searchStrategy?: SearchStrategy<S3Storage>
 }
 
@@ -29,8 +34,12 @@ const S3_PAGE_SIZE = 1000
  * @example
  * ```typescript
  * import { S3Storage } from '@strands-agents/sdk/storage'
+ * import { S3VectorSearchStrategy } from '@strands-agents/sdk/storage/search'
  *
- * const storage = new S3Storage('my-bucket', { prefix: 'agents/' })
+ * const storage = new S3Storage('my-bucket', {
+ *   prefix: 'agents/',
+ *   searchStrategy: new S3VectorSearchStrategy(),
+ * })
  * await storage.write('sessions/abc/snapshot.json', bytes)
  * ```
  */
@@ -43,7 +52,7 @@ export class S3Storage implements Storage {
 
   /**
    * @param bucket - Target S3 bucket name
-   * @param config - Optional prefix, region, or pre-configured client
+   * @param config - Optional prefix, region, pre-configured client, or search configuration
    * @throws {@link StorageError} if both `region` and `s3Client` are provided
    */
   constructor(bucket: string, config?: S3StorageConfig) {
@@ -53,8 +62,18 @@ export class S3Storage implements Storage {
     this._bucket = bucket
     this._prefix = config?.prefix ? config.prefix.split('/').filter(Boolean).join('/') + '/' : ''
     this._region = config?.region
-    this._searchStrategy = config?.searchStrategy
     this._client = config?.s3Client
+    this._searchStrategy = config?.searchStrategy
+  }
+
+  /** The S3 bucket this storage writes to. */
+  get bucket(): string {
+    return this._bucket
+  }
+
+  /** The region override passed in config, or `undefined` when the SDK's resolution chain applies. */
+  get region(): string | undefined {
+    return this._region
   }
 
   /**
@@ -118,6 +137,9 @@ export class S3Storage implements Storage {
     } catch (error: unknown) {
       throw new StorageError(`Failed to delete '${normalized}' from S3 bucket '${this._bucket}'`, { cause: error })
     }
+    if (this._searchStrategy instanceof S3VectorSearchStrategy) {
+      await this._searchStrategy.remove(this, normalized)
+    }
   }
 
   /**
@@ -157,7 +179,8 @@ export class S3Storage implements Storage {
   }
 
   /**
-   * Searches stored content by keyword token-overlap scoring.
+   * Searches stored content using the configured search strategy, or keyword
+   * token-overlap scoring when none is set.
    *
    * @param query - Natural-language search query
    * @returns All matches with relevance scores, ranked best-first

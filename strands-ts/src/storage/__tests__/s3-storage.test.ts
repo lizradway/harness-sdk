@@ -19,6 +19,7 @@ vi.mock('@aws-sdk/client-s3', () => ({
 }))
 
 import { S3Storage } from '../s3-storage.js'
+import { S3VectorSearchStrategy } from '../search/s3-vector.js'
 
 describe('S3Storage', () => {
   beforeEach(() => {
@@ -116,6 +117,71 @@ describe('S3Storage', () => {
       const storage = new S3Storage('my-bucket')
 
       await expect(storage.delete('key')).rejects.toThrow(StorageError)
+    })
+  })
+
+  describe('searchStrategy', () => {
+    it('delegates search to the configured strategy', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'found.md', score: 1 }]),
+      }
+      const storage = new S3Storage('my-bucket', { searchStrategy: mockStrategy })
+
+      const results = await storage.search!('hello')
+
+      expect(mockStrategy.search).toHaveBeenCalledWith(storage, 'hello')
+      expect(results).toEqual([{ key: 'found.md', score: 1 }])
+    })
+
+    it('calls strategy.index on write when present', async () => {
+      mockSend.mockResolvedValue({})
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const storage = new S3Storage('my-bucket', { searchStrategy: mockStrategy })
+      const data = new TextEncoder().encode('content')
+
+      await storage.write('doc.md', data)
+
+      expect(mockStrategy.index).toHaveBeenCalledWith(storage, 'doc.md', data)
+    })
+
+    it('removes the vector on delete when using S3VectorSearchStrategy', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = new S3VectorSearchStrategy({
+        embedder: vi.fn(),
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
+      const remove = vi.spyOn(strategy, 'remove').mockResolvedValue(undefined)
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      await storage.delete('/doc.md')
+
+      expect(remove).toHaveBeenCalledWith(storage, 'doc.md')
+    })
+
+    it('does not remove the vector when the object delete fails', async () => {
+      mockSend.mockRejectedValue(new Error('InternalError'))
+      const strategy = new S3VectorSearchStrategy({
+        embedder: vi.fn(),
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
+      const remove = vi.spyOn(strategy, 'remove').mockResolvedValue(undefined)
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      await expect(storage.delete('doc.md')).rejects.toThrow(StorageError)
+      expect(remove).not.toHaveBeenCalled()
+    })
+
+    it('exposes bucket and region for strategies to derive defaults from', () => {
+      expect(new S3Storage('my-bucket').bucket).toBe('my-bucket')
+      expect(new S3Storage('my-bucket').region).toBeUndefined()
+      expect(new S3Storage('my-bucket', { region: 'eu-west-1' }).region).toBe('eu-west-1')
     })
   })
 
