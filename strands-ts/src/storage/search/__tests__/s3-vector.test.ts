@@ -211,6 +211,85 @@ describe('S3VectorSearchStrategy', () => {
     })
   })
 
+  describe('prefixes', () => {
+    it('keys vectors by the prefixed object key so prefixed storages do not collide', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+      const tenantA = new S3Storage('b', { prefix: 'tenant-a' })
+
+      await strategy.index(tenantA, 'doc.md', new TextEncoder().encode('hi'))
+      await strategy.remove(tenantA, 'doc.md')
+
+      expect(mockPutVectorsCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ vectors: [{ key: 'tenant-a/doc.md', data: { float32: [0.1, 0.2, 0.3] } }] })
+      )
+      expect(mockDeleteVectorsCommand).toHaveBeenCalledWith(expect.objectContaining({ keys: ['tenant-a/doc.md'] }))
+    })
+
+    it('returns only keys under the storage prefix, with the prefix stripped', async () => {
+      mockSend.mockResolvedValue({
+        vectors: [
+          { key: 'tenant-b/doc.md', distance: 0 },
+          { key: 'tenant-a/doc.md', distance: 0.5 },
+        ],
+      })
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      const results = await strategy.search(new S3Storage('b', { prefix: 'tenant-a/' }), 'q')
+
+      expect(results).toEqual([{ key: 'doc.md', score: 1 / 1.5 }])
+    })
+
+    it('drops results with no key', async () => {
+      mockSend.mockResolvedValue({ vectors: [{ distance: 0.1 }, { key: 'a.md', distance: 0.1 }] })
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      const results = await strategy.search(storage, 'q')
+
+      expect(results).toEqual([{ key: 'a.md', score: 1 / 1.1 }])
+    })
+  })
+
+  describe('non-text values', () => {
+    it.each([
+      ['empty', new Uint8Array()],
+      ['binary', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe])],
+    ])('skips indexing %s values', async (_label, data) => {
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      await strategy.index(storage, 'logo.png', data)
+
+      expect(fakeEmbedder).not.toHaveBeenCalled()
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('failures', () => {
+    it('propagates embedder errors from index without calling PutVectors', async () => {
+      fakeEmbedder.mockRejectedValue(new Error('ThrottlingException'))
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      await expect(strategy.index(storage, 'a.md', new TextEncoder().encode('hi'))).rejects.toThrow(
+        'ThrottlingException'
+      )
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it('propagates PutVectors errors', async () => {
+      mockSend.mockRejectedValue(new Error('NotFoundException'))
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      await expect(strategy.index(storage, 'a.md', new TextEncoder().encode('hi'))).rejects.toThrow('NotFoundException')
+    })
+
+    it('propagates QueryVectors errors', async () => {
+      mockSend.mockRejectedValue(new Error('NotFoundException'))
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+
+      await expect(strategy.search(storage, 'q')).rejects.toThrow('NotFoundException')
+    })
+  })
+
   describe('types', () => {
     it('only attaches to S3Storage', () => {
       const strategy = new S3VectorSearchStrategy()

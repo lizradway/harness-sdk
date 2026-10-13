@@ -43,10 +43,23 @@ describe('bedrockEmbedder', () => {
   it('uses a custom model ID', async () => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
-    const embedder = bedrockEmbedder({ modelId: 'cohere.embed-english-v3' })
+    const embedder = bedrockEmbedder({ modelId: 'amazon.titan-embed-text-v1' })
     await embedder('test')
 
-    expect(MockInvokeModelCommand).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'cohere.embed-english-v3' }))
+    expect(MockInvokeModelCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: 'amazon.titan-embed-text-v1' })
+    )
+  })
+
+  it.each([
+    ['a non-Titan response', { embeddings: [[0.1]] }],
+    ['an error payload', { message: 'Malformed input request' }],
+  ])('throws StorageError on %s', async (_label, body) => {
+    mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify(body)) })
+
+    const embedder = bedrockEmbedder()
+
+    await expect(embedder('test')).rejects.toThrow(StorageError)
   })
 
   it('passes region to the client', async () => {
