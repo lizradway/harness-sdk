@@ -164,6 +164,8 @@ class EmergencyTruncateStrategy(TruncateStrategy):
 
         removable = [msg for index, msg in enumerate(messages) if index > 0]
         remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        # An even count from index 1 leaves an assistant message next to message 0, so nothing merges into it.
+        remove_count += remove_count % 2
         to_remove = removable[:remove_count]
 
         removed, _ = _splice_with_pairs(messages, to_remove)

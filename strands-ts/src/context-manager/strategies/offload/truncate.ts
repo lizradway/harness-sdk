@@ -13,6 +13,7 @@ import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from 
 import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
+  insertMarker,
   spliceWithPairs,
   repairAlternation,
   type OffloadConditions,
@@ -66,8 +67,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     if (removed === 0) return false
 
     const marker = this._makeRemovalMarker(removed)
-    const insertIndex = Math.max(1, Math.min(lowestIndex, messages.length))
-    messages.splice(insertIndex, 0, new Message({ role: 'user', content: [new TextBlock(marker)] }))
+    insertMarker(messages, Math.max(1, Math.min(lowestIndex, messages.length)), marker)
 
     repairAlternation(messages)
     return true

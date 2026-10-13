@@ -164,7 +164,10 @@ def _get_oldest_matches(
 
 
 def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
-    """Collect a message and its tool-use/tool-result pair partner for safe removal."""
+    """Collect a message and its tool-use/tool-result pair partner for safe removal.
+
+    Never collects message 0 or the last message, which the next model call responds to.
+    """
     if index <= 0 or index >= len(messages):
         return []
 
@@ -186,7 +189,7 @@ def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message
         if any(is_tool_result_block(b) for b in next_msg["content"]):
             result.append(next_msg)
 
-    return result
+    return [] if any(msg is messages[-1] for msg in result) else result
 
 
 def _splice_with_pairs(messages: Messages, to_remove: list[Message]) -> tuple[int, int]:
@@ -209,6 +212,23 @@ def _splice_with_pairs(messages: Messages, to_remove: list[Message]) -> tuple[in
         messages.pop(index)
 
     return len(to_splice), min(to_splice)
+
+
+def _insert_marker(messages: Messages, index: int, text: str) -> None:
+    """Add a removal marker as assistant content at the gap left by removed messages.
+
+    The marker is appended to an assistant message beside the gap, which keeps that message's
+    tracking id and block indices for stash refs, or becomes its own assistant message. It never
+    joins message 0, and the last message is never removed, so a new marker never ends the history.
+    """
+    block = ContentBlock(text=text)
+    for neighbor in (index - 1, index):
+        if 0 < neighbor < len(messages) and messages[neighbor]["role"] == "assistant":
+            carrier = messages[neighbor].copy()
+            carrier["content"] = [*carrier["content"], block]
+            messages[neighbor] = carrier
+            return
+    messages.insert(index, Message(role="assistant", content=[block]))
 
 
 def _repair_alternation(messages: Messages) -> None:
@@ -375,8 +395,7 @@ class BaseOffloadStrategy(ABC):
 
         marker = self._make_removal_marker(removed)
         if marker:
-            insert_index = max(1, min(lowest_index, len(messages)))
-            messages.insert(insert_index, Message(role="user", content=[ContentBlock(text=marker)]))
+            _insert_marker(messages, max(1, min(lowest_index, len(messages))), marker)
 
         _repair_alternation(messages)
         return True
