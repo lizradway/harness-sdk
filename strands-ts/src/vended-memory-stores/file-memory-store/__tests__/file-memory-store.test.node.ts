@@ -286,9 +286,7 @@ describe('FileMemoryStore', () => {
 
     it('delegates to a search strategy configured on the storage backend', async () => {
       const strategy = {
-        search: vi
-          .fn()
-          .mockResolvedValue([{ key: 'memory/strategy-store/user-prefers-dark-mode-for-all-editors.md', score: 0.9 }]),
+        search: vi.fn().mockResolvedValue([{ key: 'user-prefers-dark-mode-for-all-editors.md', score: 0.9 }]),
       }
       const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
       const strategyStore = new FileMemoryStore({ name: 'strategy-store', storage: strategyStorage })
@@ -296,7 +294,11 @@ describe('FileMemoryStore', () => {
 
       const results = await strategyStore.search('editor theme')
 
-      expect(strategy.search).toHaveBeenCalledWith(strategyStorage, 'editor theme')
+      // The strategy receives the store's scoped storage, which only holds this store's entries.
+      const [scoped] = strategy.search.mock.calls[0]!
+      expect(scoped).toBeInstanceOf(InMemoryStorage)
+      expect(await (scoped as InMemoryStorage).list('')).toEqual(['user-prefers-dark-mode-for-all-editors.md'])
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'editor theme')
       expect(results).toEqual([
         {
           content: 'User prefers dark mode for all editors',
@@ -329,8 +331,8 @@ describe('FileMemoryStore', () => {
     it('applies maxSearchResults to results from the storage backend', async () => {
       const strategy = {
         search: vi.fn().mockResolvedValue([
-          { key: 'memory/strategy-store/user-prefers-dark-mode-for-all-editors.md', score: 2 },
-          { key: 'memory/strategy-store/deploy-process-uses-blue-green-strategy.md', score: 1 },
+          { key: 'user-prefers-dark-mode-for-all-editors.md', score: 2 },
+          { key: 'deploy-process-uses-blue-green-strategy.md', score: 1 },
         ]),
       }
       const strategyStorage = new InMemoryStorage({ searchStrategy: strategy })
