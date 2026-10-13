@@ -562,8 +562,8 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
 
     const removable = messages.filter((_, index) => index > 0)
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
-    // An even count from index 1 leaves an assistant message next to message 0, so nothing merges into it.
-    removeCount += removeCount % 2
+    // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+    if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const toRemove = removable.slice(0, removeCount)
 
     const { removed } = spliceWithPairs(messages, toRemove)
