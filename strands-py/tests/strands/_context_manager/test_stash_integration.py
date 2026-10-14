@@ -1,6 +1,5 @@
 """Integration tests for stash + offload strategies."""
 
-import json
 import re
 import unittest.mock
 
@@ -346,5 +345,4 @@ class TestStashRefRoundTrip:
         tool = _create_retrieval_tool(stash, max_result_tokens=100_000)
         retrieval_result = await tool._tool_func({"toolUseId": "t-ret", "input": {"reference": ref}})
         assert retrieval_result["status"] == "success"
-        parsed = json.loads(retrieval_result["content"][0]["text"])
-        assert parsed["text"] == original_text
+        assert retrieval_result["content"][0]["text"] == f"[Lines 1-1 of 1]\n\n  1| {original_text}"

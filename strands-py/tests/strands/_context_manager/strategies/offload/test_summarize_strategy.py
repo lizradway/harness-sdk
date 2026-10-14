@@ -4,8 +4,10 @@ import unittest.mock
 
 import pytest
 
+from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.types import ContextState
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult
 
@@ -187,6 +189,25 @@ class TestSummarizeStrategyMessageLevel:
         assert await strategy.apply(context) is True
         all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
         assert "[Summarized:" in all_text
+        assert "[stashed: search by query]" not in all_text
+
+    @pytest.mark.asyncio
+    async def test_summary_points_to_query_search_when_stashed(self, mock_agent):
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        stash = Stash(InMemoryStorage(), "session", "agent")
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, stash=stash)
+        assert await strategy.apply(context) is True
+        summaries = [block["text"] for msg in messages for block in msg["content"] if "[Summarized:" in block["text"]]
+        assert summaries == [
+            "[Summarized: 3 messages, ~5,000 tokens]\n\nSummary of content. [stashed: search by query]"
+        ]
 
     @pytest.mark.asyncio
     async def test_inserts_summary_and_removes_originals(self, mock_agent):

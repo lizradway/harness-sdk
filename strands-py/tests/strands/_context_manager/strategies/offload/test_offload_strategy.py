@@ -4,6 +4,7 @@ import unittest.mock
 
 import pytest
 
+from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.base import (
     _build_tool_name_map,
@@ -21,6 +22,7 @@ from strands._context_manager.strategies.offload.truncate import EmergencyTrunca
 from strands._context_manager.types import ContextState
 from strands.hooks.events import MessageAddedEvent
 from strands.hooks.registry import HookRegistry
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
 
@@ -551,6 +553,23 @@ class TestMessageLevelDrop:
         await strategy.apply(context)
         all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
         assert "[Dropped:" in all_text
+        assert "[stashed: search by query]" not in all_text
+
+    @pytest.mark.asyncio
+    async def test_marker_points_to_query_search_when_stashed(self, mock_agent):
+        strategy = Offload.drop("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        stash = Stash(InMemoryStorage(), "session", "agent")
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, stash=stash)
+        await strategy.apply(context)
+        markers = [block["text"] for msg in messages for block in msg["content"] if "[Dropped:" in block["text"]]
+        assert markers == ["[Dropped: 3 messages] [stashed: search by query]"]
 
     @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
@@ -907,6 +926,22 @@ class TestTruncateStrategyPerMessage:
         await strategy.apply(context)
         all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
         assert "messages elided" in all_text
+
+    @pytest.mark.asyncio
+    async def test_marker_points_to_query_search_when_stashed(self, mock_agent):
+        strategy = Offload.truncate("*").when(utilization=0.8, preserve_recent=2)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+        ]
+        mock_agent.messages = messages
+        stash = Stash(InMemoryStorage(), "session", "agent")
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, stash=stash)
+        await strategy.apply(context)
+        all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
+        assert "[... 1 message elided ...] [stashed: search by query]" in all_text
 
 
 class TestOverflowBypass:

@@ -7,6 +7,7 @@ import pytest
 
 from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs
 from strands.storage.in_memory_storage import InMemoryStorage
+from strands.storage.storage import StorageSearchResult
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolResult
 
@@ -83,6 +84,48 @@ class TestListAndDelete:
         await stash.delete(ref)
         result = await stash.retrieve(ref)
         assert result is None
+
+
+class TestSearch:
+    """Tests for relevance search over stashed entries."""
+
+    @pytest.mark.asyncio
+    async def test_returns_decoded_entries_best_first(self, stash):
+        await stash.store("weak", 0, json.dumps({"text": "timeout"}).encode("utf-8"))
+        await stash.store("strong", 0, json.dumps({"text": "database timeout"}).encode("utf-8"))
+        await stash.store("miss", 0, json.dumps({"text": "unrelated"}).encode("utf-8"))
+        assert await stash.search("database timeout", limit=5) == [
+            ("strong_0", {"text": "database timeout"}),
+            ("weak_0", {"text": "timeout"}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_stops_at_limit(self, stash):
+        for index in range(4):
+            await stash.store(f"tool-{index}", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        assert len(await stash.search("shared", limit=2)) == 2
+
+    @pytest.mark.asyncio
+    async def test_scopes_results_to_its_namespace(self, storage):
+        own = Stash(storage, "session", "agent-a")
+        other = Stash(storage, "session", "agent-b")
+        await own.store("mine", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        await other.store("theirs", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        assert await own.search("shared", limit=5) == [("mine_0", {"text": "shared"})]
+
+    @pytest.mark.asyncio
+    async def test_reads_entry_when_backend_omits_data(self):
+        storage = unittest.mock.AsyncMock()
+        storage.search.return_value = [StorageSearchResult(key="context/session/scopes/agent/agent/ref_0", score=1.0)]
+        storage.read.return_value = json.dumps({"text": "hit"}).encode("utf-8")
+        view = Stash(storage, "session", "agent")
+        assert await view.search("hit", limit=5) == [("ref_0", {"text": "hit"})]
+
+    @pytest.mark.asyncio
+    async def test_skips_undecodable_entries(self, stash):
+        await stash._storage.write("garbage", b"not json shared")
+        await stash.store("good", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+        assert await stash.search("shared", limit=5) == [("good_0", {"text": "shared"})]
 
 
 class TestRefsFor:

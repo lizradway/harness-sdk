@@ -14,7 +14,7 @@ from ...methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
-from ...stash import _format_stash_refs
+from ...stash import STASH_SEARCH_HINT, _format_stash_refs
 from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
@@ -108,10 +108,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if removed == 0:
             return False
 
-        summary_message = Message(
-            role="user",
-            content=[ContentBlock(text=_format_summarized(f"{removed} messages", total_tokens, summary))],
-        )
+        marker = _format_summarized(f"{removed} messages", total_tokens, summary)
+        if self._stash:
+            marker += STASH_SEARCH_HINT
+        summary_message = Message(role="user", content=[ContentBlock(text=marker)])
         insert_index = max(1, min(lowest_index, len(messages)))
         messages.insert(insert_index, summary_message)
 

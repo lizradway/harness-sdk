@@ -13,7 +13,7 @@ from ....agent.conversation_manager.compression.pin_message import _has_pinned_f
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
-from ...stash import Stash
+from ...stash import STASH_SEARCH_HINT, Stash
 from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
@@ -375,6 +375,8 @@ class BaseOffloadStrategy(ABC):
 
         marker = self._make_removal_marker(removed)
         if marker:
+            if self._stash:
+                marker += STASH_SEARCH_HINT
             insert_index = max(1, min(lowest_index, len(messages)))
             messages.insert(insert_index, Message(role="user", content=[ContentBlock(text=marker)]))
 

@@ -7,6 +7,7 @@ so the agent can retrieve it on demand via the retrieval tool.
 from __future__ import annotations
 
 import base64
+import builtins
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STASH_PREFIX = "context"
+
+# Appended to markers for removed messages, which carry no per-block refs.
+STASH_SEARCH_HINT = " [stashed: search by query]"
 
 
 class _BytesEncoder(json.JSONEncoder):
@@ -136,6 +140,29 @@ class Stash:
         if data is None:
             return None
         return _decode(data)
+
+    async def search(self, query: str, *, limit: int) -> builtins.list[tuple[str, object]]:
+        """Search stashed entries by relevance, ranked by the storage backend's search strategy.
+
+        Args:
+            query: Natural-language or keyword query.
+            limit: Maximum number of entries to return.
+
+        Returns:
+            ``(reference, entry)`` pairs, best match first. Entries that fail to decode are skipped.
+        """
+        matches: builtins.list[tuple[str, object]] = []
+        for result in await self._storage.search(query):
+            if len(matches) >= limit:
+                break
+            try:
+                entry = _decode(result.data) if result.data is not None else await self.retrieve(result.key)
+            except ValueError:
+                logger.debug("reference=<%s> | skipping undecodable search result", result.key)
+                continue
+            if entry is not None:
+                matches.append((result.key, entry))
+        return matches
 
     async def list(self) -> list[str]:
         """List all stashed reference keys."""
