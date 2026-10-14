@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import logging
 import re
 from typing import Any, Literal
 
+from ...types.exceptions import StorageError
 from ..storage import Storage, StorageSearchResult
+
+logger = logging.getLogger(__name__)
 
 
 def tokenize(text: str) -> set[str]:
@@ -80,7 +84,7 @@ class KeywordSearchStrategy:
             return []
 
         all_keys = await storage.list("")
-        all_data = await asyncio.gather(*(storage.read(key) for key in all_keys))
+        all_data = await asyncio.gather(*(_read_or_skip(storage, key) for key in all_keys))
 
         scored: builtins.list[StorageSearchResult] = []
         for key, data in zip(all_keys, all_data, strict=True):
@@ -93,3 +97,12 @@ class KeywordSearchStrategy:
 
         scored.sort(key=lambda result: result.score, reverse=True)
         return scored
+
+
+async def _read_or_skip(storage: Storage, key: str) -> bytes | None:
+    """Read ``key``, returning ``None`` when the read fails so one bad entry cannot fail a search."""
+    try:
+        return await storage.read(key)
+    except StorageError as error:
+        logger.debug("key=<%s>, error=<%s> | skipped unreadable entry", key, error)
+        return None

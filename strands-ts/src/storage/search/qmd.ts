@@ -32,7 +32,7 @@ export interface QmdSearchStrategyConfig {
  * import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
  *
  * const strategy = new QmdSearchStrategy()
- * const storage = new LocalFileStorage('./memory/', { searchStrategy: strategy })
+ * const storage = new LocalFileStorage('./.strands/', { searchStrategy: strategy })
  * const store = new FileMemoryStore({ name: 'agent-memory', storage })
  *
  * const results = await store.search('authentication flow')

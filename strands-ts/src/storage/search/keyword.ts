@@ -1,3 +1,4 @@
+import { logger } from '../../logging/logger.js'
 import type { Storage, StorageSearchResult } from '../storage.js'
 import type { SearchStrategy } from './types.js'
 
@@ -151,7 +152,8 @@ export const STOP_WORDS = new Set([
  * Tokenizes the query and each stored entry (key + content), then scores by the
  * number of distinct query tokens that appear. Works on any storage backend with
  * `list()` and `read()` — no index or embedding model required. Each result includes
- * the bytes read during the scan, so callers do not need to read hits again.
+ * the bytes read during the scan, so callers do not need to read hits again. Entries
+ * whose `read()` throws are skipped and logged at debug level.
  *
  * This is the default search strategy for all shipped storage backends.
  *
@@ -170,7 +172,14 @@ export const KeywordSearchStrategy: SearchStrategy = {
     const allKeys = await storage.list('')
     const scored: StorageSearchResult[] = []
     for (const key of allKeys) {
-      const bytes = await storage.read(key)
+      let bytes: Uint8Array | null
+      try {
+        bytes = await storage.read(key)
+      } catch (error) {
+        // One unreadable entry (e.g. a permissions error) must not fail the whole search.
+        logger.debug(`key=<${key}>, error=<${error}> | skipped unreadable entry`)
+        continue
+      }
       if (!bytes) continue
       const content = new TextDecoder().decode(bytes)
       const score = tokenOverlapScore(queryTokens, `${key} ${content}`)

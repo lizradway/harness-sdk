@@ -37,7 +37,8 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
    *
    * @deprecated Set the strategy on the storage backend instead, e.g.
    *   `storage: new LocalFileStorage('./.strands/', { searchStrategy: new QmdSearchStrategy() })`.
-   *   The backend then indexes each write and `search()` delegates to it.
+   *   `search()` then delegates to the backend, which also indexes each write when the strategy
+   *   implements `index()`.
    */
   search?: SearchStrategy
 }
@@ -177,7 +178,7 @@ export class FileMemoryStore implements MemoryStore {
     this._storage = this._resolveStorage(config.storage ?? new LocalFileStorage())
     if (config.search) {
       logger.warn(
-        `store=<${config.name}> | search option is deprecated and will be removed in a future version | ` +
+        `store=<${config.name}> | search option is deprecated and will be removed in a future version, ` +
           'set the search strategy on the storage backend instead'
       )
     }
@@ -215,22 +216,33 @@ export class FileMemoryStore implements MemoryStore {
     const maxResults = options?.maxSearchResults ?? this.maxSearchResults ?? DEFAULT_MAX_SEARCH_RESULTS
 
     if (this._searchStrategy) {
+      logger.debug(`store=<${this.name}>, path=<strategy> | resolved search`)
       const results = await this._searchStrategy.search(this._storage, query)
       return this._hydrateResults(results.slice(0, maxResults))
     }
 
     if (this._storage.search) {
+      logger.debug(`store=<${this.name}>, path=<backend> | resolved search`)
       const results = await this._storage.search(query)
       return this._hydrateResults(results.slice(0, maxResults))
     }
 
+    logger.debug(`store=<${this.name}>, path=<keyword> | resolved search`)
     return this._keywordSearch(query, maxResults)
   }
 
   private async _hydrateResults(results: StorageSearchResult[]): Promise<MemoryEntry[]> {
     const entries: MemoryEntry[] = []
     for (const result of results) {
-      const bytes = result.data ?? (await this._storage.read(result.key))
+      let bytes: Uint8Array | null | undefined = result.data
+      if (!bytes) {
+        try {
+          bytes = await this._storage.read(result.key)
+        } catch (error) {
+          logger.debug(`key=<${result.key}> | skipped unreadable memory entry: ${error}`)
+          continue
+        }
+      }
       if (bytes) {
         entries.push({
           content: decoder.decode(bytes).trim(),

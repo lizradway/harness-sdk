@@ -4,6 +4,7 @@ import pytest
 
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.storage.search.keyword import KeywordSearchStrategy, token_overlap_score, tokenize
+from strands.types.exceptions import StorageError
 
 
 class TestTokenize:
@@ -129,3 +130,19 @@ class TestKeywordSearch:
     @pytest.mark.asyncio
     async def test_index_is_noop(self, storage):
         await KeywordSearchStrategy().index(storage, "key", b"data")
+
+    @pytest.mark.asyncio
+    async def test_skips_entries_whose_read_fails(self, storage):
+        await storage.write("good.md", b"dark mode")
+        await storage.write("locked.md", b"dark mode")
+        original_read = storage.read
+
+        async def failing_read(key):
+            if key == "locked.md":
+                raise StorageError("Failed to read 'locked.md'")
+            return await original_read(key)
+
+        storage.read = failing_read
+
+        results = await KeywordSearchStrategy().search(storage, "dark mode")
+        assert [result.key for result in results] == ["good.md"]

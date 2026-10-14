@@ -200,6 +200,8 @@ export class S3Storage implements Storage {
       this._searchStrategy !== undefined ? { searchStrategy: this._searchStrategy } : undefined
     )
     scoped._prefix = normalized ? `${this._prefix}${normalized}/` : this._prefix
+    // The client always comes from _root; _region is copied only so the scoped instance
+    // describes the same bucket and region as its parent.
     scoped._region = this._region
     scoped._root = this._root ?? this
     Object.defineProperty(scoped, NAMESPACED, { value: true })

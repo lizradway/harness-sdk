@@ -33,7 +33,10 @@ describe('FileMemoryStore', () => {
       const deprecatedStore = new FileMemoryStore({ name: 'deprecated', storage, search })
 
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0]![0]).toContain('deprecated')
+      expect(warnSpy.mock.calls[0]![0]).toBe(
+        'store=<deprecated> | search option is deprecated and will be removed in a future version, ' +
+          'set the search strategy on the storage backend instead'
+      )
       const results = await deprecatedStore.search('anything')
       expect(search.search).toHaveBeenCalledTimes(1)
       expect(results.map((entry) => entry.content)).toEqual(['custom result'])
@@ -305,6 +308,57 @@ describe('FileMemoryStore', () => {
           metadata: { path: 'user-prefers-dark-mode-for-all-editors.md', score: 0.9 },
         },
       ])
+    })
+
+    it('skips an unreadable entry instead of failing the search', async () => {
+      await store.add('Locked note about dark mode')
+      const originalRead = InMemoryStorage.prototype.read
+      const read = vi.spyOn(InMemoryStorage.prototype, 'read').mockImplementation(async function (
+        this: InMemoryStorage,
+        key: string
+      ) {
+        if (key.startsWith('locked-')) throw new Error(`Failed to read '${key}' from local storage`)
+        return originalRead.call(this, key)
+      })
+
+      const results = await store.search('dark mode')
+
+      expect(results.map((result) => result.content)).toStrictEqual(['User prefers dark mode for all editors'])
+      read.mockRestore()
+    })
+
+    it('skips a result whose read fails when the backend returns keys without data', async () => {
+      const keysOnlyStorage: Storage = {
+        async write(): Promise<void> {},
+        async read(key: string): Promise<Uint8Array | null> {
+          if (key.endsWith('locked.md')) throw new Error(`Failed to read '${key}'`)
+          return encoder.encode('good entry\n')
+        },
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [
+            { key: 'memory/keys-only/locked.md', score: 2 },
+            { key: 'memory/keys-only/good.md', score: 1 },
+          ]
+        },
+      }
+      const keysOnlyStore = new FileMemoryStore({ name: 'keys-only', storage: keysOnlyStorage })
+
+      const results = await keysOnlyStore.search('anything')
+
+      expect(results).toStrictEqual([{ content: 'good entry', metadata: { path: 'good.md', score: 1 } }])
+    })
+
+    it('logs which search path it resolved', async () => {
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+      await store.search('dark mode')
+
+      expect(debug).toHaveBeenCalledWith('store=<test-store>, path=<backend> | resolved search')
+      debug.mockRestore()
     })
 
     it('reads each entry once with the default keyword search', async () => {

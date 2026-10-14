@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { KeywordSearchStrategy } from '../keyword.js'
 import { InMemoryStorage } from '../../in-memory-storage.js'
 
@@ -23,6 +23,21 @@ describe('KeywordSearchStrategy', () => {
     const results = await KeywordSearchStrategy.search(storage, 'dark mode')
 
     expect(results).toStrictEqual([{ key: 'notes/dark-mode.md', score: 2, data }])
+  })
+
+  it('skips entries whose read throws', async () => {
+    const storage = new InMemoryStorage()
+    await storage.write('good.md', new TextEncoder().encode('dark mode'))
+    await storage.write('locked.md', new TextEncoder().encode('dark mode'))
+    const originalRead = storage.read.bind(storage)
+    vi.spyOn(storage, 'read').mockImplementation(async (key: string) => {
+      if (key === 'locked.md') throw new Error("Failed to read 'locked.md' from local storage")
+      return originalRead(key)
+    })
+
+    const results = await KeywordSearchStrategy.search(storage, 'dark mode')
+
+    expect(results.map((result) => result.key)).toStrictEqual(['good.md'])
   })
 
   it('returns empty array for empty query', async () => {

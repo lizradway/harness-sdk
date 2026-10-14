@@ -229,6 +229,8 @@ class S3Storage:
             An ``S3Storage`` scoped to the prefix.
         """
         normalized = _normalize_prefix(prefix).rstrip("/")
+        # The client always comes from _root; the client settings are passed only so the
+        # scoped instance describes the same bucket and region as its parent.
         scoped = S3Storage(
             self._bucket,
             region_name=self._region_name,
