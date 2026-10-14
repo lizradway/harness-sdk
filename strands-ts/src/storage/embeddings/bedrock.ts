@@ -1,3 +1,9 @@
+/**
+ * Amazon Bedrock embedder for vector search strategies.
+ *
+ * @packageDocumentation
+ */
+
 import type { Embedder } from '../search/types.js'
 
 import { StorageError } from '../../errors.js'
@@ -25,7 +31,7 @@ export interface BedrockEmbedderConfig {
  *
  * @example
  * ```typescript
- * import { bedrockEmbedder } from '@strands-agents/sdk/storage/embeddings'
+ * import { bedrockEmbedder } from '@strands-agents/sdk/storage/embeddings/bedrock'
  * import { S3VectorSearchStrategy } from '@strands-agents/sdk/storage/search'
  * import { S3Storage } from '@strands-agents/sdk/storage'
  *

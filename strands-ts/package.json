@@ -180,9 +180,9 @@
       "types": "./dist/src/storage/search/index.d.ts",
       "default": "./dist/src/storage/search/index.js"
     },
-    "./storage/embeddings": {
-      "types": "./dist/src/storage/embeddings/index.d.ts",
-      "default": "./dist/src/storage/embeddings/index.js"
+    "./storage/embeddings/bedrock": {
+      "types": "./dist/src/storage/embeddings/bedrock.d.ts",
+      "default": "./dist/src/storage/embeddings/bedrock.js"
     },
     "./storage/search/qmd": {
       "node": {
