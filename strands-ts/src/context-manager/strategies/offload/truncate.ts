@@ -11,11 +11,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy } from '../../types.js'
 import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
 import { formatStashRefs } from '../../stash.js'
-import {
-  BaseOffloadStrategy,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+import { BaseOffloadStrategy, type OffloadConditions, type OffloadTarget } from './base.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:truncate'

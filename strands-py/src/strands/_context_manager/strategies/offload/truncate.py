@@ -15,6 +15,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_conditions,
+    _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
 )
@@ -82,7 +83,7 @@ class TruncateStrategy(BaseOffloadStrategy):
             _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
         )
 
-    def _make_removal_marker(self, count: int) -> str | None:
+    def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"
         return f"[... {count} {word} elided ...]"
 
@@ -162,9 +163,10 @@ class EmergencyTruncateStrategy(TruncateStrategy):
             remove_count += 1
         to_remove = removable[:remove_count]
 
-        removed, _ = _splice_with_pairs(messages, to_remove)
+        removed, lowest_index = _splice_with_pairs(messages, to_remove)
         if removed == 0:
             return False
 
+        _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
         _repair_alternation(messages)
         return True

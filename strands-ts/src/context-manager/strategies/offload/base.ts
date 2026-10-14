@@ -567,11 +567,16 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const toRemove = removable.slice(0, removeCount)
 
-    const { removed } = spliceWithPairs(messages, toRemove)
+    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
     if (removed === 0) return false
 
+    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
     repairAlternation(messages)
     return true
+  }
+
+  protected override _makeRemovalMarker(count: number): string {
+    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

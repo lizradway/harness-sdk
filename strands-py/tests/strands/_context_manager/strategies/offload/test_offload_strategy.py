@@ -642,6 +642,24 @@ class TestEmergencyTruncateStrategy:
         assert len(messages) < 5
 
     @pytest.mark.asyncio
+    async def test_leaves_marker_on_assistant_after_cut(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await strategy.apply(context) is True
+        assert [(m["role"], [b["text"] for b in m["content"]]) for m in messages] == [
+            ("user", ["pin"]),
+            ("assistant", ["a2", "[... 2 messages elided ...]"]),
+            ("user", ["u3"]),
+        ]
+
+    @pytest.mark.asyncio
     async def test_does_not_fire_when_under_one(self, mock_agent):
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=80000)
         mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.8)

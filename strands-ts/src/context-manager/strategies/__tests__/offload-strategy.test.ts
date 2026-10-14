@@ -857,6 +857,26 @@ describe('insertMarker', () => {
   })
 })
 
+describe('EmergencyTruncateStrategy', () => {
+  it('leaves a marker on the assistant message after the cut', async () => {
+    const messages = [
+      text('user', 'pin'),
+      text('assistant', 'a1'),
+      text('user', 'u2'),
+      text('assistant', 'a2'),
+      text('user', 'u3'),
+    ]
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
+    expect(
+      messages.map((message) => [message.role, message.content.map((block) => (block as TextBlock).text)])
+    ).toEqual([
+      ['user', ['pin']],
+      ['assistant', ['a2', '[... 2 messages elided ...]']],
+      ['user', ['u3']],
+    ])
+  })
+})
+
 describe('repeated message-level reduction', () => {
   // Regression tests for https://github.com/strands-agents/harness-sdk/issues/4685
   const strategies = {
