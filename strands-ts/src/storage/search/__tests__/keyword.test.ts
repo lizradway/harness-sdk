@@ -15,6 +15,16 @@ describe('KeywordSearchStrategy', () => {
     expect(results[0]!.score).toBeGreaterThan(0)
   })
 
+  it('returns the stored bytes with each result', async () => {
+    const storage = new InMemoryStorage()
+    const data = new TextEncoder().encode('enable dark mode in settings')
+    await storage.write('notes/dark-mode.md', data)
+
+    const results = await KeywordSearchStrategy.search(storage, 'dark mode')
+
+    expect(results).toStrictEqual([{ key: 'notes/dark-mode.md', score: 2, data }])
+  })
+
   it('returns empty array for empty query', async () => {
     const storage = new InMemoryStorage()
     await storage.write('key', new TextEncoder().encode('content'))

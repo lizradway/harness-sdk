@@ -150,7 +150,8 @@ export const STOP_WORDS = new Set([
  *
  * Tokenizes the query and each stored entry (key + content), then scores by the
  * number of distinct query tokens that appear. Works on any storage backend with
- * `list()` and `read()` — no index or embedding model required.
+ * `list()` and `read()` — no index or embedding model required. Each result includes
+ * the bytes read during the scan, so callers do not need to read hits again.
  *
  * This is the default search strategy for all shipped storage backends.
  *
@@ -173,7 +174,8 @@ export const KeywordSearchStrategy: SearchStrategy = {
       if (!bytes) continue
       const content = new TextDecoder().decode(bytes)
       const score = tokenOverlapScore(queryTokens, `${key} ${content}`)
-      if (score > 0) scored.push({ key, score })
+      // Return the bytes already read so callers (e.g. FileMemoryStore) need not re-read each hit.
+      if (score > 0) scored.push({ key, score, data: bytes })
     }
 
     scored.sort((a, b) => b.score - a.score)

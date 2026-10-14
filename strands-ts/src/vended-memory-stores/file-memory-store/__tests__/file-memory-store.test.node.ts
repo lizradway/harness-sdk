@@ -307,6 +307,17 @@ describe('FileMemoryStore', () => {
       ])
     })
 
+    it('reads each entry once with the default keyword search', async () => {
+      const read = vi.spyOn(InMemoryStorage.prototype, 'read')
+
+      const results = await store.search('dark mode')
+
+      expect(results.map((result) => result.content)).toStrictEqual(['User prefers dark mode for all editors'])
+      // One read per stored entry during the scan; hits reuse the bytes the scan returned.
+      expect(read).toHaveBeenCalledTimes(3)
+      read.mockRestore()
+    })
+
     it("uses data returned by the storage's search without re-reading it", async () => {
       const read = vi.fn().mockResolvedValue(null)
       const searchingStorage: Storage = {

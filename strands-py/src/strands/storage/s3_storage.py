@@ -218,6 +218,10 @@ class S3Storage:
         lists and reads objects under the prefix and scores keys without it,
         rather than scanning the whole bucket.
 
+        The shared search strategy receives the scoped instance and keys relative
+        to the prefix. A strategy that keeps its own index must keep each
+        instance's entries apart; see ``SearchStrategy.index``.
+
         Args:
             prefix: Prefix to prepend to all keys.
 

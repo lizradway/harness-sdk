@@ -138,6 +138,10 @@ class InMemoryStorage:
         sees entries under the prefix and scores keys without it, so a query
         never matches every entry just because it contains a word from the prefix.
 
+        The shared search strategy receives the scoped instance and keys relative
+        to the prefix. A strategy that keeps its own index must keep each
+        instance's entries apart; see ``SearchStrategy.index``.
+
         Args:
             prefix: Prefix to prepend to all keys.
 

@@ -186,6 +186,10 @@ export class S3Storage implements Storage {
    * Unlike a generic prefixed view, the scoped instance's `search()` only lists and reads objects
    * under the prefix and scores keys without it, rather than scanning the whole bucket.
    *
+   * The shared search strategy receives the scoped instance and keys relative to the prefix.
+   * A strategy that keeps its own index must keep each instance's entries apart; see
+   * {@link SearchStrategy.index}.
+   *
    * @param prefix - Prefix to prepend to all keys
    * @returns An `S3Storage` scoped to the prefix
    */
