@@ -8,14 +8,11 @@ import { logger } from '../../../logging/logger.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy, ContextState } from '../../types.js'
+import type { ContextStrategy } from '../../types.js'
 import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
 import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
-  insertMarker,
-  spliceWithPairs,
-  repairAlternation,
   type OffloadConditions,
   type OffloadTarget,
 } from './base.js'
@@ -50,27 +47,6 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
   protected override _makeRemovalMarker(count: number): string {
     return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
-  }
-
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
-
-    const eligible = await this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    const middleMessages = eligible
-
-    if (middleMessages.length === 0) return false
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, middleMessages)
-    if (removed === 0) return false
-
-    const marker = this._makeRemovalMarker(removed)
-    insertMarker(messages, lowestIndex, marker)
-
-    repairAlternation(messages)
-    return true
   }
 
   protected async _replaceBlock(

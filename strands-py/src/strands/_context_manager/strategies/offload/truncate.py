@@ -86,10 +86,6 @@ class TruncateStrategy(BaseOffloadStrategy):
         word = "message" if count == 1 else "messages"
         return f"[... {count} {word} elided ...]"
 
-    async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level truncation: remove eligible messages."""
-        return await super()._apply_per_message(context)
-
     async def _replace_block(
         self,
         block: ContentBlock,
@@ -138,9 +134,6 @@ class EmergencyTruncateStrategy(TruncateStrategy):
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
         """No eager hooks for emergency truncation."""
         self._stash = stash
-
-    def _make_removal_marker(self, count: int) -> str | None:
-        return None
 
     async def apply(self, context: ContextState) -> bool:
         """Fire when overflow is set, or when recomputed utilization >= 1.0."""
