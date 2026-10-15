@@ -5,6 +5,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.methods.summarize import (
+    _SUMMARIZE_INSTRUCTION,
     _flatten_messages_to_content,
     _summarize_content,
     _tool_result_to_content_blocks,
@@ -19,7 +20,7 @@ def mock_model():
     return model
 
 
-def _make_stream_events(text: str):
+def _make_stream_events(text: str, stop_reason: str = "end_turn"):
     """Create async generator of stream events for a text response."""
 
     async def gen(*args, **kwargs):
@@ -27,7 +28,7 @@ def _make_stream_events(text: str):
         yield {"contentBlockStart": {"start": {}}}
         yield {"contentBlockDelta": {"delta": {"text": text}}}
         yield {"contentBlockStop": {}}
-        yield {"messageStop": {"stopReason": "end_turn"}}
+        yield {"messageStop": {"stopReason": stop_reason}}
         yield {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}}
 
     return gen
@@ -91,6 +92,20 @@ class TestFlattenMessagesToContent:
         assert tru_result[0] == ContentBlock(text="\n---\n[user]")
         assert tru_result[1] == ContentBlock(text="result data")
 
+    def test_renders_tool_use_as_text(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[ContentBlock(toolUse={"toolUseId": "t1", "name": "search", "input": {"query": "cats"}})],
+            ),
+        ]
+        tru_result = _flatten_messages_to_content(messages)
+        exp_result = [
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text='[tool call: search {"query": "cats"}]'),
+        ]
+        assert tru_result == exp_result
+
 
 class TestSummarizeContent:
     """Tests for the summarize_content function."""
@@ -110,6 +125,29 @@ class TestSummarizeContent:
 
         tru_result = await _summarize_content(content_blocks, mock_model, {})
         assert tru_result is None or tru_result == ""
+
+    @pytest.mark.asyncio
+    async def test_instruction_follows_content(self, mock_model):
+        mock_model.stream = unittest.mock.Mock(side_effect=_make_stream_events("summary"))
+
+        await _summarize_content([ContentBlock(text="user: what is 2+2?")], mock_model, {})
+
+        request_content = mock_model.stream.call_args.args[0][0]["content"]
+        assert request_content[-2] == ContentBlock(text="</content>")
+        assert request_content[-1] == ContentBlock(text=_SUMMARIZE_INSTRUCTION)
+
+    @pytest.mark.parametrize("stop_reason", ["max_tokens", "content_filtered", "guardrail_intervened"])
+    @pytest.mark.asyncio
+    async def test_rejects_incomplete_response_without_retry(self, mock_model, stop_reason):
+        mock_model.stream = unittest.mock.Mock(side_effect=_make_stream_events("partial", stop_reason))
+        content_blocks = [
+            ContentBlock(text="some text"),
+            ContentBlock(image={"format": "png", "source": {"bytes": b"data"}}),
+        ]
+
+        tru_result = await _summarize_content(content_blocks, mock_model, {})
+        assert tru_result is None
+        assert mock_model.stream.call_count == 1
 
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt(self, mock_model):
