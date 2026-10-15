@@ -3,7 +3,7 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
@@ -36,6 +36,24 @@ function makeOverflowEvent(agent: ReturnType<typeof makeMockAgent>) {
     attemptCount: 1,
     error: new ContextWindowOverflowError('overflow'),
   })
+}
+
+const BINDING_ERROR =
+  'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different ' +
+  'conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block".'
+
+function makeErrorEvent(agent: ReturnType<typeof makeMockAgent>, message: string) {
+  return new AfterModelCallEvent({
+    agent,
+    model: agent.model,
+    invocationState: {},
+    attemptCount: 1,
+    error: new Error(message),
+  })
+}
+
+function reasoning(text: string) {
+  return new ReasoningBlock({ text, signature: 'sig' })
 }
 
 function makeBeforeEvent(agent: ReturnType<typeof makeMockAgent>, projectedInputTokens?: number) {
@@ -325,6 +343,86 @@ describe('ContextManager', () => {
         await invokeTrackedHook(agent, event)
         expect(event.retry).toBe(true)
       }
+    })
+  })
+
+  describe('thinking binding recovery', () => {
+    it('strips reasoning and retries', async () => {
+      const agent = makeMockAgent({
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('hello')] }),
+          new Message({ role: 'assistant', content: [reasoning('plan'), new TextBlock('hi')] }),
+          new Message({ role: 'user', content: [new TextBlock('again')] }),
+          new Message({ role: 'assistant', content: [reasoning('plan more'), new TextBlock('sure')] }),
+        ],
+      })
+      const trackingIds = agent.messages.map((message) => message.trackingId)
+      await new ContextManager().initAgent(agent)
+
+      const event = makeErrorEvent(agent, BINDING_ERROR)
+      await invokeTrackedHook(agent, event)
+
+      expect(event.retry).toBe(true)
+      expect(agent.messages.map((message) => [message.role, message.content])).toEqual([
+        ['user', [new TextBlock('hello')]],
+        ['assistant', [new TextBlock('hi')]],
+        ['user', [new TextBlock('again')]],
+        ['assistant', [new TextBlock('sure')]],
+      ])
+      expect(agent.messages.map((message) => message.trackingId)).toEqual(trackingIds)
+    })
+
+    it('drops reasoning-only messages and repairs alternation', async () => {
+      const agent = makeMockAgent({
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('hello')] }),
+          new Message({ role: 'assistant', content: [reasoning('plan')] }),
+          new Message({ role: 'user', content: [new TextBlock('again')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('sure')] }),
+        ],
+      })
+      await new ContextManager().initAgent(agent)
+
+      const event = makeErrorEvent(agent, BINDING_ERROR)
+      await invokeTrackedHook(agent, event)
+
+      expect(event.retry).toBe(true)
+      expect(agent.messages.map((message) => [message.role, message.content])).toEqual([
+        ['user', [new TextBlock('hello'), new TextBlock('again')]],
+        ['assistant', [new TextBlock('sure')]],
+      ])
+    })
+
+    it('does not retry when no reasoning is left', async () => {
+      const agent = makeMockAgent({
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('hello')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('hi')] }),
+        ],
+      })
+      await new ContextManager().initAgent(agent)
+
+      const event = makeErrorEvent(agent, BINDING_ERROR)
+      await invokeTrackedHook(agent, event)
+
+      expect(event.retry).toBeUndefined()
+    })
+
+    it('keeps reasoning on other errors', async () => {
+      const block = reasoning('plan')
+      const agent = makeMockAgent({
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('hello')] }),
+          new Message({ role: 'assistant', content: [block, new TextBlock('hi')] }),
+        ],
+      })
+      await new ContextManager().initAgent(agent)
+
+      const event = makeErrorEvent(agent, 'Invalid model identifier')
+      await invokeTrackedHook(agent, event)
+
+      expect(event.retry).toBeUndefined()
+      expect(agent.messages[1]!.content[0]).toBe(block)
     })
   })
 

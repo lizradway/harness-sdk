@@ -91,6 +91,19 @@ class TestFlattenMessagesToContent:
         assert tru_result[0] == ContentBlock(text="\n---\n[user]")
         assert tru_result[1] == ContentBlock(text="result data")
 
+    def test_excludes_reasoning(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlock(reasoningContent={"reasoningText": {"text": "plan", "signature": "sig"}}),
+                    ContentBlock(text="hi"),
+                ],
+            ),
+        ]
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[assistant]"), ContentBlock(text="hi")]
+
 
 class TestSummarizeContent:
     """Tests for the summarize_content function."""

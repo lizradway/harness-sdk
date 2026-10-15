@@ -92,14 +92,17 @@ def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[Con
 
 
 def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
-    """Flatten messages into a single ContentBlock list with role markers."""
+    """Flatten messages into a single ContentBlock list with role markers.
+
+    Reasoning blocks are left out: their signatures are bound to the conversation that produced them.
+    """
     blocks: list[ContentBlock] = []
     for message in messages:
         blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
         for block in message["content"]:
             if "toolResult" in block:
                 blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
-            else:
+            elif "reasoningContent" not in block:
                 blocks.append(block)
     return blocks
 

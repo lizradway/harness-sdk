@@ -7,7 +7,7 @@
  */
 
 import type { Model } from '../../models/model.js'
-import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
@@ -87,6 +87,7 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
 /**
  * Flattens a range of messages into a single ContentBlock array for multimodal summarization.
  * Inserts role markers and separators so the summarizer understands message boundaries.
+ * Reasoning blocks are left out: their signatures are bound to the conversation that produced them.
  */
 export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
   const blocks: ContentBlock[] = []
@@ -95,7 +96,7 @@ export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
     for (const block of message.content) {
       if (block instanceof ToolResultBlock) {
         blocks.push(...toolResultToContentBlocks(block.content))
-      } else {
+      } else if (!(block instanceof ReasoningBlock)) {
         blocks.push(block)
       }
     }
