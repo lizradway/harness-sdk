@@ -7,7 +7,6 @@
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
 import type { LocalAgent } from '../types/agent.js'
-import { Message, ReasoningBlock } from '../types/messages.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
@@ -16,7 +15,6 @@ import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
-import { repairAlternation } from './strategies/offload/base.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
@@ -25,7 +23,6 @@ const AUTO_TRUNCATE_THRESHOLD = 1_500
 const AGENTIC_TRUNCATE_THRESHOLD = 8_000
 const TRUNCATE_PREVIEW_TOKENS = 750
 const AUTO_SUMMARIZE_UTILIZATION = 0.85
-const THINKING_BINDING_ERROR = 'bound to a different conversation'
 
 /** @internal */
 export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
@@ -162,16 +159,6 @@ export class ContextManager implements Plugin {
     // Assumes sequential invocations on this agent (no concurrent calls)
     let overflowRetries = 0
     agent.addHook(AfterModelCallEvent, async (event) => {
-      if (isThinkingBindingError(event.error)) {
-        if (stripReasoning(event.agent.messages)) {
-          logger.warn(
-            `agentId=<${event.agent.id}> | history edit invalidated thinking blocks, stripping them and retrying`
-          )
-          event.retry = true
-        }
-        return
-      }
-
       if (!(event.error instanceof ContextWindowOverflowError)) {
         overflowRetries = 0
         return
@@ -247,38 +234,4 @@ export class ContextManager implements Plugin {
     }
     return anyActed
   }
-}
-
-/** Whether the provider rejected a replayed thinking block because history before it changed. */
-function isThinkingBindingError(error: Error | undefined): boolean {
-  return error?.message.includes(THINKING_BINDING_ERROR) ?? false
-}
-
-/**
- * Removes reasoning blocks from assistant messages, dropping any assistant message left empty.
- *
- * @returns true if any reasoning block was removed
- */
-function stripReasoning(messages: Message[]): boolean {
-  let stripped = false
-  let emptied = false
-  for (const [index, message] of messages.entries()) {
-    if (message.role !== 'assistant') continue
-    const kept = message.content.filter((block) => !(block instanceof ReasoningBlock))
-    if (kept.length === message.content.length) continue
-    stripped = true
-    emptied ||= kept.length === 0
-    messages[index] = new Message({
-      role: 'assistant',
-      content: kept,
-      trackingId: message.trackingId,
-      ...(message.metadata ? { metadata: message.metadata } : {}),
-    })
-  }
-  if (emptied) {
-    const nonEmpty = messages.filter((message) => message.content.length > 0 || message.role !== 'assistant')
-    messages.splice(0, messages.length, ...nonEmpty)
-    repairAlternation(messages)
-  }
-  return stripped
 }

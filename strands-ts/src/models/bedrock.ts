@@ -58,6 +58,9 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
+  THINKING_BINDING_BETA,
+  isThinkingBindingError,
+  withDropBlock,
 } from '../models/model.js'
 import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -404,6 +407,7 @@ export interface BedrockModelOptions extends BedrockModelConfig {
 export class BedrockModel extends Model<BedrockModelConfig> {
   private _config: BedrockModelConfig
   private _client: BedrockRuntimeClient
+  private _dropStaleThinkingModelId: string | undefined
 
   /**
    * Clears the cache of model IDs for which CountTokens is skipped.
@@ -706,10 +710,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       const request = this._formatRequest(messages, options)
       if (this._config.stream !== false) {
         // Create and send the command
-        const command = new ConverseStreamCommand(request)
-        const response = options?.cancelSignal
-          ? await this._client.send(command, { abortSignal: options.cancelSignal })
-          : await this._client.send(command)
+        const response = await this._send(request, (input) => {
+          const command = new ConverseStreamCommand(input)
+          return options?.cancelSignal
+            ? this._client.send(command, { abortSignal: options.cancelSignal })
+            : this._client.send(command)
+        })
         // Stream the response
         if (response.stream) {
           let lastStopReason: string | undefined
@@ -751,10 +757,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
         }
       } else {
-        const command = new ConverseCommand(request)
-        const response = options?.cancelSignal
-          ? await this._client.send(command, { abortSignal: options.cancelSignal })
-          : await this._client.send(command)
+        const response = await this._send(request, (input) => {
+          const command = new ConverseCommand(input)
+          return options?.cancelSignal
+            ? this._client.send(command, { abortSignal: options.cancelSignal })
+            : this._client.send(command)
+        })
         for (const event of this._mapBedrockEventToSDKEvent(response)) {
           yield event
         }
@@ -769,6 +777,35 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       // Re-throw other errors as-is
       throw error
+    }
+  }
+
+  /**
+   * Sends the request, retrying once with drop_block when an edit before replayed thinking made it stale.
+   *
+   * The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
+   *
+   * @param request - Formatted Bedrock request
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _send<T>(
+    request: ConverseStreamCommandInput,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    try {
+      return await send(request)
+    } catch (error) {
+      const retryFields = isThinkingBindingError(error)
+        ? withDropBlockFields(request.additionalModelRequestFields)
+        : undefined
+      if (!retryFields) throw error
+
+      logger.warn(
+        `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
+      )
+      this._dropStaleThinkingModelId = request.modelId
+      return send({ ...request, additionalModelRequestFields: retryFields })
     }
   }
 
@@ -915,7 +952,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return fields
+      return this._dropStaleThinkingModelId === this._config.modelId ? (withDropBlockFields(fields) ?? fields) : fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -2083,6 +2120,21 @@ export class BedrockModel extends Model<BedrockModelConfig> {
  * Return the strict-mode copy of a tool's input schema, warning once per tool when it still uses
  * keywords Bedrock's strict mode rejects.
  */
+/**
+ * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
+ *
+ * @param fields - The additional model request fields
+ * @returns The fields with drop_block and its beta, or undefined
+ */
+function withDropBlockFields(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
+  const thinking = withDropBlock(fields.thinking)
+  if (!thinking) return undefined
+  const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
+  const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
+  return { ...fields, anthropic_beta: anthropicBeta, thinking }
+}
+
 function toStrictInputSchema(toolName: string, inputSchema: JSONSchema): JSONSchema {
   const strictSchema = ensureStrictJsonSchema(inputSchema)
   const unsupported = findUnsupportedStrictKeywords(strictSchema)

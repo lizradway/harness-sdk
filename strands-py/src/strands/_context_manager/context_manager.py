@@ -18,7 +18,6 @@ from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload
-from .strategies.offload.base import _repair_alternation
 from .strategies.offload.truncate import EmergencyTruncateStrategy
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
@@ -26,7 +25,6 @@ if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.conversation_manager import ConversationManager
     from ..storage.storage import Storage
-    from ..types.content import Messages
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,6 @@ _AUTO_TRUNCATE_THRESHOLD = 1_500
 _AGENTIC_TRUNCATE_THRESHOLD = 8_000
 _TRUNCATE_PREVIEW_TOKENS = 750
 _AUTO_SUMMARIZE_UTILIZATION = 0.85
-_THINKING_BINDING_ERROR = "bound to a different conversation"
 
 CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
 
@@ -236,15 +233,6 @@ class ContextManager(Plugin):
         async def _on_after_model_call(event: AfterModelCallEvent) -> None:
             nonlocal overflow_retries
 
-            if _is_thinking_binding_error(event.exception):
-                if _strip_reasoning(event.agent.messages):
-                    logger.warning(
-                        "agent_id=<%s> | history edit invalidated thinking blocks, stripping them and retrying",
-                        event.agent.agent_id,
-                    )
-                    event.retry = True
-                return
-
             if not isinstance(event.exception, ContextWindowOverflowException):
                 overflow_retries = 0
                 return
@@ -327,33 +315,3 @@ class ContextManager(Plugin):
                     exc_info=True,
                 )
         return any_acted
-
-
-def _is_thinking_binding_error(exception: Exception | None) -> bool:
-    """Whether the provider rejected a replayed thinking block because history before it changed."""
-    return exception is not None and _THINKING_BINDING_ERROR in str(exception)
-
-
-def _strip_reasoning(messages: Messages) -> bool:
-    """Remove reasoning blocks from assistant messages, dropping any assistant message left empty.
-
-    Returns:
-        True if any reasoning block was removed.
-    """
-    stripped = False
-    emptied = False
-    for index, message in enumerate(messages):
-        if message["role"] != "assistant":
-            continue
-        kept = [block for block in message["content"] if "reasoningContent" not in block]
-        if len(kept) == len(message["content"]):
-            continue
-        stripped = True
-        emptied = emptied or not kept
-        replacement = message.copy()
-        replacement["content"] = kept
-        messages[index] = replacement
-    if emptied:
-        messages[:] = [message for message in messages if message["content"] or message["role"] != "assistant"]
-        _repair_alternation(messages)
-    return stripped
