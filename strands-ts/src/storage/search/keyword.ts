@@ -146,14 +146,23 @@ export const STOP_WORDS = new Set([
   'since',
 ])
 
+/** Entries read concurrently per batch during a keyword scan, to avoid throttling remote backends such as S3. */
+const READ_BATCH_SIZE = 8
+
+/** Strip a key's file extension so it is not scored as a word (e.g. `md` on every `.md` entry). */
+function stripExtension(key: string): string {
+  return key.replace(/(?<=[^/])\.[^./]*$/, '')
+}
+
 /**
  * Keyword search strategy using token-overlap scoring.
  *
- * Tokenizes the query and each stored entry (key + content), then scores by the
- * number of distinct query tokens that appear. Works on any storage backend with
- * `list()` and `read()` — no index or embedding model required. Each result includes
- * the bytes read during the scan, so callers do not need to read hits again. Entries
- * whose `read()` throws are skipped and logged at debug level.
+ * Tokenizes the query and each stored entry (key without its file extension + content),
+ * then scores by the number of distinct query tokens that appear. Stop words in the query
+ * (`the`, `is`, `what`, ...) are ignored. Works on any storage backend with `list()` and
+ * `read()` — no index or embedding model required. Entries are read in small concurrent
+ * batches. Each result includes the bytes read during the scan, so callers do not need to
+ * read hits again. Entries whose `read()` throws are skipped and logged at debug level.
  *
  * This is the default search strategy for all shipped storage backends.
  *
@@ -166,28 +175,35 @@ export const STOP_WORDS = new Set([
  */
 export const KeywordSearchStrategy: SearchStrategy = {
   async search(storage: Storage, query: string): Promise<StorageSearchResult[]> {
-    const queryTokens = tokenize(query)
+    const queryTokens = new Set([...tokenize(query)].filter((token) => !STOP_WORDS.has(token)))
     if (queryTokens.size === 0) return []
 
     const allKeys = await storage.list('')
+    const decoder = new TextDecoder()
     const scored: StorageSearchResult[] = []
-    for (const key of allKeys) {
-      let bytes: Uint8Array | null
-      try {
-        bytes = await storage.read(key)
-      } catch (error) {
-        // One unreadable entry (e.g. a permissions error) must not fail the whole search.
-        logger.debug(`key=<${key}>, error=<${error}> | skipped unreadable entry`)
-        continue
-      }
-      if (!bytes) continue
-      const content = new TextDecoder().decode(bytes)
-      const score = tokenOverlapScore(queryTokens, `${key} ${content}`)
-      // Return the bytes already read so callers (e.g. FileMemoryStore) need not re-read each hit.
-      if (score > 0) scored.push({ key, score, data: bytes })
+    for (let offset = 0; offset < allKeys.length; offset += READ_BATCH_SIZE) {
+      const keys = allKeys.slice(offset, offset + READ_BATCH_SIZE)
+      const batch = await Promise.all(keys.map((key) => readOrSkip(storage, key)))
+      keys.forEach((key, index) => {
+        const bytes = batch[index]
+        if (!bytes) return
+        const score = tokenOverlapScore(queryTokens, `${stripExtension(key)} ${decoder.decode(bytes)}`)
+        // Return the bytes already read so callers (e.g. FileMemoryStore) need not re-read each hit.
+        if (score > 0) scored.push({ key, score, data: bytes })
+      })
     }
 
     scored.sort((a, b) => b.score - a.score)
     return scored
   },
+}
+
+/** Read `key`, returning `null` when the read throws so one unreadable entry (e.g. a permissions error) cannot fail a search. */
+async function readOrSkip(storage: Storage, key: string): Promise<Uint8Array | null> {
+  try {
+    return await storage.read(key)
+  } catch (error) {
+    logger.debug(`key=<${key}>, error=<${error}> | skipped unreadable entry`)
+    return null
+  }
 }

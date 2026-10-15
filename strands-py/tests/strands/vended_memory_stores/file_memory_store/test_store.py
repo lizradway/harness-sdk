@@ -270,6 +270,37 @@ class TestSearch:
         results = await keys_only_store.search("anything")
         assert [result.content for result in results] == ["good entry"]
 
+    @pytest.mark.asyncio
+    async def test_fills_max_search_results_when_a_higher_ranked_read_fails(self):
+        class KeysOnlyStorage:
+            """Custom backend whose search() returns keys without data."""
+
+            async def write(self, key, data):
+                pass
+
+            async def read(self, key):
+                if key.endswith("locked.md"):
+                    raise StorageError(f"Failed to read '{key}'")
+                return f"{key} entry".encode()
+
+            async def delete(self, key):
+                pass
+
+            async def list(self, query=""):
+                return []
+
+            async def search(self, query):
+                return [
+                    StorageSearchResult(key="memory/fill/locked.md", score=3),
+                    StorageSearchResult(key="memory/fill/a.md", score=2),
+                    StorageSearchResult(key="memory/fill/b.md", score=1),
+                    StorageSearchResult(key="memory/fill/c.md", score=0.5),
+                ]
+
+        fill_store = FileMemoryStore(name="fill", storage=KeysOnlyStorage(), max_search_results=2)
+        results = await fill_store.search("anything")
+        assert [result.metadata["score"] for result in results] == [2, 1]
+
 
 class TestExtraction:
     @pytest.mark.asyncio

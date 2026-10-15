@@ -43,6 +43,17 @@ describe('FileMemoryStore', () => {
       warnSpy.mockRestore()
     })
 
+    it('warns about the deprecated search option once per store name', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const search = { search: vi.fn().mockResolvedValue([]) }
+
+      new FileMemoryStore({ name: 'deprecated-repeat', storage, search })
+      new FileMemoryStore({ name: 'deprecated-repeat', storage, search })
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      warnSpy.mockRestore()
+    })
+
     it('does not warn when search is not set', () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       new FileMemoryStore({ name: 'no-search', storage })
@@ -350,6 +361,33 @@ describe('FileMemoryStore', () => {
       const results = await keysOnlyStore.search('anything')
 
       expect(results).toStrictEqual([{ content: 'good entry', metadata: { path: 'good.md', score: 1 } }])
+    })
+
+    it('fills maxSearchResults with the next hit when a higher-ranked read fails', async () => {
+      const keysOnlyStorage: Storage = {
+        async write(): Promise<void> {},
+        async read(key: string): Promise<Uint8Array | null> {
+          if (key.endsWith('locked.md')) throw new Error(`Failed to read '${key}'`)
+          return encoder.encode(`${key} entry`)
+        },
+        async delete(): Promise<void> {},
+        async list(): Promise<string[]> {
+          return []
+        },
+        async search(): Promise<StorageSearchResult[]> {
+          return [
+            { key: 'memory/fill/locked.md', score: 3 },
+            { key: 'memory/fill/a.md', score: 2 },
+            { key: 'memory/fill/b.md', score: 1 },
+            { key: 'memory/fill/c.md', score: 0.5 },
+          ]
+        },
+      }
+      const fillStore = new FileMemoryStore({ name: 'fill', storage: keysOnlyStorage, maxSearchResults: 2 })
+
+      const results = await fillStore.search('anything')
+
+      expect(results.map((result) => result.metadata?.path)).toStrictEqual(['a.md', 'b.md'])
     })
 
     it('logs which search path it resolved', async () => {

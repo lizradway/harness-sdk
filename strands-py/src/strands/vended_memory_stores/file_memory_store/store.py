@@ -165,7 +165,11 @@ class FileMemoryStore(MemoryStore):
 
         results = await self._storage.search(query)
         entries: list[MemoryEntry] = []
-        for result in results[:max_results]:
+        # Walk the ranking until max_results entries are filled, so an unreadable hit is
+        # replaced by the next one instead of shrinking the result set.
+        for result in results:
+            if len(entries) >= max_results:
+                break
             data = result.data
             if data is None:
                 try:

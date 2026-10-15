@@ -1,5 +1,7 @@
 """Tests for the keyword search strategy."""
 
+import asyncio
+
 import pytest
 
 from strands.storage.in_memory_storage import InMemoryStorage
@@ -146,3 +148,46 @@ class TestKeywordSearch:
 
         results = await KeywordSearchStrategy().search(storage, "dark mode")
         assert [result.key for result in results] == ["good.md"]
+
+    @pytest.mark.asyncio
+    async def test_ignores_stop_words_in_query(self, storage):
+        await storage.write("deploy.md", b"the deploy process runs nightly")
+        await storage.write("weather.md", b"what is the weather like")
+
+        results = await KeywordSearchStrategy().search(storage, "what is the deploy process")
+        assert [result.key for result in results] == ["deploy.md"]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_stop_word_only_query(self, storage):
+        await storage.write("note.md", b"what is the plan")
+        assert await KeywordSearchStrategy().search(storage, "what is the") == []
+
+    @pytest.mark.asyncio
+    async def test_does_not_score_key_file_extension(self, storage):
+        await storage.write("release-notes.md", b"ship on fridays")
+
+        assert await KeywordSearchStrategy().search(storage, "update AGENTS.md") == []
+        results = await KeywordSearchStrategy().search(storage, "release")
+        assert [result.key for result in results] == ["release-notes.md"]
+
+    @pytest.mark.asyncio
+    async def test_reads_entries_in_concurrent_batches_of_at_most_8(self, storage):
+        for index in range(20):
+            await storage.write(f"note-{index}.md", b"dark mode")
+        original_read = storage.read
+        in_flight = 0
+        max_in_flight = 0
+
+        async def tracking_read(key):
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.001)
+            in_flight -= 1
+            return await original_read(key)
+
+        storage.read = tracking_read
+
+        results = await KeywordSearchStrategy().search(storage, "dark mode")
+        assert len(results) == 20
+        assert max_in_flight == 8
