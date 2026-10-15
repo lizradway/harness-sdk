@@ -87,6 +87,15 @@ function mergeUsage(target: Record<string, number>, source: object): void {
   }
 }
 
+/**
+ * Reads the `anthropic-beta` values from client default headers.
+ */
+function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+  const value = headers ? new Headers(headers as HeadersInit).get('anthropic-beta') : null
+  if (!value) return []
+  return value.split(',').flatMap((beta) => beta.trim() || [])
+}
+
 export interface AnthropicModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens the model can generate in a response.
@@ -146,10 +155,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
   private _client: Anthropic
   private _dropStaleThinkingModelId: string | undefined
+  private _clientBetas: string[]
 
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
+    this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
@@ -453,7 +464,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
     let betas = this._config.betas ?? []
-    if (this._dropsStaleThinking() && !betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+    if (this._dropsStaleThinking()) {
+      // Request headers replace client headers of the same name, so betas set on the client are carried over.
+      if (betas.length === 0) betas = this._clientBetas
+      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+    }
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
   }

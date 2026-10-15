@@ -556,6 +556,27 @@ describe('AnthropicModel', () => {
       warnSpy.mockRestore()
     })
 
+    it('keeps betas from the client default headers on the retry', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return client
+      })
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        clientConfig: { defaultHeaders: { 'anthropic-beta': 'client-beta' } },
+        modelId: 'm1',
+        params: { thinking: { type: 'adaptive' } },
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), {
+        headers: { 'anthropic-beta': 'client-beta,thinking-binding-controls-2026-08-01' },
+      })
+      warnSpy.mockRestore()
+    })
+
     it.each([
       {
         name: 'a caller-set block_binding',

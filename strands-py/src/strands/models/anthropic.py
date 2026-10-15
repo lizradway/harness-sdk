@@ -1058,9 +1058,9 @@ class AnthropicModel(Model):
             # Stale blocks stay in history, so drop_block stays on for every later request to this model.
             logger.warning(
                 "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
-                request["model"],
+                self.config["model_id"],
             )
-            self._drop_stale_thinking_model_id = request["model"]
+            self._drop_stale_thinking_model_id = self.config["model_id"]
             async for chunk in self.stream(
                 messages,
                 tool_specs,

@@ -1119,6 +1119,19 @@ async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(a
     assert model._drop_stale_thinking_model_id is None
 
 
+@pytest.mark.asyncio
+async def test_stream_retries_drop_block_once_when_params_override_model(anthropic_client, alist, messages):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), _thinking_binding_error()]
+    model = AnthropicModel(
+        model_id="m1", max_tokens=1, params={"model": "m1-override", "thinking": {"type": "adaptive"}}
+    )
+
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
 def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):
     _ = anthropic_client
     model = AnthropicModel(
