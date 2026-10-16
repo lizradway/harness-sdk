@@ -104,6 +104,17 @@ class TestFlattenMessagesToContent:
         tru_result = _flatten_messages_to_content(messages)
         assert tru_result == [ContentBlock(text="\n---\n[assistant]"), ContentBlock(text="hi")]
 
+    def test_skips_marker_for_reasoning_only_message(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[ContentBlock(reasoningContent={"reasoningText": {"text": "plan", "signature": "sig"}})],
+            ),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[user]"), ContentBlock(text="next")]
+
 
 class TestSummarizeContent:
     """Tests for the summarize_content function."""
