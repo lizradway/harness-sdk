@@ -511,18 +511,18 @@ describe('AnthropicModel', () => {
   })
 
   describe('stale thinking recovery', () => {
-    const bindingError = new Error(
+    const bindingMessage =
       '400 messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.'
-    )
+    const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-    const createRejectingOnceClient = () => {
+    const createRejectingOnceClient = (error: Error = bindingError) => {
       let calls = 0
       const stream = vi.fn(() =>
         (async function* () {
           calls += 1
-          if (calls === 1) throw bindingError
+          if (calls === 1) throw error
           yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
         })()
       )
@@ -586,6 +586,14 @@ describe('AnthropicModel', () => {
     ])('re-throws the binding error with $name', async ({ params }) => {
       const { stream, client } = createRejectingOnceClient()
       const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('re-throws the binding message on a non-400 error', async () => {
+      const { stream, client } = createRejectingOnceClient(Object.assign(new Error(bindingMessage), { status: 500 }))
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
 
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
       expect(stream).toHaveBeenCalledOnce()

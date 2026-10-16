@@ -1262,6 +1262,19 @@ async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
     assert model._drop_stale_thinking_model_id is None
 
 
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_binding_message_on_non_validation_error(bedrock_client, alist, messages):
+    error = _thinking_binding_error("ConverseStream")
+    error.response["Error"]["Code"] = "InternalServerException"
+    bedrock_client.converse_stream.side_effect = error
+    model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(ClientError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+
+
 def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
     _ = bedrock_client
     model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})

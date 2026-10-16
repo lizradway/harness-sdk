@@ -434,7 +434,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
     } catch (unknownError) {
-      if (continuations === 0 && isThinkingBindingError(unknownError) && withDropBlock(thinking)) {
+      if (
+        continuations === 0 &&
+        (unknownError as { status?: number }).status === 400 &&
+        isThinkingBindingError(unknownError) &&
+        withDropBlock(thinking)
+      ) {
         // Stale blocks stay in history, so drop_block stays on for every later request to this model.
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`

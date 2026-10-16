@@ -1500,6 +1500,15 @@ describe('BedrockModel', () => {
         expect(mockSend).toHaveBeenCalledOnce()
       })
 
+      it('re-throws the binding message on a non-validation error', async () => {
+        const mockSend = vi.fn().mockRejectedValue(new Error(bindingError.message))
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
       it('keeps thinking off when a forced tool choice follows the retry', async () => {
         const mockSend = vi
           .fn()

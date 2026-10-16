@@ -796,9 +796,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     try {
       return await send(request)
     } catch (error) {
-      const retryFields = isThinkingBindingError(error)
-        ? withDropBlockFields(request.additionalModelRequestFields)
-        : undefined
+      const isBindingError =
+        error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
+      const retryFields = isBindingError ? withDropBlockFields(request.additionalModelRequestFields) : undefined
       if (!retryFields) throw error
 
       logger.warn(

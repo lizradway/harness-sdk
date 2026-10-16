@@ -523,7 +523,9 @@ class BedrockModel(Model):
             return converse_method(**request)
         except ClientError as error:
             fields = request.get("additionalModelRequestFields") or {}
-            retry_fields = _with_drop_block_fields(fields) if _is_thinking_binding_error(error) else None
+            error_code = error.response.get("Error", {}).get("Code")
+            is_binding_error = error_code == "ValidationException" and _is_thinking_binding_error(error)
+            retry_fields = _with_drop_block_fields(fields) if is_binding_error else None
             if retry_fields is None:
                 raise
 
