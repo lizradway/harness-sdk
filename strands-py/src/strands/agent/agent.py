@@ -304,7 +304,7 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to an empty AgentState object.
             context_manager: Context management strategy.
                 ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
-                ``"agentic"``: Model-driven context management via injected tools.
+                ``"agentic"``: Internal; not part of the stable API and may change or be removed without notice.
                 A :class:`~strands.context_manager.types.ContextManagerConfig` dict for custom
                 strategy pipelines.
                 A :class:`~strands.context_manager.context_manager.ContextManager` instance
