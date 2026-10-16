@@ -58,10 +58,8 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
-  THINKING_BINDING_BETA,
-  isThinkingBindingError,
-  withDropBlock,
 } from '../models/model.js'
+import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
@@ -798,7 +796,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
-      const retryFields = isBindingError ? withDropBlockFields(request.additionalModelRequestFields) : undefined
+      const retryFields = isBindingError ? fieldsWithDropBlock(request.additionalModelRequestFields) : undefined
       if (!retryFields) throw error
 
       logger.warn(
@@ -952,7 +950,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return this._dropStaleThinkingModelId === this._config.modelId ? (withDropBlockFields(fields) ?? fields) : fields
+      return this._dropStaleThinkingModelId === this._config.modelId ? (fieldsWithDropBlock(fields) ?? fields) : fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -2122,9 +2120,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
  * @param fields - The additional model request fields
  * @returns The fields with drop_block and its beta, or undefined
  */
-function withDropBlockFields(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+function fieldsWithDropBlock(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
   if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
-  const thinking = withDropBlock(fields.thinking)
+  const thinking = thinkingWithDropBlock(fields.thinking)
   if (!thinking) return undefined
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]

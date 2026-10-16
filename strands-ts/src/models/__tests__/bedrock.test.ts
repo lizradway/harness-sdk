@@ -1509,6 +1509,45 @@ describe('BedrockModel', () => {
         expect(mockSend).toHaveBeenCalledOnce()
       })
 
+      it.each([
+        {
+          name: 'a throttle',
+          retry: async () => ({
+            stream: (async function* (): AsyncGenerator<unknown> {
+              yield { throttlingException: { message: 'Rate exceeded' } }
+            })(),
+          }),
+          expected: ModelThrottledError,
+        },
+        {
+          name: 'a context window overflow',
+          retry: async () => {
+            throw new Error('Input is too long for requested model')
+          },
+          expected: ContextWindowOverflowError,
+        },
+      ])('maps $name on the retry to its SDK error', async ({ retry, expected }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockImplementationOnce(retry)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('re-throws a second binding error without retrying again', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
       it('keeps thinking off when a forced tool choice follows the retry', async () => {
         const mockSend = vi
           .fn()

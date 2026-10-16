@@ -1275,6 +1275,36 @@ async def test_stream_does_not_retry_binding_message_on_non_validation_error(bed
     bedrock_client.converse_stream.assert_called_once()
 
 
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        ({"Code": "ThrottlingException", "Message": "Rate exceeded"}, ModelThrottledException),
+        (
+            {"Code": "ValidationException", "Message": "Input is too long for requested model"},
+            ContextWindowOverflowException,
+        ),
+        ({"Code": "ValidationException", "Message": "bound to a different conversation"}, ClientError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(
+    bedrock_client, alist, messages, streaming, retry_error, exp_exception
+):
+    operation_name = "ConverseStream" if streaming else "Converse"
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error(operation_name),
+        ClientError({"Error": retry_error}, operation_name),
+    ]
+    model = BedrockModel(model_id="m1", streaming=streaming, additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert converse_method.call_count == 2
+
+
 def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
     _ = bedrock_client
     model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})

@@ -517,12 +517,13 @@ describe('AnthropicModel', () => {
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-    const createRejectingOnceClient = (error: Error = bindingError) => {
+    const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
       let calls = 0
       const stream = vi.fn(() =>
         (async function* () {
           calls += 1
           if (calls === 1) throw error
+          if (retryError) throw retryError
           yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
         })()
       )
@@ -556,7 +557,18 @@ describe('AnthropicModel', () => {
       warnSpy.mockRestore()
     })
 
-    it('keeps betas from the client default headers on the retry', async () => {
+    it.each([
+      { name: 'a record', defaultHeaders: { 'anthropic-beta': 'client-beta' }, betas: 'client-beta,' },
+      { name: 'a record with a list value', defaultHeaders: { 'Anthropic-Beta': ['a', 'b'] }, betas: 'a,b,' },
+      {
+        name: 'a Headers instance',
+        defaultHeaders: new Headers({ 'anthropic-beta': 'client-beta' }),
+        betas: 'client-beta,',
+      },
+      { name: 'header tuples', defaultHeaders: [['anthropic-beta', 'client-beta']], betas: 'client-beta,' },
+      { name: 'an undefined value', defaultHeaders: { 'anthropic-beta': undefined }, betas: '' },
+      { name: 'a null value', defaultHeaders: { 'anthropic-beta': null }, betas: '' },
+    ])('keeps betas from client default headers given as $name on the retry', async ({ defaultHeaders, betas }) => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const { stream, client } = createRejectingOnceClient()
       vi.mocked(Anthropic).mockImplementationOnce(function () {
@@ -564,7 +576,7 @@ describe('AnthropicModel', () => {
       })
       const provider = new AnthropicModel({
         apiKey: 'sk-test',
-        clientConfig: { defaultHeaders: { 'anthropic-beta': 'client-beta' } },
+        clientConfig: { defaultHeaders },
         modelId: 'm1',
         params: { thinking: { type: 'adaptive' } },
       })
@@ -572,8 +584,39 @@ describe('AnthropicModel', () => {
       await collectIterator(provider.stream(messages))
 
       expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), {
-        headers: { 'anthropic-beta': 'client-beta,thinking-binding-controls-2026-08-01' },
+        headers: { 'anthropic-beta': `${betas}thinking-binding-controls-2026-08-01` },
       })
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a throttle',
+        retryError: Object.assign(new Error('Rate limit exceeded'), { status: 429 }),
+        expected: ModelThrottledError,
+      },
+      {
+        name: 'a context window overflow',
+        retryError: Object.assign(new Error('prompt is too long'), { status: 400 }),
+        expected: ContextWindowOverflowError,
+      },
+    ])('maps $name on the retry to its SDK error', async ({ retryError, expected }) => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, retryError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+      expect(stream).toHaveBeenCalledTimes(2)
+      warnSpy.mockRestore()
+    })
+
+    it('re-throws a second binding error without retrying again', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, bindingError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledTimes(2)
       warnSpy.mockRestore()
     })
 

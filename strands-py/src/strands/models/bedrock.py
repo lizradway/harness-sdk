@@ -35,16 +35,9 @@ from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._strict_schema import ensure_strict_json_schema
+from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
-from .model import (
-    _THINKING_BINDING_BETA,
-    BaseModelConfig,
-    CacheConfig,
-    CacheToolsConfig,
-    Model,
-    _is_thinking_binding_error,
-    _with_drop_block,
-)
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -149,14 +142,14 @@ DEFAULT_READ_TIMEOUT = 120
 _CANCEL_POLL_INTERVAL = 0.05
 
 
-def _with_drop_block_fields(fields: dict[str, Any]) -> dict[str, Any] | None:
+def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
     """Return additional request fields that drop stale thinking blocks, or None if they cannot change."""
-    thinking = _with_drop_block(fields.get("thinking"))
+    thinking = thinking_with_drop_block(fields.get("thinking"))
     if thinking is None:
         return None
     betas = list(fields.get("anthropic_beta") or [])
-    if _THINKING_BINDING_BETA not in betas:
-        betas.append(_THINKING_BINDING_BETA)
+    if THINKING_BINDING_BETA not in betas:
+        betas.append(THINKING_BINDING_BETA)
     return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
@@ -510,7 +503,7 @@ class BedrockModel(Model):
             return {}
 
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
-            additional_fields = _with_drop_block_fields(additional_fields) or additional_fields
+            additional_fields = _fields_with_drop_block(additional_fields) or additional_fields
 
         return {"additionalModelRequestFields": additional_fields}
 
@@ -524,8 +517,8 @@ class BedrockModel(Model):
         except ClientError as error:
             fields = request.get("additionalModelRequestFields") or {}
             error_code = error.response.get("Error", {}).get("Code")
-            is_binding_error = error_code == "ValidationException" and _is_thinking_binding_error(error)
-            retry_fields = _with_drop_block_fields(fields) if is_binding_error else None
+            is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
+            retry_fields = _fields_with_drop_block(fields) if is_binding_error else None
             if retry_fields is None:
                 raise
 

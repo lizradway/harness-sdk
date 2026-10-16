@@ -1132,6 +1132,27 @@ async def test_stream_retries_drop_block_once_when_params_override_model(anthrop
     assert anthropic_client.messages.stream.call_count == 2
 
 
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        (anthropic.RateLimitError("rate limit", response=unittest.mock.Mock(), body=None), ModelThrottledException),
+        (
+            anthropic.BadRequestError("input is too long", response=unittest.mock.Mock(), body=None),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist, messages, retry_error, exp_exception):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), retry_error]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
 def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):
     _ = anthropic_client
     model = AnthropicModel(

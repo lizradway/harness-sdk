@@ -32,16 +32,9 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
+from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
-from .model import (
-    _THINKING_BINDING_BETA,
-    BaseModelConfig,
-    CacheConfig,
-    CacheToolsConfig,
-    Model,
-    _is_thinking_binding_error,
-    _with_drop_block,
-)
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -546,21 +539,21 @@ class AnthropicModel(Model):
         }
 
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
-            request = self._with_drop_block(request) or request
+            request = self._request_with_drop_block(request) or request
 
         return request
 
-    def _with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
+    def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
-        thinking = _with_drop_block(request.get("thinking"))
+        thinking = thinking_with_drop_block(request.get("thinking"))
         if thinking is None:
             return None
         extra_headers = dict(request.get("extra_headers") or {})
         # Request headers replace client headers of the same name, so betas set on the client are carried over.
         configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
         betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
-        if _THINKING_BINDING_BETA not in betas:
-            betas.append(_THINKING_BINDING_BETA)
+        if THINKING_BINDING_BETA not in betas:
+            betas.append(THINKING_BINDING_BETA)
         extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
         return {**request, "thinking": thinking, "extra_headers": extra_headers}
 
@@ -1049,7 +1042,9 @@ class AnthropicModel(Model):
                 raise ContextWindowOverflowException(str(error)) from error
 
             retry_with_drop_block = (
-                continuations == 0 and _is_thinking_binding_error(error) and self._with_drop_block(request) is not None
+                continuations == 0
+                and is_thinking_binding_error(error)
+                and self._request_with_drop_block(request) is not None
             )
             if not retry_with_drop_block:
                 raise error

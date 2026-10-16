@@ -8,10 +8,8 @@ import {
   resolveCacheSection,
   type CacheConfig,
   type ResolvedCacheSection,
-  THINKING_BINDING_BETA,
-  isThinkingBindingError,
-  withDropBlock,
 } from '../models/model.js'
+import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -88,12 +86,18 @@ function mergeUsage(target: Record<string, number>, source: object): void {
 }
 
 /**
- * Reads the `anthropic-beta` values from client default headers.
+ * Reads the `anthropic-beta` values from client default headers, skipping the `undefined` and `null` values
+ * the SDK leaves out of the request.
  */
 function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
-  const value = headers ? new Headers(headers as HeadersInit).get('anthropic-beta') : null
-  if (!value) return []
-  return value.split(',').flatMap((beta) => beta.trim() || [])
+  if (!headers) return []
+  const rows: Iterable<readonly unknown[]> =
+    headers instanceof Headers || Array.isArray(headers) ? headers : Object.entries(headers)
+  return [...rows]
+    .filter(([name]) => typeof name === 'string' && name.toLowerCase() === 'anthropic-beta')
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
 }
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -438,7 +442,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         continuations === 0 &&
         (unknownError as { status?: number }).status === 400 &&
         isThinkingBindingError(unknownError) &&
-        withDropBlock(thinking)
+        thinkingWithDropBlock(thinking)
       ) {
         // Stale blocks stay in history, so drop_block stays on for every later request to this model.
         logger.warn(
@@ -643,7 +647,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) request.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     if (this._config.params) Object.assign(request, this._config.params)
-    const dropBlockThinking = this._dropsStaleThinking() ? withDropBlock(request.thinking) : undefined
+    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools
