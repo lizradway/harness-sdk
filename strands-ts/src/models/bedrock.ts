@@ -2117,10 +2117,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 }
 
 /**
- * Return the strict-mode copy of a tool's input schema, warning once per tool when it still uses
- * keywords Bedrock's strict mode rejects.
- */
-/**
  * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
  *
  * @param fields - The additional model request fields
@@ -2135,6 +2131,10 @@ function withDropBlockFields(fields: JSONValue | undefined): Record<string, JSON
   return { ...fields, anthropic_beta: anthropicBeta, thinking }
 }
 
+/**
+ * Return the strict-mode copy of a tool's input schema, warning once per tool when it still uses
+ * keywords Bedrock's strict mode rejects.
+ */
 function toStrictInputSchema(toolName: string, inputSchema: JSONSchema): JSONSchema {
   const strictSchema = ensureStrictJsonSchema(inputSchema)
   const unsupported = findUnsupportedStrictKeywords(strictSchema)
