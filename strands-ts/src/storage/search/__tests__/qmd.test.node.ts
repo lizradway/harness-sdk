@@ -216,12 +216,21 @@ describe('QmdSearchStrategy', () => {
       expect(storeA.searchLex).toHaveBeenCalledWith('query one')
     })
 
-    it('opens a directory once when its first searches run concurrently', async () => {
+    it('opens a directory once when a second search arrives while the first open is in flight', async () => {
       const createStore = await mockedCreateStore()
+      let finishOpen!: (store: typeof mockQmdStore) => void
+      createStore.mockReturnValueOnce(new Promise((resolve) => (finishOpen = resolve)))
       const strategy = new QmdSearchStrategy()
       const storage = storageAt('/tmp/memory/a')
 
-      await Promise.all([strategy.search(storage, 'one'), strategy.search(storage, 'two')])
+      const first = strategy.search(storage, 'one')
+      // Start the second search once the first is inside createStore, not in the same tick:
+      // two simultaneous imports of the mocked node:path can get the real module, whose
+      // resolve() gives a different key on Windows.
+      await vi.waitFor(() => expect(createStore).toHaveBeenCalled())
+      const second = strategy.search(storage, 'two')
+      finishOpen(newQmdStore())
+      await Promise.all([first, second])
 
       expect(createStore).toHaveBeenCalledTimes(1)
     })
