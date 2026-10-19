@@ -34,7 +34,7 @@ export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
  * Supported values for the `contextManager` parameter.
  *
  * - `"auto"`: Managed context with proactive compression + offloading.
- * - `"agentic"`: Internal; not part of the stable API and may change or be removed without notice.
+ * - `"agentic"`: (Experimental) Model-driven context management via injected tools.
  * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
  * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
  *   construct one per `Agent`.

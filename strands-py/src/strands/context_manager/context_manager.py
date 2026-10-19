@@ -39,7 +39,8 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 """Supported preset strings for the ``context_manager`` parameter.
 
 - ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
-- ``"agentic"``: Internal; not part of the stable API and may change or be removed without notice.
+- ``"agentic"``: (Experimental) Model-driven context management via injected tools, with a higher
+  truncation threshold and summarization only on overflow. May change in future versions.
 """
 
 
