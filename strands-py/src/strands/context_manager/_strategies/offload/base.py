@@ -12,9 +12,9 @@ from typing_extensions import TypedDict
 from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
-from ...retrieval_tool import RETRIEVAL_TOOL_NAME
-from ...stash import Stash
-from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
+from ..._retrieval_tool import RETRIEVAL_TOOL_NAME
+from ..._stash import Stash
+from ..._types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent

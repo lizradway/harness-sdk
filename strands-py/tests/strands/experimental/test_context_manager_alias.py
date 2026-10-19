@@ -4,13 +4,13 @@ import pytest
 
 import strands.context_manager as context_manager
 import strands.experimental.context_manager as experimental_context_manager
-from strands.context_manager import presets, types
+from strands.context_manager import _presets, _types
 
 EXPECTED_INTERNAL = {
-    "ContextState": types.ContextState,
-    "ContextStrategy": types.ContextStrategy,
-    "STRATEGY_PRESET_NAMES": presets.STRATEGY_PRESET_NAMES,
-    "StrategyPresetName": presets.StrategyPresetName,
+    "ContextState": _types.ContextState,
+    "ContextStrategy": _types.ContextStrategy,
+    "STRATEGY_PRESET_NAMES": _presets.STRATEGY_PRESET_NAMES,
+    "StrategyPresetName": _presets.StrategyPresetName,
 }
 
 

@@ -16,7 +16,7 @@ from .interrupt import InterruptResponseContent
 
 if TYPE_CHECKING:
     from ..agent.state import AgentState
-    from ..context_manager.context_manager import ContextManager
+    from ..context_manager._context_manager import ContextManager
     from ..hooks.registry import BaseHookEvent, HookCallback, HookRegistry
     from ..models.model import Model
     from ..sandbox import Sandbox

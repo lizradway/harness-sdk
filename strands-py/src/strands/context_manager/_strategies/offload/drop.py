@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
-from ...stash import _format_stash_refs
+from ..._stash import _format_stash_refs
 from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
 
 if TYPE_CHECKING:

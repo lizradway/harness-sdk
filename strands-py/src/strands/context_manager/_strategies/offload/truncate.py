@@ -7,9 +7,9 @@ import math
 from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
-from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
-from ...stash import Stash, _format_stash_refs
-from ...types import is_text_block
+from ..._methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
+from ..._stash import Stash, _format_stash_refs
+from ..._types import is_text_block
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
@@ -23,7 +23,7 @@ from .base import (
 if TYPE_CHECKING:
     from ....agent.agent import Agent
 
-from ...types import ContextState
+from ..._types import ContextState
 
 logger = logging.getLogger(__name__)
 

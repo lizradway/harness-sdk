@@ -5,7 +5,7 @@ from typing_extensions import assert_type
 
 from strands import Agent, LocalAgent, Snapshot, ToolContext, tool
 from strands.bidi.agent import BidiAgent
-from strands.context_manager.context_manager import ContextManager
+from strands.context_manager._context_manager import ContextManager
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.sandbox import Sandbox
 from strands.session.repository_session_manager import RepositorySessionManager

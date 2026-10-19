@@ -9,22 +9,22 @@ from typing import Any
 
 # Name -> submodule of strands.context_manager that defines it.
 _PUBLIC_NAMES = {
-    "ContextManager": "context_manager",
-    "ContextManagerConfig": "types",
-    "Offload": "strategies.offload",
-    "OffloadConditions": "strategies.offload.base",
-    "OffloadTarget": "strategies.offload.base",
-    "StashConfig": "types",
-    "SummarizeConfig": "methods.summarize",
-    "TruncateConfig": "methods.truncate",
+    "ContextManager": "_context_manager",
+    "ContextManagerConfig": "_types",
+    "Offload": "_strategies.offload",
+    "OffloadConditions": "_strategies.offload.base",
+    "OffloadTarget": "_strategies.offload.base",
+    "StashConfig": "_types",
+    "SummarizeConfig": "_methods.summarize",
+    "TruncateConfig": "_methods.truncate",
 }
 
 # Exported here but not from strands.context_manager.
 _INTERNAL_NAMES = {
-    "ContextState": "types",
-    "ContextStrategy": "types",
-    "STRATEGY_PRESET_NAMES": "presets",
-    "StrategyPresetName": "presets",
+    "ContextState": "_types",
+    "ContextStrategy": "_types",
+    "STRATEGY_PRESET_NAMES": "_presets",
+    "StrategyPresetName": "_presets",
 }
 
 _DEPRECATED_NAMES = {**_PUBLIC_NAMES, **_INTERNAL_NAMES}
