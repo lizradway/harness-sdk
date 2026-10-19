@@ -52,10 +52,11 @@ When <Syntax py="context_manager" ts="contextManager" /> is set, any co-provided
 | Value | Behavior |
 |-------|----------|
 | `"auto"` | Background compression with tuned defaults. No model involvement. |
+| `"agentic"` | Experimental. Model-driven: the model manages its own context. |
 | Custom config | Full control over the strategy pipeline, targets, and conditions. |
 | `false` | No context management. Overflow errors propagate directly. |
 
-See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"`. See [Custom Strategies](./context-management/custom-strategies) to build your own pipeline. See [Strategy Presets](./context-management/presets) for named shorthand configurations.
+See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"` and `"agentic"`. See [Custom Strategies](./context-management/custom-strategies) to build your own pipeline. See [Strategy Presets](./context-management/presets) for named shorthand configurations.
 
 ## Storage backends
 

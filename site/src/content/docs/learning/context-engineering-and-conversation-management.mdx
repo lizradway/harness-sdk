@@ -60,6 +60,8 @@ This single parameter enables:
 
 The effect on cost and answer quality depends on the workload. Measure both with your own evaluation cases.
 
+For agents that need to protect specific context across long conversations, use the experimental `context_manager="agentic"` mode. The model gets tools to summarize, truncate, or pin messages itself, trading some tokens for judgment.
+
 ## Context injector
 
 The `ContextInjector` plugin folds ephemeral text into the model input before each call. The text is never written to conversation history; it augments one call only. Use it for context the agent should always have but that doesn't belong in stored history: current time, environment facts, retrieval lookups.
@@ -192,6 +194,7 @@ agent = Agent(
 | Strategy | Tradeoff |
 | --- | --- |
 | `context_manager="auto"` | Best default. Offloading + summarization + proactive compression |
+| `context_manager="agentic"` | Experimental. Model self-manages context. Trades tokens for judgment |
 | `Offload.truncate(...)` | Keeps a preview; originals remain recoverable when stash is enabled |
 | `Offload.summarize(...)` | Preserves more info. Lossy compression, costs an LLM call |
 | `Offload.drop(...)` | Most aggressive. Content goes to stash only |
