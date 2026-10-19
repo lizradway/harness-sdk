@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strands.storage import S3Storage
-from strands.storage.storage import _NAMESPACED
+from strands.storage.storage import _NAMESPACED, StorageSearchResult
 from strands.types.exceptions import StorageError
 
 
@@ -113,6 +113,21 @@ class TestS3Storage:
         results = await scoped.search("memory agent deploy")
 
         assert [result.key for result in results] == ["deploy.md"]
+
+    @pytest.mark.asyncio
+    async def test_namespace_keeps_subclass_overrides_and_shares_client(self, s3_bucket):
+        class TaggedStorage(S3Storage):
+            async def search(self, query: str) -> list[StorageSearchResult]:
+                return [StorageSearchResult(key=f"custom:{query}", score=1.0)]
+
+        parent = TaggedStorage("test-bucket", boto_session=s3_bucket)
+        scoped = parent.namespace("memory")
+        await scoped.write("k", b"v")
+
+        assert isinstance(scoped, TaggedStorage)
+        assert [result.key for result in await scoped.search("q")] == ["custom:q"]
+        assert scoped._get_client() is parent._get_client()
+        assert await parent.read("memory/k") == b"v"
 
     @pytest.mark.asyncio
     async def test_namespace_passes_scoped_instance_to_strategy(self, s3_bucket):

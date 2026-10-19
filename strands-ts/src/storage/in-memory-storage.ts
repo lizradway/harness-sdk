@@ -141,10 +141,9 @@ export class InMemoryStorage implements Storage {
    */
   namespace(prefix: string): InMemoryStorage {
     const normalized = normalizePrefix(prefix).replace(/\/$/, '')
-    const scoped = new InMemoryStorage(
-      this._searchStrategy !== undefined ? { searchStrategy: this._searchStrategy } : undefined
-    )
-    scoped._store = this._store
+    // Copy this instance rather than constructing a new one, so a subclass's overrides and
+    // fields carry over to the scoped instance. The copy shares the store and search strategy.
+    const scoped: InMemoryStorage = Object.assign(Object.create(Object.getPrototypeOf(this)), this)
     scoped._prefix = normalized ? `${this._prefix}${normalized}/` : this._prefix
     Object.defineProperty(scoped, NAMESPACED, { value: true })
     return scoped

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strands.storage import InMemoryStorage
-from strands.storage.storage import _NAMESPACED
+from strands.storage.storage import _NAMESPACED, StorageSearchResult
 from strands.types.exceptions import StorageError
 
 
@@ -127,6 +127,25 @@ class TestInMemoryStorage:
 
         strategy.index.assert_awaited_once_with(scoped, "deploy.md", b"x")
         strategy.search.assert_awaited_once_with(scoped, "query")
+
+    @pytest.mark.asyncio
+    async def test_namespace_keeps_subclass_overrides_and_attributes(self):
+        class TaggedStorage(InMemoryStorage):
+            def __init__(self) -> None:
+                super().__init__()
+                self.tag = "custom"
+
+            async def search(self, query: str) -> list[StorageSearchResult]:
+                return [StorageSearchResult(key=f"{self.tag}:{query}", score=1.0)]
+
+        parent = TaggedStorage()
+        scoped = parent.namespace("memory").namespace("agent")
+        await scoped.write("notes.md", b"hello")
+
+        assert isinstance(scoped, TaggedStorage)
+        assert [result.key for result in await scoped.search("q")] == ["custom:q"]
+        assert await parent.list("") == ["memory/agent/notes.md"]
+        assert getattr(parent, "_namespaced", None) is None
 
     @pytest.mark.asyncio
     async def test_namespace_clear_only_clears_prefix(self, storage):

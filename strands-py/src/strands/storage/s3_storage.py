@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import copy
 from typing import TYPE_CHECKING, Any
 
 from ..types.exceptions import StorageError
@@ -229,15 +230,10 @@ class S3Storage:
             An ``S3Storage`` scoped to the prefix.
         """
         normalized = _normalize_prefix(prefix).rstrip("/")
-        # The client always comes from _root; the client settings are passed only so the
-        # scoped instance describes the same bucket and region as its parent.
-        scoped = S3Storage(
-            self._bucket,
-            region_name=self._region_name,
-            boto_session=self._boto_session,
-            boto_client_config=self._boto_client_config,
-            search_strategy=self._search_strategy,
-        )
+        # Copy this instance rather than constructing a new one, so a subclass's overrides and
+        # attributes carry over to the scoped instance. The shallow copy keeps the bucket, client
+        # settings and search strategy; its client always comes from _root.
+        scoped = copy.copy(self)
         scoped._prefix = f"{self._prefix}{normalized}/" if normalized else self._prefix
         scoped._root = self._root or self
         scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]

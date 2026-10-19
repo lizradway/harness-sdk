@@ -195,14 +195,11 @@ export class S3Storage implements Storage {
    */
   namespace(prefix: string): S3Storage {
     const normalized = normalizePrefix(prefix).replace(/\/$/, '')
-    const scoped = new S3Storage(
-      this._bucket,
-      this._searchStrategy !== undefined ? { searchStrategy: this._searchStrategy } : undefined
-    )
+    // Copy this instance rather than constructing a new one, so a subclass's overrides and
+    // fields carry over to the scoped instance. The copy keeps the bucket, region and search
+    // strategy; its client always comes from _root.
+    const scoped: S3Storage = Object.assign(Object.create(Object.getPrototypeOf(this)), this)
     scoped._prefix = normalized ? `${this._prefix}${normalized}/` : this._prefix
-    // The client always comes from _root; _region is copied only so the scoped instance
-    // describes the same bucket and region as its parent.
-    scoped._region = this._region
     scoped._root = this._root ?? this
     Object.defineProperty(scoped, NAMESPACED, { value: true })
     return scoped

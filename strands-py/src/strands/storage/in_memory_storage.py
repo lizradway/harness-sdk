@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import copy
 import threading
 from typing import TYPE_CHECKING
 
@@ -149,9 +150,10 @@ class InMemoryStorage:
             An ``InMemoryStorage`` scoped to the prefix.
         """
         normalized = _normalize_prefix(prefix).rstrip("/")
-        scoped = InMemoryStorage(search_strategy=self._search_strategy)
-        scoped._store = self._store
-        scoped._lock = self._lock
+        # Copy this instance rather than constructing a new one, so a subclass's overrides and
+        # attributes carry over to the scoped instance. The shallow copy shares the store, lock
+        # and search strategy.
+        scoped = copy.copy(self)
         scoped._prefix = f"{self._prefix}{normalized}/" if normalized else self._prefix
         scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
         return scoped

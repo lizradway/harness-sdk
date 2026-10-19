@@ -20,6 +20,7 @@ vi.mock('@aws-sdk/client-s3', () => ({
 
 import { S3Storage } from '../s3-storage.js'
 import { NAMESPACED } from '../storage.js'
+import type { StorageSearchResult } from '../storage.js'
 
 describe('S3Storage', () => {
   beforeEach(() => {
@@ -197,6 +198,24 @@ describe('S3Storage', () => {
 
       expect(mockS3Client).toHaveBeenCalledTimes(1)
       expect(mockPutObjectCommand).toHaveBeenCalledWith(expect.objectContaining({ Key: 'a/b/k' }))
+    })
+
+    it("keeps a subclass's overrides on the scoped instance and builds the client from the parent", async () => {
+      mockSend.mockResolvedValue({})
+      class TaggedStorage extends S3Storage {
+        override async search(query: string): Promise<StorageSearchResult[]> {
+          return [{ key: `custom:${query}`, score: 1 }]
+        }
+      }
+      const scoped = new TaggedStorage('my-bucket', { region: 'us-west-2' }).namespace('memory')
+
+      await scoped.write('k', new Uint8Array([1]))
+
+      expect(scoped).toBeInstanceOf(TaggedStorage)
+      expect(await scoped.search('q')).toEqual([{ key: 'custom:q', score: 1 }])
+      expect(mockS3Client).toHaveBeenCalledTimes(1)
+      expect(mockS3Client).toHaveBeenCalledWith({ region: 'us-west-2' })
+      expect(mockPutObjectCommand).toHaveBeenCalledWith(expect.objectContaining({ Key: 'memory/k' }))
     })
 
     it('passes the scoped instance and relative keys to the search strategy', async () => {

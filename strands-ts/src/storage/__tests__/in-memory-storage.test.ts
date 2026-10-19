@@ -3,6 +3,7 @@ import { InMemoryStorage } from '../in-memory-storage.js'
 import { StorageError } from '../../errors.js'
 import type { SearchStrategy } from '../search/types.js'
 import { NAMESPACED } from '../storage.js'
+import type { StorageSearchResult } from '../storage.js'
 
 describe('InMemoryStorage', () => {
   let storage: InMemoryStorage
@@ -200,6 +201,23 @@ describe('InMemoryStorage', () => {
 
       expect(strategy.index).toHaveBeenCalledWith(scoped, 'deploy.md', expect.any(Uint8Array))
       expect(strategy.search).toHaveBeenCalledWith(scoped, 'query')
+    })
+
+    it("keeps a subclass's overrides and fields on the scoped instance", async () => {
+      class TaggedStorage extends InMemoryStorage {
+        readonly tag = 'custom'
+        override async search(query: string): Promise<StorageSearchResult[]> {
+          return [{ key: `${this.tag}:${query}`, score: 1 }]
+        }
+      }
+      const parent = new TaggedStorage()
+      const scoped = parent.namespace('memory').namespace('agent')
+      await scoped.write('notes.md', encode('hello'))
+
+      expect(scoped).toBeInstanceOf(TaggedStorage)
+      expect(await scoped.search('q')).toEqual([{ key: 'custom:q', score: 1 }])
+      expect(await parent.list('')).toEqual(['memory/agent/notes.md'])
+      expect(NAMESPACED in parent).toBe(false)
     })
 
     it('clears only entries under the prefix', async () => {
