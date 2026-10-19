@@ -187,7 +187,7 @@ export class S3Storage implements Storage {
    * under the prefix and scores keys without it, rather than scanning the whole bucket.
    *
    * The shared search strategy receives the scoped instance and keys relative to the prefix.
-   * A strategy that keeps its own index must keep each instance's entries apart; see
+   * A strategy that keeps its own index must not key it by those relative keys alone; see
    * {@link SearchStrategy.index}.
    *
    * @param prefix - Prefix to prepend to all keys

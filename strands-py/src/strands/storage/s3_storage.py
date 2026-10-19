@@ -220,8 +220,8 @@ class S3Storage:
         rather than scanning the whole bucket.
 
         The shared search strategy receives the scoped instance and keys relative
-        to the prefix. A strategy that keeps its own index must keep each
-        instance's entries apart; see ``SearchStrategy.index``.
+        to the prefix. A strategy that keeps its own index must not key it by those
+        relative keys alone; see ``SearchStrategy.index``.
 
         Args:
             prefix: Prefix to prepend to all keys.

@@ -21,10 +21,13 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
    * (keyword) or manage their own indexing (QMD) can omit this.
    *
    * `key` is relative to `storage`. A storage's `namespace()` instances share its strategy
-   * and pass keys relative to their own prefix, so the same key can arrive from several
-   * storage instances. A strategy that keeps its own index must keep entries from different
-   * storage instances apart (for example, keyed by the storage instance or its prefix),
-   * or entries with the same relative key in two namespaces overwrite each other.
+   * and pass keys relative to their own prefix, so two different entries can arrive with the
+   * same key (`x.md` in two namespaces), and one entry can arrive under different keys and
+   * instances (`memory/a/x.md` written through the parent, `x.md` through `namespace('memory/a')`).
+   * A strategy that keeps its own index should key it by where the entry actually lives, such
+   * as `LocalFileStorage.baseDir` plus the key, not by the relative key or the storage instance.
+   * On a backend that does not expose that, use a separate storage with its own strategy for
+   * each index instead of sharing one strategy across namespaces.
    *
    * @param storage - The storage backend the entry belongs to
    * @param key - The storage key being written, relative to `storage`
