@@ -3,7 +3,7 @@ title: Context management
 description: "How the ContextManager keeps your agent's context window in bounds as conversations grow and tool results accumulate."
 tags: [conversation-management, token-management]
 sourceLinks:
-  - path: strands-py/src/strands/context_manager/context_manager.py
+  - path: strands-py/src/strands/context_manager/_context_manager.py
   - path: strands-ts/src/context-manager/context-manager.ts
 addedDate: 2026-06-12
 ---
@@ -125,7 +125,7 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 
 ### Updating experimental imports
 
-`ContextManager`, `Offload`, and their configuration types are exported from the main package. The experimental import paths still work, but they are deprecated. In Python, they emit a `DeprecationWarning` and will be removed in v1.63.0.
+`ContextManager`, `Offload`, and their configuration types are exported from the main package. The experimental import paths still work, but they are deprecated and will be removed in v1.63.0 (Python) and v1.23.0 (TypeScript). In Python, they emit a `DeprecationWarning`.
 
 <Tabs>
 <Tab label="Python">

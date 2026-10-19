@@ -86,6 +86,7 @@ export class ContextManager implements Plugin {
    *
    * @param strategy - A preset string, config object, ContextManager instance, false, or undefined
    * @returns The instance as-is; a new ContextManager for preset strings and configs; undefined for false/undefined
+   * @internal
    */
   static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
     if (strategy === false || strategy === undefined) return undefined
@@ -183,6 +184,7 @@ export class ContextManager implements Plugin {
    * The L1 stash instance, if stash is enabled and the agent has been initialized.
    *
    * @returns The stash, or undefined if stash is disabled or initAgent has not run
+   * @internal
    */
   get stash(): Stash | undefined {
     return this._stash
@@ -193,6 +195,7 @@ export class ContextManager implements Plugin {
    * When true, stash data does not need to be embedded in session snapshots.
    *
    * @returns true if the stash storage is not ephemeral
+   * @internal
    */
   get stashIsDurable(): boolean {
     return this._stashIsDurable
