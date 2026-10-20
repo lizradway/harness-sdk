@@ -706,7 +706,7 @@ class AnthropicModel(Model):
         try:
             # The pinned SDK has no compaction block type, so the raw body keeps the block exactly as signed.
             response = await self.client.messages.with_raw_response.create(**request)
-            body = await response.json()
+            body = response.http_response.json()
         except anthropic.APIError as error:
             logger.warning("model_id=<%s>, error=<%s> | server compaction failed", self.config["model_id"], error)
             return None

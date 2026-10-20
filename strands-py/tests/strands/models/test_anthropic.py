@@ -7,6 +7,7 @@ import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
@@ -3143,7 +3144,7 @@ def compaction_model(anthropic_client):
 
 
 def _compaction_response(anthropic_client, body):
-    response = unittest.mock.Mock(json=unittest.mock.AsyncMock(return_value=body))
+    response = unittest.mock.Mock(http_response=httpx.Response(200, json=body))
     anthropic_client.messages.with_raw_response.create = unittest.mock.AsyncMock(return_value=response)
 
 
