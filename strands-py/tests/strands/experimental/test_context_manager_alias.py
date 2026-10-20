@@ -32,6 +32,12 @@ def test_internal_alias_warns_and_resolves_to_definition(name):
     assert aliased is EXPECTED_INTERNAL[name]
 
 
+@pytest.mark.parametrize("name", sorted(experimental_context_manager._DEPRECATED_NAMES))
+def test_alias_warning_links_migration_guide(name):
+    with pytest.warns(DeprecationWarning, match="context-management/#updating-experimental-imports"):
+        getattr(experimental_context_manager, name)
+
+
 def test_public_alias_names_match_stable_exports():
     assert set(experimental_context_manager._PUBLIC_NAMES) == set(context_manager.__all__)
 

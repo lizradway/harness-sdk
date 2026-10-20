@@ -29,6 +29,8 @@ _INTERNAL_NAMES = {
 
 _DEPRECATED_NAMES = {**_PUBLIC_NAMES, **_INTERNAL_NAMES}
 
+_MIGRATION_GUIDE_URL = "https://strandsagents.com/docs/user-guide/sdk/context-management/#updating-experimental-imports"
+
 
 def __getattr__(name: str) -> Any:
     if name not in _DEPRECATED_NAMES:
@@ -40,7 +42,8 @@ def __getattr__(name: str) -> Any:
         else "It has no public replacement."
     )
     warnings.warn(
-        f"strands.experimental.context_manager.{name} is deprecated and will be removed in v1.63.0. {replacement}",
+        f"strands.experimental.context_manager.{name} is deprecated and will be removed in v1.63.0. {replacement} "
+        f"See migration guide: {_MIGRATION_GUIDE_URL}",
         DeprecationWarning,
         stacklevel=2,
     )
