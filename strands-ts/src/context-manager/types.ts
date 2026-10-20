@@ -103,7 +103,7 @@ export interface ContextManagerConfig {
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
    *
-   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * Accepts strategies built with `Offload`, preset name strings (e.g. `'largeToolOffloading'`),
    * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
   strategies?: (ContextStrategy | StrategyPresetName)[]
