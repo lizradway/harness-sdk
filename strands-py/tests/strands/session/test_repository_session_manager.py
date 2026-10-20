@@ -1379,3 +1379,11 @@ def test_initialize_does_not_warn_without_context_manager(session_manager, agent
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         session_manager.initialize(agent)
+
+
+def test_initialize_does_not_warn_when_context_manager_disabled(session_manager):
+    agent = Agent(context_manager=False)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        session_manager.initialize(agent)

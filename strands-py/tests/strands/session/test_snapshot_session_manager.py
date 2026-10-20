@@ -5,6 +5,7 @@ import json
 import logging
 import tempfile
 import uuid
+import warnings
 from functools import partial
 from unittest.mock import AsyncMock, Mock
 
@@ -729,6 +730,12 @@ def test_restore_across_instances(storage):
     tru_texts = [content["text"] for message in agent_2.messages for content in message["content"] if "text" in content]
     assert "What is the answer?" in tru_texts
     assert "The answer is 42." in tru_texts
+
+
+def test_context_manager_does_not_warn(storage):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*does not persist its context reductions")
+        Agent(context_manager="auto", session_manager=SnapshotSessionManager("s1", storage=storage))
 
 
 def test_restore_warns_on_overwrite(storage, caplog):

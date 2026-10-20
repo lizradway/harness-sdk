@@ -77,7 +77,7 @@ class StashConfig(TypedDict, total=False):
     stash in place.
 
     Attributes:
-        storage: Storage backend. Defaults to InMemoryStorage when omitted.
+        storage: Storage backend. Defaults to the agent's ``storage``, then InMemoryStorage, when omitted.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
 
     Example:
