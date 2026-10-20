@@ -97,6 +97,8 @@ Pass one of these <Syntax py="stash" ts="stash" /> values in your context manage
 
 **Repository session managers (Python).** Use `SnapshotSessionManager` with <Syntax py="context_manager" ts="contextManager" />. Repository-based session managers, such as `FileSessionManager`, `S3SessionManager`, and the AgentCore Memory session manager, do not persist context reductions. A restored agent reloads the full history and runs reduction again, so summarization re-runs on every restore. The SDK warns when you combine the two.
 
+**Reasoning content.** Context reduction does not preserve reasoning (thinking) blocks from the messages it reduces. Summarization leaves reasoning out of the summary, because a reasoning block's signature is only valid in the conversation that produced it, and removing messages removes their reasoning too. The stash does not store reasoning, so the retrieval tool cannot recover it. Messages that are not reduced keep their reasoning, and offloading never edits reasoning blocks in place. If your model carries thinking forward across turns, expect reduced turns to lose it.
+
 ## Migrating to the strategy API
 
 If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `conversation_manager`, use these examples as starting points. Review the strategy conditions and preservation settings for your workload because the strategy API does not map one-to-one to every existing option.
