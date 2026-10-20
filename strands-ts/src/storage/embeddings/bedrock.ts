@@ -55,13 +55,13 @@ export function bedrockEmbedder(config?: BedrockEmbedderConfig): Embedder {
   }
   const modelId = config?.modelId ?? 'amazon.titan-embed-text-v2:0'
   let client: import('@aws-sdk/client-bedrock-runtime').BedrockRuntimeClient | undefined = config?.bedrockClient
+  // Loaded once on first call and reused for every later embedding.
+  let sdk: Promise<typeof import('@aws-sdk/client-bedrock-runtime')> | undefined
 
   return async (text: string): Promise<number[]> => {
-    if (!client) {
-      const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime')
-      client = new BedrockRuntimeClient(config?.region ? { region: config.region } : {})
-    }
-    const { InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime')
+    sdk ??= import('@aws-sdk/client-bedrock-runtime')
+    const { BedrockRuntimeClient, InvokeModelCommand } = await sdk
+    client ??= new BedrockRuntimeClient(config?.region ? { region: config.region } : {})
     const response = await client.send(
       new InvokeModelCommand({
         modelId,

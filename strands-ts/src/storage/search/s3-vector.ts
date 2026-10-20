@@ -43,35 +43,17 @@ export interface S3VectorSearchStrategyConfig {
 /**
  * Vector search for {@link S3Storage}, backed by Amazon S3 Vectors.
  *
- * A derived index over the bucket's content, not a separate store: `S3Storage` calls
- * {@link index} on every write (one embedder call plus a `PutVectors`), {@link remove}
- * on every delete, and {@link search} on search. The S3 Vectors SDK is loaded lazily on
- * first use and declared as an optional peer dependency.
+ * A derived index over the bucket: `S3Storage` calls {@link index} on every write (one
+ * embedder call plus a `PutVectors`), {@link remove} on every delete, and {@link search}
+ * on search. Only works with `S3Storage`; each storage backend pairs with its own native
+ * vector index, and only the {@link Embedder} is shared.
  *
- * This strategy only works with `S3Storage`; passing it to another backend is a compile
- * error. Each storage backend pairs with its own native vector index (S3 Vectors for S3,
- * vector indexes for DynamoDB, pgvector for Postgres), and only the {@link Embedder} is
- * shared across backends.
- *
- * With no config it uses the vector bucket `<bucket>-vectors`, the index `default`,
- * Bedrock Titan Text Embeddings V2, and the storage's region. Vectors are keyed by the
- * full object key including the storage prefix, so storages that share a bucket under
- * different prefixes can share one index without overwriting each other's vectors.
- * A strategy instance resolves its clients on first use, so attach each instance to a
- * single storage.
- *
- * Only UTF-8 text is indexed. Empty values and values that are not valid UTF-8 are
- * stored but not indexed.
- *
- * The vector bucket and index must already exist; this strategy does not create
- * them. The index dimension must match the embedder (1024 for the default
- * Titan Text Embeddings V2 model). For example:
- *
- * ```bash
- * aws s3vectors create-vector-bucket --vector-bucket-name my-bucket-vectors
- * aws s3vectors create-index --vector-bucket-name my-bucket-vectors --index-name default \
- *   --data-type float32 --dimension 1024 --distance-metric cosine
- * ```
+ * Defaults: vector bucket `<bucket>-vectors`, index `default`, Titan Text Embeddings V2,
+ * and the storage's region. The vector bucket and index must already exist, with a
+ * dimension matching the embedder (1024 for Titan V2). Vectors are keyed by the full object
+ * key, so storages sharing a bucket under different prefixes can share one index. Empty and
+ * non-UTF-8 values are stored but not indexed, and clear any earlier vector for that key.
+ * Attach each instance to a single storage.
  *
  * @example
  * ```typescript
@@ -94,6 +76,7 @@ export interface S3VectorSearchStrategyConfig {
 export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private readonly _config: S3VectorSearchStrategyConfig
   private _client: import('@aws-sdk/client-s3vectors').S3VectorsClient | undefined
+  private _sdk: Promise<typeof import('@aws-sdk/client-s3vectors')> | undefined
   private _embedder: Embedder | undefined
 
   /**
@@ -114,6 +97,9 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   /**
    * Embeds and stores a vector for the given key.
    *
+   * Empty or non-UTF-8 values are not embedded. Any vector from a previous write to the
+   * same key is removed instead, so the index never matches content that is no longer stored.
+   *
    * @param storage - The storage the content was written to
    * @param key - The storage key to associate the vector with
    * @param data - The raw bytes to embed
@@ -121,12 +107,13 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   async index(storage: S3Storage, key: string, data: Uint8Array): Promise<void> {
     const text = decodeText(data)
     if (!text) {
-      logger.warn(`key=<${key}> | value is empty or not valid utf-8 text | skipping vector index`)
+      logger.warn(`key=<${key}> | value is empty or not valid utf-8 text | removing any existing vector`)
+      await this.remove(storage, key)
       return
     }
     const vector = await this._getEmbedder(storage)(text)
     const client = await this._getClient(storage)
-    const { PutVectorsCommand } = await import('@aws-sdk/client-s3vectors')
+    const { PutVectorsCommand } = await this._getSdk()
     await client.send(
       new PutVectorsCommand({
         ...this._target(storage),
@@ -144,7 +131,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    */
   async remove(storage: S3Storage, key: string): Promise<void> {
     const client = await this._getClient(storage)
-    const { DeleteVectorsCommand } = await import('@aws-sdk/client-s3vectors')
+    const { DeleteVectorsCommand } = await this._getSdk()
     await client.send(new DeleteVectorsCommand({ ...this._target(storage), keys: [storage.prefix + key] }))
   }
 
@@ -158,7 +145,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
     const queryVector = await this._getEmbedder(storage)(query)
     const client = await this._getClient(storage)
-    const { QueryVectorsCommand } = await import('@aws-sdk/client-s3vectors')
+    const { QueryVectorsCommand } = await this._getSdk()
     const response = await client.send(
       new QueryVectorsCommand({
         ...this._target(storage),
@@ -198,9 +185,15 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     return this._embedder
   }
 
+  /** Loads the S3 Vectors SDK once per instance; later calls reuse the same module. */
+  private _getSdk(): Promise<typeof import('@aws-sdk/client-s3vectors')> {
+    this._sdk ??= import('@aws-sdk/client-s3vectors')
+    return this._sdk
+  }
+
   private async _getClient(storage: S3Storage): Promise<import('@aws-sdk/client-s3vectors').S3VectorsClient> {
     if (this._client) return this._client
-    const { S3VectorsClient } = await import('@aws-sdk/client-s3vectors')
+    const { S3VectorsClient } = await this._getSdk()
     const region = this._region(storage)
     this._client = new S3VectorsClient(region ? { region } : {})
     return this._client
@@ -212,7 +205,8 @@ function decodeText(data: Uint8Array): string | undefined {
   if (data.length === 0) return undefined
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(data)
-  } catch {
+  } catch (error: unknown) {
+    logger.debug(`bytes=<${data.length}>, error=<${String(error)}> | failed to decode value as utf-8`)
     return undefined
   }
 }

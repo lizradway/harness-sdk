@@ -254,13 +254,20 @@ describe('S3VectorSearchStrategy', () => {
     it.each([
       ['empty', new Uint8Array()],
       ['binary', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe])],
-    ])('skips indexing %s values', async (_label, data) => {
+    ])('does not embed %s values and removes any previous vector for the key', async (_label, data) => {
+      mockSend.mockResolvedValue({})
       const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
 
-      await strategy.index(storage, 'logo.png', data)
+      await strategy.index(storage, 'notes.md', new TextEncoder().encode('old text'))
+      await strategy.index(storage, 'notes.md', data)
 
-      expect(fakeEmbedder).not.toHaveBeenCalled()
-      expect(mockSend).not.toHaveBeenCalled()
+      expect(fakeEmbedder).toHaveBeenCalledTimes(1)
+      expect(mockPutVectorsCommand).toHaveBeenCalledTimes(1)
+      expect(mockDeleteVectorsCommand).toHaveBeenCalledWith({
+        vectorBucketName: 'my-bucket-vectors',
+        indexName: 'default',
+        keys: ['notes.md'],
+      })
     })
   })
 
