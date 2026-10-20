@@ -13,7 +13,10 @@ Verify that everything a documentation page states is true of the code in this r
 
 ## Inputs
 
-- **Target**: one or more pages under `site/src/content/docs/`, or a docs PR / branch. To scope to a branch, list changed pages with `git diff --name-only origin/main... -- site/src/content/docs`.
+- **Target**: the pages to verify. Verify exactly the pages you're given and nothing else; one or two named pages is the normal case. Accepted forms:
+  - one or more page paths under `site/src/content/docs/` (or their published URLs)
+  - a docs PR or branch: verify only its changed pages, listed with `git diff --name-only origin/main... -- site/src/content/docs`
+- **No target given:** ask which pages to verify. Never default to the whole site; a full sweep happens only when explicitly requested.
 - **Stale-page sweep** (optional): given a code change, find the pages that describe it. Search `sourceLinks` and prose for the changed paths and symbols: `grep -rn "<changed/path>\|<SymbolName>" site/src/content/docs`.
 
 ## Where the truth lives
@@ -73,7 +76,7 @@ For every claim, find the code that decides it and record the `file:line` eviden
 - **Check each language independently.** Python and TypeScript are separate implementations; matching names do not imply matching behavior or defaults. A claim in shared prose must hold in every language the page covers.
 - **Check that it is public.** A symbol that exists but is not exported (not in `__all__`, not in the `index.ts` barrel, tagged `@internal`, or only under `./internal`) gets the `internal` tag even if the example works.
 - **Check lifecycle markers.** Look for deprecation warnings, `@deprecated`, and experimental namespaces, and compare them with the page's `experimental` frontmatter and wording.
-- **Check the version it ships in.** Readers install published packages, not `main`. Find the commit that introduced a feature (`git log -S '<symbol>' --oneline -- <path>`) and the first release containing it (`git tag --contains <commit> | grep -E '^(python|typescript)/'`). Behavior not yet in a release gets the `unreleased` tag. Harness packages depend on the published SDK (`strands-agents` range in `harness-py/pyproject.toml`, `@strands-agents/sdk` range in `harness-ts/package.json`), so a harness page that relies on SDK behavior needs that behavior inside the range.
+- **Check the version it ships in.** Readers install published packages, not `main`. Find the commit that introduced a feature (`git log -S '<symbol>' --oneline -- <path>`) and the first release containing it (`git tag --contains <commit> | grep -E '^python/v[0-9]' | sort -V | head -1`, or `^typescript/v[0-9]` for TypeScript; the SDKs share history, so always filter to the right language). Search for the line that exports the symbol (the `index.ts` barrel or `__init__.py`), since `git log -S` on the current file path can land on a later move instead of the first release. Behavior not yet in a release gets the `unreleased` tag. Harness packages depend on the published SDK (`strands-agents` range in `harness-py/pyproject.toml`, `@strands-agents/sdk` range in `harness-ts/package.json`), so a harness page that relies on SDK behavior needs that behavior inside the range.
 - **Check `sourceLinks`.** Each path exists, and it is the file that implements what the page describes, not just a related file.
 - **Check parity claims.** If the page says both SDKs behave the same, show it for both. If one SDK lacks the feature, the `languages` frontmatter and tabs must say so.
 
@@ -87,7 +90,9 @@ Reading is not enough for code blocks; compile them, and run them when you can. 
 npm run typecheck:snippets
 ```
 
-This covers every `.ts` file under `site/src/content/docs/` against the local `strands-ts`. Then check each rendered block on its own: the `_imports` region plus the body region must define everything the body uses, since the lines outside the markers never render.
+It uses `tsc` and `@types/node` from the root `node_modules`, so `site/test-snippets/` needs no install of its own (it has no lockfile, so `npm ci` there fails). It type-checks every snippet file on the site, so a failure elsewhere doesn't fail this page: report only errors in this page's snippet files, and note that others exist. Confirm this page's files were included with `npx tsc -p site/test-snippets --listFiles | grep <page-dir>`.
+
+Then check each rendered block on its own: the `_imports` region plus the body region must define everything the body uses, since the lines outside the markers never render. Type-check each rendered block verbatim, imports region plus body region. A region that opens a class or function but ends before it closes is `incorrect`, because the reader copies a block that doesn't compile. If several regions are meant to be read as one piece (e.g. a class body and a method shown separately), also check them combined, and note in the evidence which check each result came from.
 
 **Inlined TypeScript:** not covered by `typecheck:snippets`. Copy each block verbatim into a scratch `.ts` file and type-check it against the package it imports from.
 
@@ -98,7 +103,7 @@ mkdir -p .context/verify/ts
 echo '{ "type": "module" }' > .context/verify/ts/package.json
 # write each block to .context/verify/ts/<n>.ts, then add .context/verify/ts/tsconfig.json:
 #   { "extends": "../../../strands-ts/tsconfig.base.json",
-#     "compilerOptions": { "noEmit": true, "rootDir": ".", "types": [], "noUnusedLocals": false },
+#     "compilerOptions": { "noEmit": true, "rootDir": ".", "types": ["node"], "noUnusedLocals": false },
 #     "include": ["./*.ts"] }
 npx tsc -p .context/verify/ts/tsconfig.json
 ```
@@ -131,6 +136,8 @@ cd .context/verify && ../verify-venv/bin/python <n>.py
 Install only what the page's install line or comment installs, run the block, and only then add extras. If the block fails until you add an extra the page doesn't mention, the install line is `incorrect` with `high` impact. Run from inside `.context/`, because agents and harnesses can create session or memory directories relative to the working directory.
 
 Most blocks construct an agent and then invoke it. Construction usually needs no credentials, so run the block up to the first model call; it catches wrong imports, parameter names, and types. Use `inspect.signature(...)` to confirm keyword names and defaults the block doesn't exercise.
+
+**Code that calls an external system** (a CLI binary, a VM, a remote host): put a stub on `PATH` that stands in for it, so the rest of the block runs for real. For example, a fake `fc-exec` that drops its VM argument and runs the remaining command locally lets a custom-sandbox sample run end to end. Say in the evidence that a stub was used. To probe for hangs, use in-language timeouts (`asyncio.wait_for`, `Promise.race`); macOS has no `timeout` command.
 
 **Running end to end:** only run a full invocation when it needs no credentials, or when credentials are clearly configured in the environment. Otherwise record how far you got (`read` or `compiled`) in the claim's *Checked by* field. Never report a block as `executed` when it was only compiled.
 
@@ -215,7 +222,7 @@ Not claims: [line numbers of motivation/opinion sentences you skipped]
 | `python .context/verify/3.py` (construction only, no model call) | pass |
 ```
 
-The full inventory lets a reviewer audit the verifier, so include it even when there are no findings. For multi-page runs, write one report per page, then a summary table of pages by high / medium / low finding counts.
+The full inventory lets a reviewer audit the verifier, so include it even when there are no findings. For multi-page runs, write one report per page, then a summary table of pages by high / medium / low finding counts. Save each report to `.context/docs-verifier/<page-slug>.md` and also return it in your reply.
 
 ## What This Skill Does NOT Do
 
