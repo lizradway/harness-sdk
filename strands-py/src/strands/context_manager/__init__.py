@@ -9,14 +9,13 @@ from ._context_manager import ContextManager
 from ._methods.summarize import SummarizeConfig
 from ._methods.truncate import TruncateConfig
 from ._strategies.offload import Offload
-from ._strategies.offload.base import OffloadConditions, OffloadTarget
+from ._strategies.offload.base import OffloadTarget
 from ._types import ContextManagerConfig, StashConfig
 
 __all__ = [
     "ContextManager",
     "ContextManagerConfig",
     "Offload",
-    "OffloadConditions",
     "OffloadTarget",
     "StashConfig",
     "SummarizeConfig",

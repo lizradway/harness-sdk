@@ -5,10 +5,12 @@ import pytest
 import strands.context_manager as context_manager
 import strands.experimental.context_manager as experimental_context_manager
 from strands.context_manager import _presets, _types
+from strands.context_manager._strategies.offload import base as offload_base
 
 EXPECTED_INTERNAL = {
     "ContextState": _types.ContextState,
     "ContextStrategy": _types.ContextStrategy,
+    "OffloadConditions": offload_base.OffloadConditions,
     "STRATEGY_PRESET_NAMES": _presets.STRATEGY_PRESET_NAMES,
     "StrategyPresetName": _presets.StrategyPresetName,
 }

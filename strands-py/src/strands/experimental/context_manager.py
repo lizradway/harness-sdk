@@ -12,7 +12,6 @@ _PUBLIC_NAMES = {
     "ContextManager": "_context_manager",
     "ContextManagerConfig": "_types",
     "Offload": "_strategies.offload",
-    "OffloadConditions": "_strategies.offload.base",
     "OffloadTarget": "_strategies.offload.base",
     "StashConfig": "_types",
     "SummarizeConfig": "_methods.summarize",
@@ -23,6 +22,7 @@ _PUBLIC_NAMES = {
 _INTERNAL_NAMES = {
     "ContextState": "_types",
     "ContextStrategy": "_types",
+    "OffloadConditions": "_strategies.offload.base",
     "STRATEGY_PRESET_NAMES": "_presets",
     "StrategyPresetName": "_presets",
 }
