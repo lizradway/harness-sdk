@@ -5,7 +5,7 @@ description: Exhaustively verify a documentation page against the repo source �
 
 # Documentation Verifier
 
-Verify that everything a documentation page states is true of the code in this repo right now. Produces a claim-by-claim report where every verdict cites the `file:line` that backs it.
+Verify that everything a documentation page states is true of the code in this repo right now. Produces a claim-by-claim report where every assessment cites the `file:line` that backs it.
 
 **How this differs from the other docs skills:** `docs-reviewer` checks voice and style. `docs-audit` decides whether a page needs work, and accuracy is one of five things it skims. `docs-verifier` checks nothing but truth, and checks all of it: every code block, every parameter, every default, every number, every behavioral sentence. It ignores voice, structure, and terminology entirely.
 
@@ -71,9 +71,9 @@ For every claim, find the code that decides it and record the `file:line` eviden
 
 - **Trace behavior, don't infer it.** A function name, docstring, or comment is not evidence that the code does what it says. Follow the actual code path. For numbers, find the constant (e.g. `_CACHE_TTL_SECONDS = 15 * 60`) and every place it is used.
 - **Check each language independently.** Python and TypeScript are separate implementations; matching names do not imply matching behavior or defaults. A claim in shared prose must hold in every language the page covers.
-- **Check that it is public.** A symbol that exists but is not exported (not in `__all__`, not in the `index.ts` barrel, tagged `@internal`, or only under `./internal`) is a finding even if the example works.
+- **Check that it is public.** A symbol that exists but is not exported (not in `__all__`, not in the `index.ts` barrel, tagged `@internal`, or only under `./internal`) gets the `internal` tag even if the example works.
 - **Check lifecycle markers.** Look for deprecation warnings, `@deprecated`, and experimental namespaces, and compare them with the page's `experimental` frontmatter and wording.
-- **Check the version it ships in.** Readers install published packages, not `main`. Find the commit that introduced a feature (`git log -S '<symbol>' --oneline -- <path>`) and the first release containing it (`git tag --contains <commit> | grep -E '^(python|typescript)/'`). Unreleased behavior described as available is ⚠️. Harness packages depend on the published SDK (`strands-agents` range in `harness-py/pyproject.toml`, `@strands-agents/sdk` range in `harness-ts/package.json`), so a harness page that relies on SDK behavior needs that behavior inside the range.
+- **Check the version it ships in.** Readers install published packages, not `main`. Find the commit that introduced a feature (`git log -S '<symbol>' --oneline -- <path>`) and the first release containing it (`git tag --contains <commit> | grep -E '^(python|typescript)/'`). Behavior not yet in a release gets the `unreleased` tag. Harness packages depend on the published SDK (`strands-agents` range in `harness-py/pyproject.toml`, `@strands-agents/sdk` range in `harness-ts/package.json`), so a harness page that relies on SDK behavior needs that behavior inside the range.
 - **Check `sourceLinks`.** Each path exists, and it is the file that implements what the page describes, not just a related file.
 - **Check parity claims.** If the page says both SDKs behave the same, show it for both. If one SDK lacks the feature, the `languages` frontmatter and tabs must say so.
 
@@ -128,11 +128,11 @@ mkdir -p .context/verify   # write each block to .context/verify/<n>.py
 cd .context/verify && ../verify-venv/bin/python <n>.py
 ```
 
-Install only what the page's install line or comment installs, run the block, and only then add extras. If the block fails until you add an extra the page doesn't mention, the install line is ❌. Run from inside `.context/`, because agents and harnesses can create session or memory directories relative to the working directory.
+Install only what the page's install line or comment installs, run the block, and only then add extras. If the block fails until you add an extra the page doesn't mention, the install line is `incorrect` with `high` impact. Run from inside `.context/`, because agents and harnesses can create session or memory directories relative to the working directory.
 
 Most blocks construct an agent and then invoke it. Construction usually needs no credentials, so run the block up to the first model call; it catches wrong imports, parameter names, and types. Use `inspect.signature(...)` to confirm keyword names and defaults the block doesn't exercise.
 
-**Running end to end:** only run a full invocation when it needs no credentials, or when credentials are clearly configured in the environment. Otherwise record the claim as *verified statically, not executed*. Never report a block as run when it was only compiled.
+**Running end to end:** only run a full invocation when it needs no credentials, or when credentials are clearly configured in the environment. Otherwise record how far you got (`read` or `compiled`) in the claim's *Checked by* field. Never report a block as `executed` when it was only compiled.
 
 **Shell and CLI commands:** confirm flags and subcommands against the CLI source or `--help`, and package names against `pyproject.toml` / `package.json`. Don't run commands that install globally, deploy, or call paid services just to verify a page.
 
@@ -142,18 +142,43 @@ Most blocks construct an agent and then invoke it. Construction usually needs no
 - Anchors (`#section`): the heading exists on the target page.
 - API reference and GitHub links: they point at a real symbol or path on `main`.
 
-### Step 6: Assign verdicts
+### Step 6: Assess each claim
 
-Every inventory item gets exactly one verdict:
+Record each claim on four separate fields. Keep them separate: a claim can be correct and still fragile, or wrong in a way that barely matters.
 
-| Verdict | Meaning | Required evidence |
-|---------|---------|-------------------|
-| ✅ Verified | True as written | `file:line` (and the command, for mechanical checks) |
-| ❌ Incorrect | The page says X; the code says Y | `file:line` showing Y, plus a suggested correction |
-| ⚠️ At risk | True today, but deprecated, internal, experimental without saying so, true in only one language, unreleased, or working only by accident (e.g. an import that binds a module rather than the documented object, but still happens to work) | `file:line` and what makes it fragile |
-| ❓ Unverifiable | No source settles it (e.g. behavior delegated to an external service) | Why, and what would settle it |
+**Accuracy** (every claim, exactly one value):
 
-Don't round ❓ up to ✅. If you can't prove a claim, say so (see Tier 4 in `../../references/code-verification.md`).
+| Value | Meaning | Required evidence |
+|-------|---------|-------------------|
+| `correct` | True as written | `file:line` |
+| `incorrect` | The page says X; the code says Y | `file:line` showing Y, plus a suggested correction |
+| `incomplete` | True only under a condition the page leaves out, or true for some cases the page generalizes to all ("the summarizer uses the provider's small model" when only some providers map one) | `file:line` of the condition or the exception, plus the qualifier to add |
+| `unverifiable` | No source settles it (e.g. behavior delegated to an external service) | Why, and what would settle it |
+
+Don't round `unverifiable` up to `correct`. If you can't prove a claim, say so (see Tier 4 in `../../references/code-verification.md`).
+
+**Impact** (only for claims that aren't `correct`): what happens to a reader who trusts the page.
+
+| Value | Meaning | Examples |
+|-------|---------|----------|
+| `high` | Copied code fails, or the reader acts on wrong behavior | wrong import or parameter, missing install extra, wrong default the reader relies on |
+| `medium` | Misleading, but the reader recovers by trying or reading further | overgeneralized behavior, link to a page that doesn't cover the topic, wrong error type |
+| `low` | Hygiene; no reader is misled | incomplete `sourceLinks`, prose naming a language-specific identifier without `<Syntax>` |
+
+**Checked by** (every claim): the strongest check you actually ran.
+
+- `read`: traced in source only
+- `compiled`: type-checked or import-checked
+- `executed`: ran, at least up to construction
+
+**Risk tags** (any claim, including `correct` ones; zero or more):
+
+- `deprecated`: marked deprecated in source
+- `internal`: not in the public surface (see Step 3)
+- `unreleased`: on `main` but not in a published release, or outside the dependency range a harness ships with
+- `one-language`: holds in one SDK but the page implies both
+- `accidental`: works, but not for the reason the page implies (e.g. an import that binds a module rather than the documented object, yet still registers the tool)
+- `experimental`: experimental in source, but the page's frontmatter or wording doesn't say so
 
 ## Output Format
 
@@ -162,22 +187,23 @@ Don't round ❓ up to ✅. If you can't prove a claim, say so (see Tier 4 in `..
 
 **File:** site/src/content/docs/[path]
 **Verified against:** [short SHA recorded at the start] on [branch]
-**Result:** [N] claims — ✅ [n] · ❌ [n] · ⚠️ [n] · ❓ [n]
+**Result:** [N] claims, [n] findings: [n] high · [n] medium · [n] low · [n] unverifiable · [n] risk-tagged
 
 ### Findings
 
-| # | Line | Claim | Verdict | Evidence | Suggested fix |
-|---|------|-------|---------|----------|---------------|
-| 7 | 18 | Fetched content is cached for 30 minutes | ❌ | harness-py/src/strands_harness/tools/web_fetch.py:37 sets 15 × 60 s | "cached for 15 minutes" |
+| # | Line | Claim | Accuracy | Impact | Tags | Checked by | Evidence | Suggested fix |
+|---|------|-------|----------|--------|------|------------|----------|---------------|
+| 8 | 13 | `web_fetch` and `web_search` are both on by default | incorrect | high | | executed | harness-py/src/strands_harness/agent.py:121-139 turns `web_search` off when the model has no native search, and the default Bedrock model has none | "`web_search` turns on only where the provider has native search" |
+| 32 | 62 | `from strands.vended_tools import web_fetch` imports the tool | correct | | accidental | executed | binds the module; `Agent` still registers the tool by scanning it | `from strands.vended_tools.web_fetch import web_fetch` |
 
-[Only ❌, ⚠️, and ❓ rows here, ❌ first. Write "None" if every claim verified.]
+[Rows for every claim that isn't `correct`, plus every risk-tagged claim. Sort by impact (high, medium, low), then unverifiable, then risk-tagged correct claims. Write "None" if no row qualifies.]
 
 ### Full Claim Inventory
 
-| # | Line | Claim | Verdict | Evidence |
-|---|------|-------|---------|----------|
-| 1 | 12 | `web_fetch` and `web_search` are on by default | ✅ | [file:line] |
-| … | | | | |
+| # | Line | Claim | Accuracy | Checked by | Evidence |
+|---|------|-------|----------|------------|----------|
+| 14 | 20-21 | Fetched content is cached for 15 minutes | correct | read | harness-py/src/strands_harness/tools/web_fetch.py:37 (`15 * 60`), used at :182, :189 |
+| … | | | | | |
 
 Not claims: [line numbers of motivation/opinion sentences you skipped]
 
@@ -189,11 +215,11 @@ Not claims: [line numbers of motivation/opinion sentences you skipped]
 | `python .context/verify/3.py` (construction only, no model call) | pass |
 ```
 
-The full inventory lets a reviewer audit the verifier, so include it even when there are no findings. For multi-page runs, write one report per page, then a summary table of pages by finding count.
+The full inventory lets a reviewer audit the verifier, so include it even when there are no findings. For multi-page runs, write one report per page, then a summary table of pages by high / medium / low finding counts.
 
 ## What This Skill Does NOT Do
 
 - Does not review voice, style, structure, or terminology (use `docs-reviewer` or `docs-audit`).
 - Does not edit SDK, harness, or CLI source.
-- Does not rewrite the page by default. After the report, offer to apply the ❌ fixes as docs-only edits; make them only if the user agrees.
+- Does not rewrite the page by default. After the report, offer to apply the suggested fixes as docs-only edits, highest impact first; make them only if the user agrees.
 - Does not commit, push, or open PRs.
