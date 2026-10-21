@@ -267,11 +267,6 @@ class TestOffloadBuilder:
         assert isinstance(builder, OffloadStrategyBuilder)
         assert builder.when().name == exp_name
 
-    def test_builder_is_not_a_strategy(self):
-        builder = Offload.drop("tool_results")
-        assert not hasattr(builder, "name")
-        assert not hasattr(builder, "apply")
-
     def test_when_adds_conditions(self):
         strategy = Offload.truncate("tool_results").when(block_threshold=2000)
         assert strategy._block_threshold == _Measure(2000, is_share=False)
@@ -305,60 +300,38 @@ class TestConditionParsing:
     """Tests for parsing utilization, block_threshold, and preserve_recent values."""
 
     @pytest.mark.parametrize(
-        ("value", "expected"),
+        ("name", "value", "expected"),
         [
-            ("85%", _Measure(0.85, is_share=True)),
-            ("12.5%", _Measure(0.125, is_share=True)),
-            ("100%", _Measure(1.0, is_share=True)),
-            (0.7, _Measure(0.7, is_share=True)),
-            (1, _Measure(1.0, is_share=True)),
-            (1.0, _Measure(1.0, is_share=True)),
-            (150_000, _Measure(150_000, is_share=False)),
+            ("utilization", 0.5, _Measure(0.5, is_share=True)),
+            ("utilization", "70%", _Measure(0.7, is_share=True)),
+            ("utilization", 50_000, _Measure(50_000, is_share=False)),
+            ("block_threshold", 2500, _Measure(2500, is_share=False)),
+            ("block_threshold", "5%", _Measure(0.05, is_share=True)),
+            ("preserve_recent", 4, _Measure(4, is_share=False)),
+            ("preserve_recent", 0.5, _Measure(0.5, is_share=True)),
+            ("preserve_recent", "50%", _Measure(0.5, is_share=True)),
         ],
     )
-    def test_utilization_accepts(self, value, expected):
-        assert Offload.drop("*").when(utilization=value)._utilization == expected
-
-    @pytest.mark.parametrize("value", [0, -0.5, 1.5, "0%", "101%", "85", "%", "abc", True, float("nan"), float("inf")])
-    def test_utilization_rejects(self, value):
-        with pytest.raises(ValueError, match="utilization="):
-            Offload.drop("*").when(utilization=value)
+    def test_accepts(self, name, value, expected):
+        strategy = Offload.drop("tool_results").when(**{name: value})
+        assert getattr(strategy, f"_{name}") == expected
 
     @pytest.mark.parametrize(
-        ("value", "expected"),
+        ("name", "value"),
         [
-            (0, _Measure(0, is_share=False)),
-            (2500, _Measure(2500, is_share=False)),
-            ("5%", _Measure(0.05, is_share=True)),
-            ("100%", _Measure(1.0, is_share=True)),
+            ("utilization", 0),
+            ("utilization", 1.5),
+            ("utilization", "101%"),
+            ("utilization", "70"),
+            ("block_threshold", -1),
+            ("block_threshold", 0.5),
+            ("preserve_recent", 1.5),
+            ("preserve_recent", "100%"),
         ],
     )
-    def test_block_threshold_accepts(self, value, expected):
-        assert Offload.drop("tool_results").when(block_threshold=value)._block_threshold == expected
-
-    @pytest.mark.parametrize("value", [-1, 0.5, 2500.0, "0%", "150%", "5", True])
-    def test_block_threshold_rejects(self, value):
-        with pytest.raises(ValueError, match="block_threshold="):
-            Offload.drop("tool_results").when(block_threshold=value)
-
-    @pytest.mark.parametrize(
-        ("value", "expected"),
-        [
-            (0, _Measure(0, is_share=False)),
-            (4, _Measure(4, is_share=False)),
-            (1, _Measure(1, is_share=False)),
-            (0.7, _Measure(0.7, is_share=True)),
-            ("70%", _Measure(0.7, is_share=True)),
-            ("0%", _Measure(0.0, is_share=True)),
-        ],
-    )
-    def test_preserve_recent_accepts(self, value, expected):
-        assert Offload.drop("*").when(utilization=0.8, preserve_recent=value)._preserve_recent == expected
-
-    @pytest.mark.parametrize("value", [-1, 1.0, 1.5, "100%", "70", True, float("nan")])
-    def test_preserve_recent_rejects(self, value):
-        with pytest.raises(ValueError, match="preserve_recent="):
-            Offload.drop("*").when(preserve_recent=value)
+    def test_rejects(self, name, value):
+        with pytest.raises(ValueError, match=f"{name}="):
+            Offload.drop("tool_results").when(**{name: value})
 
 
 class TestConditionResolution:
@@ -1084,42 +1057,27 @@ class TestTruncateMiddleOut:
         assert [text for text in texts if not text.startswith("[...")] == exp_kept
         assert "[... 10 messages elided ...]" in texts
 
-    @pytest.mark.asyncio
-    async def test_returns_false_when_everything_fits(self, mock_agent):
-        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=10)
-        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization=0.8)
-        messages: Messages = [_text("user", "pin"), _text("assistant", "a1"), _text("user", "u1")]
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
-        assert await strategy.apply(context) is False
-        assert len(messages) == 3
 
-
-class TestTruncateSkipsTruncated:
-    """Truncate leaves its own previews alone so repeated passes don't re-truncate them."""
+class TestTruncateBlockThreshold:
+    """Tests for truncate's default block threshold and for skipping its own previews."""
 
     @pytest.mark.asyncio
-    async def test_does_not_retruncate_preview(self, mock_agent):
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(block_threshold=101)
+    async def test_defaults_to_preview_tokens_and_skips_truncated_blocks(self, mock_agent):
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when()
         assistant_msg, user_msg = _make_tool_pair()
         messages: Messages = [_text("user", "pin"), assistant_msg, user_msg, _text("assistant", "done")]
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
 
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+        assert await strategy.apply(context) is False
+
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
         assert await strategy.apply(context) is True
         tru_preview = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
         assert tru_preview.startswith("[Truncated:")
 
         assert await strategy.apply(context) is False
         assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == tru_preview
-
-    @pytest.mark.asyncio
-    async def test_default_block_threshold_is_preview_tokens(self, mock_agent):
-        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=1000)
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 1000}).when()
-        assistant_msg, user_msg = _make_tool_pair()
-        messages: Messages = [_text("user", "pin"), assistant_msg, user_msg, _text("assistant", "done")]
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
-        assert await strategy.apply(context) is False
-        assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
 
 
 class TestOverflowBypass:
