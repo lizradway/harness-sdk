@@ -1,8 +1,5 @@
 import type { Storage, StorageSearchResult } from '../storage.js'
 
-/** A function that produces an embedding vector from text. Provider-agnostic. */
-export type Embedder = (text: string) => Promise<number[]>
-
 /**
  * A pluggable search strategy for storage backends.
  *

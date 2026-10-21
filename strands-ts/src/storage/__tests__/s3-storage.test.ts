@@ -152,7 +152,7 @@ describe('S3Storage', () => {
     it('removes the vector on delete when using S3VectorSearchStrategy', async () => {
       mockSend.mockResolvedValue({})
       const strategy = new S3VectorSearchStrategy({
-        embedder: vi.fn(),
+        embedder: { embed: vi.fn() } as never,
         vectorBucketName: 'vecs',
         indexName: 'idx',
         s3VectorsClient: { send: vi.fn() } as never,
@@ -168,7 +168,7 @@ describe('S3Storage', () => {
     it('does not remove the vector when the object delete fails', async () => {
       mockSend.mockRejectedValue(new Error('InternalError'))
       const strategy = new S3VectorSearchStrategy({
-        embedder: vi.fn(),
+        embedder: { embed: vi.fn() } as never,
         vectorBucketName: 'vecs',
         indexName: 'idx',
         s3VectorsClient: { send: vi.fn() } as never,
@@ -209,7 +209,10 @@ describe('S3Storage', () => {
     it('wraps a vector removal failure in StorageError after the object is deleted', async () => {
       mockSend.mockResolvedValue({})
       const cause = new Error('AccessDeniedException')
-      const strategy = new S3VectorSearchStrategy({ embedder: vi.fn(), s3VectorsClient: { send: vi.fn() } as never })
+      const strategy = new S3VectorSearchStrategy({
+        embedder: { embed: vi.fn() } as never,
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
       vi.spyOn(strategy, 'remove').mockRejectedValue(cause)
       const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
 

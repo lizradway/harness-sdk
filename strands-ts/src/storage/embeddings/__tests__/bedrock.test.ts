@@ -11,25 +11,25 @@ vi.mock('@aws-sdk/client-bedrock-runtime', () => ({
   InvokeModelCommand: MockInvokeModelCommand,
 }))
 
-import { bedrockEmbedder } from '../bedrock.js'
+import { BedrockEmbedder } from '../bedrock.js'
+import { Embedder } from '../../search/embedder.js'
 import { StorageError } from '../../../errors.js'
 
-describe('bedrockEmbedder', () => {
+describe('BedrockEmbedder', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('returns a function', () => {
-    const embedder = bedrockEmbedder()
-    expect(typeof embedder).toBe('function')
+  it('is an Embedder', () => {
+    expect(new BedrockEmbedder()).toBeInstanceOf(Embedder)
   })
 
   it('calls Bedrock with the default Titan model', async () => {
     const embedding = [0.1, 0.2, 0.3]
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding })) })
 
-    const embedder = bedrockEmbedder()
-    const result = await embedder('hello world')
+    const embedder = new BedrockEmbedder()
+    const result = await embedder.embed('hello world')
 
     expect(result).toEqual(embedding)
     expect(MockInvokeModelCommand).toHaveBeenCalledWith({
@@ -43,12 +43,37 @@ describe('bedrockEmbedder', () => {
   it('uses a custom model ID', async () => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
-    const embedder = bedrockEmbedder({ modelId: 'amazon.titan-embed-text-v1' })
-    await embedder('test')
+    const embedder = new BedrockEmbedder({ modelId: 'amazon.titan-embed-text-v1' })
+    await embedder.embed('test')
 
     expect(MockInvokeModelCommand).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: 'amazon.titan-embed-text-v1' })
     )
+  })
+
+  it('sends a configured output dimension', async () => {
+    mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
+
+    const embedder = new BedrockEmbedder({ dimensions: 256 })
+    await embedder.embed('test')
+
+    expect(MockInvokeModelCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ body: JSON.stringify({ inputText: 'test', dimensions: 256 }) })
+    )
+  })
+
+  it.each(['cohere.embed-english-v3', 'amazon.nova-2-multimodal-embeddings-v1:0'])(
+    'rejects the non-Titan model %s at construction',
+    (modelId) => {
+      expect(() => new BedrockEmbedder({ modelId })).toThrow(StorageError)
+    }
+  )
+
+  it('accepts a model ARN and an inference profile ID', () => {
+    expect(
+      () => new BedrockEmbedder({ modelId: 'arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc' })
+    ).not.toThrow()
+    expect(() => new BedrockEmbedder({ modelId: 'us.amazon.titan-embed-text-v2:0' })).not.toThrow()
   })
 
   it.each([
@@ -57,16 +82,16 @@ describe('bedrockEmbedder', () => {
   ])('throws StorageError on %s', async (_label, body) => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify(body)) })
 
-    const embedder = bedrockEmbedder()
+    const embedder = new BedrockEmbedder()
 
-    await expect(embedder('test')).rejects.toThrow(StorageError)
+    await expect(embedder.embed('test')).rejects.toThrow(StorageError)
   })
 
   it('passes region to the client', async () => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
-    const embedder = bedrockEmbedder({ region: 'eu-west-1' })
-    await embedder('test')
+    const embedder = new BedrockEmbedder({ region: 'eu-west-1' })
+    await embedder.embed('test')
 
     expect(MockBedrockRuntimeClient).toHaveBeenCalledWith({ region: 'eu-west-1' })
   })
@@ -77,8 +102,8 @@ describe('bedrockEmbedder', () => {
       body: new TextEncoder().encode(JSON.stringify({ embedding: [0.5] })),
     })
 
-    const embedder = bedrockEmbedder({ bedrockClient: customClient })
-    const result = await embedder('test')
+    const embedder = new BedrockEmbedder({ bedrockClient: customClient })
+    const result = await embedder.embed('test')
 
     expect(result).toEqual([0.5])
     expect(customClient.send).toHaveBeenCalled()
@@ -87,15 +112,15 @@ describe('bedrockEmbedder', () => {
 
   it('throws when both bedrockClient and region are provided', () => {
     const customClient = { send: vi.fn() } as never
-    expect(() => bedrockEmbedder({ bedrockClient: customClient, region: 'eu-west-1' })).toThrow(StorageError)
+    expect(() => new BedrockEmbedder({ bedrockClient: customClient, region: 'eu-west-1' })).toThrow(StorageError)
   })
 
   it('reuses the client across calls', async () => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
-    const embedder = bedrockEmbedder()
-    await embedder('first')
-    await embedder('second')
+    const embedder = new BedrockEmbedder()
+    await embedder.embed('first')
+    await embedder.embed('second')
 
     expect(MockBedrockRuntimeClient).toHaveBeenCalledTimes(1)
     expect(mockSend).toHaveBeenCalledTimes(2)

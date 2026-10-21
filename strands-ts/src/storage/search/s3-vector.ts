@@ -1,16 +1,17 @@
 import type { StorageSearchResult } from '../storage.js'
 import type { S3Storage } from '../s3-storage.js'
-import type { Embedder, SearchStrategy } from './types.js'
+import type { SearchStrategy } from './types.js'
+import type { Embedder } from './embedder.js'
 
 import { StorageError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
-import { bedrockEmbedder } from '../embeddings/bedrock.js'
+import { BedrockEmbedder } from '../embeddings/bedrock.js'
 
 /** Configuration for {@link S3VectorSearchStrategy}. Every field is optional. */
 export interface S3VectorSearchStrategyConfig {
   /**
-   * Function that produces embedding vectors from text. Defaults to {@link bedrockEmbedder}
-   * (Titan Text Embeddings V2) in the resolved region.
+   * Produces the embedding vectors. Defaults to a {@link BedrockEmbedder} (Titan Text
+   * Embeddings V2) in the resolved region.
    */
   embedder?: Embedder
   /**
@@ -111,7 +112,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
       await this.remove(storage, key)
       return
     }
-    const vector = await this._getEmbedder(storage)(text)
+    const vector = await this._getEmbedder(storage).embed(text, { purpose: 'document' })
     const client = await this._getClient(storage)
     const { PutVectorsCommand } = await this._getSdk()
     await client.send(
@@ -143,7 +144,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    * @returns Matched keys under the storage's prefix with similarity scores, ranked best-first
    */
   async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
-    const queryVector = await this._getEmbedder(storage)(query)
+    const queryVector = await this._getEmbedder(storage).embed(query, { purpose: 'query' })
     const client = await this._getClient(storage)
     const { QueryVectorsCommand } = await this._getSdk()
     const response = await client.send(
@@ -180,7 +181,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private _getEmbedder(storage: S3Storage): Embedder {
     if (!this._embedder) {
       const region = this._region(storage)
-      this._embedder = bedrockEmbedder(region ? { region } : undefined)
+      this._embedder = new BedrockEmbedder(region ? { region } : undefined)
     }
     return this._embedder
   }

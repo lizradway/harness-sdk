@@ -15,27 +15,36 @@ vi.mock('@aws-sdk/client-s3vectors', () => ({
   DeleteVectorsCommand: mockDeleteVectorsCommand,
 }))
 
-const { defaultEmbedder, mockBedrockEmbedder } = vi.hoisted(() => {
-  const defaultEmbedder = vi.fn()
-  return { defaultEmbedder, mockBedrockEmbedder: vi.fn(() => defaultEmbedder) }
+const { defaultEmbed, MockBedrockEmbedder } = vi.hoisted(() => {
+  const defaultEmbed = vi.fn()
+  const MockBedrockEmbedder = vi.fn(function (this: { embed: typeof defaultEmbed }) {
+    this.embed = defaultEmbed
+  } as unknown as () => void)
+  return { defaultEmbed, MockBedrockEmbedder }
 })
-vi.mock('../../embeddings/bedrock.js', () => ({ bedrockEmbedder: mockBedrockEmbedder }))
+vi.mock('../../embeddings/bedrock.js', () => ({ BedrockEmbedder: MockBedrockEmbedder }))
 
 import type { SearchStrategy } from '../types.js'
 import type { LocalFileStorage } from '../../local-file-storage.js'
 import type { InMemoryStorage } from '../../in-memory-storage.js'
 import { S3VectorSearchStrategy } from '../s3-vector.js'
+import { Embedder, type EmbedOptions } from '../embedder.js'
 import { S3Storage } from '../../s3-storage.js'
 import { StorageError } from '../../../errors.js'
 
 describe('S3VectorSearchStrategy', () => {
-  const fakeEmbedder = vi.fn()
+  const fakeEmbed = vi.fn()
+  const fakeEmbedder = new (class extends Embedder {
+    embed(text: string, options?: EmbedOptions): Promise<number[]> {
+      return fakeEmbed(text, options)
+    }
+  })()
   const storage = new S3Storage('my-bucket')
 
   beforeEach(() => {
     vi.clearAllMocks()
-    fakeEmbedder.mockResolvedValue([0.1, 0.2, 0.3])
-    defaultEmbedder.mockResolvedValue([0.9, 0.8])
+    fakeEmbed.mockResolvedValue([0.1, 0.2, 0.3])
+    defaultEmbed.mockResolvedValue([0.9, 0.8])
   })
 
   describe('index', () => {
@@ -49,7 +58,7 @@ describe('S3VectorSearchStrategy', () => {
 
       await strategy.index(storage, 'notes/meeting.md', new TextEncoder().encode('discuss roadmap'))
 
-      expect(fakeEmbedder).toHaveBeenCalledWith('discuss roadmap')
+      expect(fakeEmbed).toHaveBeenCalledWith('discuss roadmap', { purpose: 'document' })
       expect(mockPutVectorsCommand).toHaveBeenCalledWith({
         vectorBucketName: 'my-vectors',
         indexName: 'memory-index',
@@ -75,7 +84,7 @@ describe('S3VectorSearchStrategy', () => {
 
       const results = await strategy.search(storage, 'roadmap planning')
 
-      expect(fakeEmbedder).toHaveBeenCalledWith('roadmap planning')
+      expect(fakeEmbed).toHaveBeenCalledWith('roadmap planning', { purpose: 'query' })
       expect(mockQueryVectorsCommand).toHaveBeenCalledWith({
         vectorBucketName: 'my-vectors',
         indexName: 'memory-index',
@@ -125,7 +134,7 @@ describe('S3VectorSearchStrategy', () => {
         keys: ['notes/meeting.md'],
       })
       expect(mockSend).toHaveBeenCalledTimes(1)
-      expect(fakeEmbedder).not.toHaveBeenCalled()
+      expect(fakeEmbed).not.toHaveBeenCalled()
     })
   })
 
@@ -152,9 +161,9 @@ describe('S3VectorSearchStrategy', () => {
       await strategy.search(new S3Storage('my-bucket', { region: 'eu-west-1' }), 'q')
       await strategy.search(new S3Storage('my-bucket', { region: 'eu-west-1' }), 'q2')
 
-      expect(mockBedrockEmbedder).toHaveBeenCalledTimes(1)
-      expect(mockBedrockEmbedder).toHaveBeenCalledWith({ region: 'eu-west-1' })
-      expect(defaultEmbedder).toHaveBeenCalledWith('q')
+      expect(MockBedrockEmbedder).toHaveBeenCalledTimes(1)
+      expect(MockBedrockEmbedder).toHaveBeenCalledWith({ region: 'eu-west-1' })
+      expect(defaultEmbed).toHaveBeenCalledWith('q', { purpose: 'query' })
       expect(mockQueryVectorsCommand).toHaveBeenCalledWith(
         expect.objectContaining({ queryVector: { float32: [0.9, 0.8] } })
       )
@@ -166,7 +175,7 @@ describe('S3VectorSearchStrategy', () => {
 
       await strategy.search(storage, 'q')
 
-      expect(mockBedrockEmbedder).toHaveBeenCalledWith(undefined)
+      expect(MockBedrockEmbedder).toHaveBeenCalledWith(undefined)
       expect(mockS3VectorsClient).toHaveBeenCalledWith({})
     })
 
@@ -186,7 +195,7 @@ describe('S3VectorSearchStrategy', () => {
       await strategy.search(new S3Storage('my-bucket', { region: 'eu-west-1' }), 'q')
 
       expect(mockS3VectorsClient).toHaveBeenCalledWith({ region: 'us-west-2' })
-      expect(mockBedrockEmbedder).toHaveBeenCalledWith({ region: 'us-west-2' })
+      expect(MockBedrockEmbedder).toHaveBeenCalledWith({ region: 'us-west-2' })
     })
   })
 
@@ -261,7 +270,7 @@ describe('S3VectorSearchStrategy', () => {
       await strategy.index(storage, 'notes.md', new TextEncoder().encode('old text'))
       await strategy.index(storage, 'notes.md', data)
 
-      expect(fakeEmbedder).toHaveBeenCalledTimes(1)
+      expect(fakeEmbed).toHaveBeenCalledTimes(1)
       expect(mockPutVectorsCommand).toHaveBeenCalledTimes(1)
       expect(mockDeleteVectorsCommand).toHaveBeenCalledWith({
         vectorBucketName: 'my-bucket-vectors',
@@ -273,7 +282,7 @@ describe('S3VectorSearchStrategy', () => {
 
   describe('failures', () => {
     it('propagates embedder errors from index without calling PutVectors', async () => {
-      fakeEmbedder.mockRejectedValue(new Error('ThrottlingException'))
+      fakeEmbed.mockRejectedValue(new Error('ThrottlingException'))
       const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
 
       await expect(strategy.index(storage, 'a.md', new TextEncoder().encode('hi'))).rejects.toThrow(

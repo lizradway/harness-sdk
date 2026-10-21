@@ -23,7 +23,7 @@ import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime'
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts'
 import { S3Storage } from '$/sdk/storage/s3-storage.js'
 import { S3VectorSearchStrategy } from '$/sdk/storage/search/s3-vector.js'
-import { bedrockEmbedder } from '$/sdk/storage/embeddings/bedrock.js'
+import { BedrockEmbedder } from '$/sdk/storage/embeddings/bedrock.js'
 import type { StorageSearchResult } from '$/sdk/storage/storage.js'
 import { bedrock } from './__fixtures__/model-providers.js'
 import { AWS_REGION } from './__fixtures__/_aws.js'
@@ -68,7 +68,7 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
       s3Client: s3,
       searchStrategy: new S3VectorSearchStrategy({
         s3VectorsClient: s3Vectors,
-        embedder: bedrockEmbedder({ bedrockClient: bedrockRuntime }),
+        embedder: new BedrockEmbedder({ bedrockClient: bedrockRuntime }),
       }),
     })
   }
