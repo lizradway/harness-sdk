@@ -106,7 +106,7 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 | Before | After |
 |--------|-------|
 | `SummarizingConversationManager(...)` | `Offload.summarize("*").when(utilization=0.85, preserve_recent=4)` |
-| `ContextOffloader(max_result_tokens=2500, preview_tokens=500)` | `Offload.truncate("tool_results", {"preview_tokens": 500}).when(block_threshold=2500)` |
+| `ContextOffloader(max_result_tokens=2500, preview_tokens=500)` | `Offload.truncate("tool_results", {"preview_tokens": 500}).when(threshold=2500)` |
 | `SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
 | `context_manager="auto"` | Unchanged |
 
@@ -116,7 +116,7 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 | Before | After |
 |--------|-------|
 | `new SummarizingConversationManager(...)` | `Offload.summarize("*").when({ utilization: 0.85, preserveRecent: 4 })` |
-| `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ blockThreshold: 2500 })` |
+| `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ threshold: 2500 })` |
 | `new SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
 | `contextManager: "auto"` | Unchanged |
 

@@ -7,7 +7,7 @@ async function basicConfig() {
     contextManager: {
       strategies: [
         Offload.truncate('toolResults').when({
-          blockThreshold: 2000,
+          threshold: 2000,
         }),
         Offload.summarize('*').when({
           utilization: 0.8,
@@ -23,7 +23,7 @@ async function truncate() {
   // --8<-- [start:truncate]
   Offload.truncate('toolResults', {
     previewTokens: 750,
-  }).when({ blockThreshold: 1500 })
+  }).when({ threshold: 1500 })
   // --8<-- [end:truncate]
 }
 
@@ -45,22 +45,22 @@ async function drop() {
 }
 
 async function conditions() {
-  // --8<-- [start:conditions_block_threshold]
+  // --8<-- [start:conditions_threshold]
   Offload.truncate('toolResults').when({
-    blockThreshold: 2000,
+    threshold: 2000,
   })
-  // --8<-- [end:conditions_block_threshold]
+  // --8<-- [end:conditions_threshold]
 
   // --8<-- [start:conditions_utilization]
   Offload.summarize('*').when({
-    utilization: '85%',
+    utilization: 0.85,
     preserveRecent: 4,
   })
   // --8<-- [end:conditions_utilization]
 
   // --8<-- [start:conditions_both]
   Offload.truncate('toolResults').when({
-    blockThreshold: 1500,
+    threshold: 1500,
     utilization: 0.9,
   })
   // --8<-- [end:conditions_both]

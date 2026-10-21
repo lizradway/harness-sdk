@@ -20,7 +20,7 @@ When the [built-in modes](./built-in-modes) don't fit, build a custom strategy p
 
 ## Strategy pipeline
 
-Strategies run as an ordered pipeline. Each strategy sees the output of the previous one, so order determines priority. If two strategies target the same content, the first one to shrink it below the next strategy's block threshold wins.
+Strategies run as an ordered pipeline. Each strategy sees the output of the previous one, so order determines priority. If two strategies target the same content, the first one to shrink it below the next strategy's threshold wins.
 
 The SDK always appends an emergency truncation strategy as the final step. It only fires when the context window is still overflowing after all user strategies have run.
 
@@ -35,7 +35,7 @@ agent = Agent(
     context_manager={
         "strategies": [
             Offload.truncate("tool_results").when(
-                block_threshold=2000,
+                threshold=2000,
             ),
             Offload.summarize("*").when(
                 utilization=0.8,
@@ -62,7 +62,7 @@ Both SDKs accept a config object with a <Syntax py="strategies" ts="strategies" 
 
 ## Offload builder
 
-The `Offload` namespace exposes three methods. Each returns a builder. Chain <Syntax py=".when()" ts=".when({})" /> to add [conditions](#conditions) and get the strategy; the SDK rejects a builder in the pipeline without it.
+The `Offload` namespace exposes three methods. Each returns a strategy builder that can be chained with <Syntax py=".when()" ts=".when()" /> to add conditions.
 
 ### Truncate
 
@@ -77,7 +77,7 @@ from strands.experimental.context_manager import Offload
 Offload.truncate(
     "tool_results",
     {"preview_tokens": 750},
-).when(block_threshold=1500)
+).when(threshold=1500)
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -185,37 +185,20 @@ Offload.drop("tool_results").when(preserve_recent=5)
 
 ## Conditions
 
-Conditions passed to <Syntax py=".when()" ts=".when({})" /> set when a strategy fires, what it acts on, and which messages it protects.
+Chain <Syntax py=".when()" ts=".when()" /> to control when a strategy fires. Conditions determine the granularity of the strategy, not the method.
 
-### Condition values
+| Condition | Granularity | Behavior |
+|-----------|-------------|----------|
+| <Syntax py="threshold" ts="threshold" /> only | Per-block, eager | Acts on each block above this token size on message arrival |
+| <Syntax py="utilization" ts="utilization" /> only | Message-level, batch | Removes/summarizes oldest messages when utilization exceeded |
+| Both | Message-level | Targets messages with blocks over the threshold, fires at utilization |
+| <Syntax py="preserve_recent" ts="preserveRecent" /> | — | Number of most recent matching messages to skip |
 
-A number is a count in the condition's unit, and a `"N%"` string is a share of the whole.
-
-| Condition | Number | `"N%"` string | Decimal |
-|-----------|--------|---------------|---------|
-| <Syntax py="utilization" ts="utilization" /> | Whole number above 1: fires at that many conversation tokens | Up to `"100%"`: fires at that share of the context window | Above 0, up to 1: same as `"N%"` (`1.0` is a full window) |
-| <Syntax py="block_threshold" ts="blockThreshold" /> | Whole number: acts on blocks over that many tokens | Up to `"100%"`: acts on blocks over that share of the context window | Not accepted |
-| <Syntax py="preserve_recent" ts="preserveRecent" /> | Whole number: keeps that many of the newest matching messages | Below `"100%"`: keeps that share of the newest matching messages | Below 1: same as `"N%"` |
-
-<Syntax py="utilization" ts="utilization" /> only gates when a strategy fires. <Syntax py="preserve_recent" ts="preserveRecent" /> only protects the newest matching messages. Shares of the context window resolve against <Syntax py="context_window_limit" ts="contextWindowLimit" />, or the [default window size](./context-estimation) when it is unset.
-
-### Granularity
-
-The target and <Syntax py="block_threshold" ts="blockThreshold" /> decide whether a strategy acts on whole messages or on individual blocks. Old messages are those outside <Syntax py="preserve_recent" ts="preserveRecent" />, excluding the first message and pinned messages.
-
-| Method | Target `"*"` without <Syntax py="block_threshold" ts="blockThreshold" /> (messages) | Other target or <Syntax py="block_threshold" ts="blockThreshold" /> set (blocks) |
-|--------|------------------|-------------------|
-| Drop | Removes old messages and inserts a `[Dropped: N messages]` marker | Replaces each block with a `[Dropped]` stub |
-| Truncate | Keeps the head and tail of the old messages within <Syntax py="preview_tokens" ts="previewTokens" /> and elides the middle | Replaces each block with a preview |
-| Summarize | Summarizes each contiguous run of old messages | Summarizes each block |
-
-A message strategy needs <Syntax py="utilization" ts="utilization" /> or <Syntax py="preserve_recent" ts="preserveRecent" />; without either, <Syntax py=".when()" ts=".when({})" /> raises an error.
-
-A block strategy acts on blocks over <Syntax py="block_threshold" ts="blockThreshold" />. When it is unset, drop and summarize act on every matching block, and truncate defaults it to <Syntax py="preview_tokens" ts="previewTokens" />. Truncate skips blocks it already truncated. A block strategy with neither <Syntax py="utilization" ts="utilization" /> nor <Syntax py="preserve_recent" ts="preserveRecent" /> runs on every new message as it arrives. An empty <Syntax py=".when()" ts=".when({})" />, such as <Syntax py='Offload.drop("tool_result_errors").when()' ts="Offload.drop('toolResultErrors').when({})" />, acts on every matching block.
+<Syntax py="preserve_recent" ts="preserveRecent" /> accepts an integer (absolute count) or a float between 0 and 1 (ratio of matching messages, e.g., `0.7` keeps 70%).
 
 ### Per-block example
 
-Truncate each tool result over 2,000 tokens as it arrives:
+Fire eagerly on individual blocks over 2,000 tokens:
 
 <Tabs>
 <Tab label="Python">
@@ -223,7 +206,7 @@ Truncate each tool result over 2,000 tokens as it arrives:
 ```python
 from strands.experimental.context_manager import Offload
 
-Offload.truncate("tool_results").when(block_threshold=2000)
+Offload.truncate("tool_results").when(threshold=2000)
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -231,14 +214,14 @@ Offload.truncate("tool_results").when(block_threshold=2000)
 ```typescript
 --8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:conditions_imports"
 
---8<-- "user-guide/sdk/context-management/custom-strategies.ts:conditions_block_threshold"
+--8<-- "user-guide/sdk/context-management/custom-strategies.ts:conditions_threshold"
 ```
 </Tab>
 </Tabs>
 
 ### Message-level example
 
-Summarize old messages when the window reaches 85%, keeping the 4 most recent:
+Summarize oldest messages when the window reaches 85%:
 
 <Tabs>
 <Tab label="Python">
@@ -247,7 +230,7 @@ Summarize old messages when the window reaches 85%, keeping the 4 most recent:
 from strands.experimental.context_manager import Offload
 
 Offload.summarize("*").when(
-    utilization="85%",
+    utilization=0.85,
     preserve_recent=4,
 )
 ```
@@ -273,7 +256,7 @@ Target tool results over 1,500 tokens, but only fire when the window reaches 90%
 from strands.experimental.context_manager import Offload
 
 Offload.truncate("tool_results").when(
-    block_threshold=1500,
+    threshold=1500,
     utilization=0.9,
 )
 ```
@@ -287,15 +270,6 @@ Offload.truncate("tool_results").when(
 ```
 </Tab>
 </Tabs>
-
-:::caution[Changes to conditions]
-- `threshold` is renamed to <Syntax py="block_threshold" ts="blockThreshold" />.
-- `Offload` methods return a builder that needs <Syntax py=".when()" ts=".when({})" />. A bare builder is not a strategy.
-- Drop and summarize with a target other than `"*"` plus <Syntax py="utilization" ts="utilization" /> act on blocks, not whole messages.
-- <Syntax py='Offload.drop("*")' ts="Offload.drop('*')" /> and <Syntax py='Offload.summarize("*")' ts="Offload.summarize('*')" /> with only <Syntax py="preserve_recent" ts="preserveRecent" /> act on whole messages.
-- <Syntax py='Offload.truncate("*")' ts="Offload.truncate('*')" /> without <Syntax py="block_threshold" ts="blockThreshold" /> keeps the head and tail of the old messages and elides the middle.
-- The <Syntax py='"overflow_protection"' ts='"overflowProtection"' /> preset drops the oldest messages instead of truncating them.
-:::
 
 ## Targets
 
