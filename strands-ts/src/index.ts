@@ -298,6 +298,7 @@ export type {
   OffloadTarget,
   OffloadConditions,
   OffloadStrategyBuilder,
+  Percent,
 } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
 export type { SummarizeConfig } from './context-manager/methods/summarize.js'
