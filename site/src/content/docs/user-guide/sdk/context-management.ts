@@ -23,7 +23,9 @@ async function explicit() {
     contextManager: {
       strategies: [
         // Offload large tool results; keep a 500-token preview in context
-        Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: 2500 }),
+        Offload.truncate('toolResults', { previewTokens: 500 }).when({
+          blockThreshold: 2500,
+        }),
         // Summarize older messages when the window reaches 85% utilization
         Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 2 }),
       ],
