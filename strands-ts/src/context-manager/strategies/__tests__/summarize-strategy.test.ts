@@ -356,3 +356,38 @@ describe('repeated summarization', () => {
     expect(summaries).toHaveLength(1)
   })
 })
+
+describe('summarizing whole messages', () => {
+  it('summarizes each contiguous run separately, around pinned messages', async () => {
+    vi.mocked(summarizeContent).mockClear().mockResolvedValueOnce('late run').mockResolvedValueOnce('early run')
+    const pinned = { metadata: { custom: { pinned: true } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')], ...pinned }),
+      ...['u2', 'a3', 'u4'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')], ...pinned }),
+      ...['u6', 'a7', 'u8', 'a9', 'u10'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(summarizeContent).toHaveBeenCalledTimes(2)
+    expect(messages.map((message) => message.content.map((block) => (block as TextBlock).text))).toEqual([
+      ['task'],
+      [
+        'a1',
+        '[Summarized: 3 messages, ~3 tokens]\n\nearly run',
+        'a5',
+        '[Summarized: 2 messages, ~2 tokens]\n\nlate run',
+      ],
+      ['u8'],
+      ['a9'],
+      ['u10'],
+    ])
+  })
+})

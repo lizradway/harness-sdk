@@ -1,18 +1,27 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import {
   getOldestMatches,
   buildToolNameMap,
   collectRemovableWithPair,
   insertMarker,
+  parseCondition,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
+import type { OffloadConditions, OffloadTarget } from '../offload/base.js'
+import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
+import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
+
+vi.mock('../../methods/summarize.js', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return { ...actual, summarizeContent: vi.fn(async () => 'summary') }
+})
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({
@@ -46,11 +55,17 @@ function heuristicCountTokens(messages: Message[]): number {
   return total
 }
 
-function makeContext(messages: Message[], utilization = 0.5, overflow?: boolean): ContextState {
-  const agent = createMockAgent({
-    messages,
-    extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } } as Partial<Agent>,
-  })
+function makeContext(
+  messages: Message[],
+  utilization = 0.5,
+  overflow?: boolean,
+  contextWindowLimit?: number
+): ContextState {
+  const model = {
+    countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
+    getConfig: () => (contextWindowLimit === undefined ? {} : { contextWindowLimit }),
+  }
+  const agent = createMockAgent({ messages, extra: { model } as unknown as Partial<Agent> })
   return {
     messages,
     agent,
@@ -901,4 +916,200 @@ describe('repeated message-level reduction', () => {
       expect(messages.length).toBeLessThan(10)
     })
   })
+})
+
+/** A task message followed by one tool call per result, each result `tokens[i]` tokens long. */
+function toolHistory(tokens: number[]): Message[] {
+  const calls = tokens.flatMap((size, index) => [
+    new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ toolUseId: `tu-${index}`, name: 'read', input: {} })],
+    }),
+    makeToolResultMessage('x'.repeat(size * 4), `tu-${index}`),
+  ])
+  return [text('user', 'task'), ...calls, text('assistant', 'done')]
+}
+
+function resultTexts(messages: Message[]): string[] {
+  return messages.flatMap((message) =>
+    message.content
+      .filter((block): block is ToolResultBlock => block instanceof ToolResultBlock)
+      .map((block) => (block.content[0] as TextBlock).text)
+  )
+}
+
+describe('parseCondition', () => {
+  it.each([
+    ['utilization', 0.5, { value: 0.5, isShare: true }],
+    ['utilization', '70%', { value: 0.7, isShare: true }],
+    ['utilization', 50_000, { value: 50_000, isShare: false }],
+    ['blockThreshold', 2500, { value: 2500, isShare: false }],
+    ['blockThreshold', '5%', { value: 0.05, isShare: true }],
+    ['preserveRecent', 4, { value: 4, isShare: false }],
+    ['preserveRecent', 0.5, { value: 0.5, isShare: true }],
+    ['preserveRecent', '50%', { value: 0.5, isShare: true }],
+  ] as const)('accepts %s=%j', (name, raw, expected) => {
+    expect(parseCondition(name, raw)).toEqual(expected)
+  })
+
+  it.each([
+    ['utilization', 0, '0'],
+    ['utilization', 1.5, '1.5'],
+    ['utilization', '101%', '"101%"'],
+    ['utilization', '70', '"70"'],
+    ['blockThreshold', -1, '-1'],
+    ['blockThreshold', 0.5, '0.5'],
+    ['preserveRecent', 1.5, '1.5'],
+    ['preserveRecent', '100%', '"100%"'],
+  ] as const)('rejects %s=%s', (name, raw, shown) => {
+    expect(() => parseCondition(name, raw)).toThrow(`${name}=${shown} is invalid: expected `)
+  })
+})
+
+describe('condition resolution', () => {
+  it.each([
+    [{ utilization: '70%' }, undefined, 0.7, true],
+    [{ utilization: 0.7 }, undefined, 0.69, false],
+    [{ utilization: 50_000 }, 100_000, 0.5, true],
+    [{ utilization: 50_000 }, 100_000, 0.49, false],
+  ] as [OffloadConditions, number | undefined, number, boolean][])(
+    '%j with a %s-token window fires at %s: %s',
+    async (conditions, contextWindowLimit, utilization, fires) => {
+      const strategy = Offload.drop('toolResults').when(conditions)
+      expect(await strategy.apply(makeContext(toolHistory([10]), utilization, false, contextWindowLimit))).toBe(fires)
+    }
+  )
+
+  it('resolves a percent blockThreshold against the context window', async () => {
+    const messages = toolHistory([100, 101])
+    const strategy = Offload.drop('toolResults').when({ blockThreshold: '1%' })
+
+    expect(await strategy.apply(makeContext(messages, 0, false, 10_000))).toBe(true)
+
+    expect(resultTexts(messages)).toEqual(['x'.repeat(400), '[Dropped]'])
+  })
+})
+
+describe('granularity', () => {
+  const BIG = 'x'.repeat(4000)
+  const MESSAGE_MARKERS = { drop: '[Dropped: ', truncate: 'elided', summarize: '[Summarized: ' }
+  const BLOCK_PREFIXES = { drop: '[Dropped]', truncate: TRUNCATED_PREFIX, summarize: '[Summarized: ' }
+  const BUILDERS = {
+    drop: (target: OffloadTarget) => Offload.drop(target),
+    truncate: (target: OffloadTarget) => Offload.truncate(target, { previewTokens: 100 }),
+    summarize: (target: OffloadTarget) => Offload.summarize(target),
+  }
+
+  function history(): Message[] {
+    return [
+      text('user', 'task'),
+      text('assistant', BIG),
+      text('user', BIG),
+      text('assistant', BIG),
+      text('user', BIG),
+      text('assistant', 'end'),
+      text('user', 'next'),
+    ]
+  }
+
+  describe.each(['drop', 'truncate', 'summarize'] as const)('%s', (method) => {
+    it.each([
+      ['*', { utilization: 0.5 }, 0.9, 'messages'],
+      ['*', { preserveRecent: 1 }, 0, 'messages'],
+      ['*', { blockThreshold: 200, utilization: 0.5 }, 0.9, [1, 2, 3, 4]],
+      ['assistantText', { utilization: 0.5 }, 0.9, [1, 3]],
+      ['assistantText', { utilization: 0.5 }, 0.1, 'nothing'],
+    ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'nothing' | number[]][])(
+      'target=%j with %j at utilization %s acts on %j',
+      async (target, conditions, utilization, outcome) => {
+        const messages = history()
+        const acted = await BUILDERS[method](target).when(conditions).apply(makeContext(messages, utilization))
+
+        if (outcome === 'nothing') {
+          expect(acted).toBe(false)
+          expect(textsOf(messages)).toEqual(textsOf(history()))
+          return
+        }
+        expect(acted).toBe(true)
+        if (outcome === 'messages') {
+          expect(messages.length).toBeLessThan(history().length)
+          expect(textsOf(messages).flat().join('\n')).toContain(MESSAGE_MARKERS[method])
+          return
+        }
+        expect(messages).toHaveLength(history().length)
+        for (const index of [1, 2, 3, 4]) {
+          const blockText = (messages[index]!.content[0] as TextBlock).text
+          if (outcome.includes(index)) expect(blockText.startsWith(BLOCK_PREFIXES[method])).toBe(true)
+          else expect(blockText).toBe(BIG)
+        }
+      }
+    )
+  })
+})
+
+describe('whole-message conditions', () => {
+  describe.each([
+    ['drop', () => Offload.drop('*')],
+    ['truncate', () => Offload.truncate('*')],
+    ['summarize', () => Offload.summarize('*')],
+  ] as const)('Offload.%s("*")', (method, builder) => {
+    it.each([{}, { preserveRecent: 0 }] as OffloadConditions[])('rejects %j', (conditions) => {
+      expect(() => builder().when(conditions)).toThrow(
+        `Offload.${method}("*") without blockThreshold acts on whole messages; set utilization or preserveRecent`
+      )
+    })
+
+    it.each([{ utilization: 0.5 }, { preserveRecent: 1 }, { blockThreshold: 2500 }] as OffloadConditions[])(
+      'accepts %j',
+      (conditions) => {
+        expect(() => builder().when(conditions)).not.toThrow()
+      }
+    )
+  })
+})
+
+describe('truncate block threshold', () => {
+  it('defaults to previewTokens and skips blocks it already truncated', async () => {
+    const messages = toolHistory([100, 2000])
+    const strategy = Offload.truncate('toolResults', { previewTokens: 100 }).when({})
+
+    expect(await strategy.apply(makeContext(messages, 0))).toBe(true)
+    const firstPass = resultTexts(messages)
+    expect(firstPass[0]).toBe('x'.repeat(400))
+    expect(firstPass[1]!.startsWith(TRUNCATED_PREFIX)).toBe(true)
+    expect(Math.ceil(firstPass[1]!.length / 4)).toBeGreaterThan(100)
+
+    expect(await strategy.apply(makeContext(messages, 0))).toBe(false)
+    expect(resultTexts(messages)).toEqual(firstPass)
+  })
+})
+
+describe('truncate whole messages', () => {
+  /** Ten tokens per message under the heuristic. */
+  const pad = (label: string): string => label.padEnd(40, '.')
+
+  function history(): Message[] {
+    const messages = [text('user', 'task')]
+    for (let index = 1; index <= 10; index++) {
+      messages.push(text(index % 2 === 1 ? 'assistant' : 'user', pad(`m${index}`)))
+    }
+    return messages
+  }
+
+  it.each([
+    ['headTail', 40, ['task', 'm1', 'm2', '[... 7 messages elided ...]', 'm10']],
+    ['head', 40, ['task', 'm1', 'm2', 'm3', 'm4', '[... 5 messages elided ...]', 'm10']],
+    ['tail', 50, ['task', '[... 5 messages elided ...]', 'm6', 'm7', 'm8', 'm9', 'm10']],
+  ] as [NonNullable<TruncateConfig['preview']>, number, string[]][])(
+    'preview=%s with previewTokens=%s elides the middle',
+    async (preview, previewTokens, expected) => {
+      const messages = history()
+      const strategy = Offload.truncate('*', { preview, previewTokens }).when({ utilization: 0.5 })
+
+      expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+
+      const label = (value: string): string => (value.startsWith('m') ? pad(value) : value)
+      expect(textsOf(messages)).toEqual(expected.map((value) => [label(value)]))
+    }
+  )
 })
