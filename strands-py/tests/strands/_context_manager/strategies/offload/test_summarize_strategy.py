@@ -56,7 +56,7 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_summarizes_large_tool_result(self, mock_agent):
-        strategy = Offload.summarize("tool_results").when(threshold=100)
+        strategy = Offload.summarize("tool_results").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -81,7 +81,7 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_summarizes_large_text_block(self, mock_agent):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
@@ -95,7 +95,7 @@ class TestSummarizeStrategyPerBlock:
     async def test_skips_when_no_model(self):
         agent = unittest.mock.MagicMock()
         agent.aux_model = None
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
@@ -106,7 +106,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_returns_none_when_summary_empty_for_tool_result(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("tool_results").when(threshold=100)
+        strategy = Offload.summarize("tool_results").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -129,7 +129,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_returns_none_when_summary_empty_for_text_block(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="x" * 10000)]),
@@ -140,7 +140,7 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_replaces_media_block_with_marker(self, mock_agent):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -156,7 +156,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_falls_back_to_offloaded_when_media_summary_empty(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -181,7 +181,7 @@ class TestSummarizeStrategyPerBlock:
             return summary_stream(*args, **kwargs)
 
         mock_agent.model.stream = stream
-        strategy = Offload.summarize("tool_results").when(threshold=100)
+        strategy = Offload.summarize("tool_results").when(block_threshold=100)
 
         def tool_result_message(tool_use_id: str) -> Message:
             tool_result = ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": "x" * 10000}])
@@ -200,7 +200,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_offloads_video_block_without_summarizing(self, mock_agent):
         mock_agent.model.stream = unittest.mock.Mock()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
         ]
@@ -215,7 +215,7 @@ class TestSummarizeStrategyPerBlock:
     async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
         # guards against summarizer failures being hidden by a lossy retry (#5291)
         mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("*").when(block_threshold=100)
         messages: Messages = [
             Message(
                 role="user",
@@ -276,6 +276,34 @@ class TestSummarizeStrategyMessageLevel:
         assert messages[0]["content"][0]["text"] == "pin"
         for idx in range(len(messages) - 1):
             assert messages[idx]["role"] != messages[idx + 1]["role"]
+
+    @pytest.mark.asyncio
+    async def test_summarizes_each_run_around_pinned_message(self, mock_agent):
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="before1")]),
+            Message(role="user", content=[ContentBlock(text="before2")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="pinned")],
+                metadata={"custom": {"pinned": True}},
+            ),
+            Message(role="user", content=[ContentBlock(text="after1")]),
+            Message(role="assistant", content=[ContentBlock(text="after2")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        assert await strategy.apply(context) is True
+
+        texts = [block.get("text", "") for msg in messages for block in msg["content"]]
+        summaries = [text for text in texts if text.startswith("[Summarized:")]
+        assert len(summaries) == 2
+        assert all(summary.startswith("[Summarized: 2 messages") for summary in summaries)
+        assert [text for text in texts if not text.startswith("[Summarized:")] == ["pin", "pinned", "recent"]
+        assert mock_agent.model.count_tokens.await_count == 2
 
     @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
