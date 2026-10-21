@@ -15,7 +15,7 @@ import { SummarizeStrategy } from './summarize.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export { DROPPED_MARKER } from './drop.js'
-export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder, Percent } from './base.js'
+export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder } from './base.js'
 
 /**
  * Builder returned by the `Offload` namespace; deliberately not a `ContextStrategy`, so `.when()` is required.

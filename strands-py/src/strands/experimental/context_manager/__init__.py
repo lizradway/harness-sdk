@@ -12,7 +12,7 @@ from ..._context_manager.methods.summarize import SummarizeConfig
 from ..._context_manager.methods.truncate import TruncateConfig
 from ..._context_manager.presets import STRATEGY_PRESET_NAMES, StrategyPresetName
 from ..._context_manager.strategies.offload import Offload
-from ..._context_manager.strategies.offload.base import OffloadConditions, OffloadStrategyBuilder, OffloadTarget
+from ..._context_manager.strategies.offload.base import OffloadConditions, OffloadTarget
 from ..._context_manager.types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 __all__ = [
@@ -22,7 +22,6 @@ __all__ = [
     "ContextStrategy",
     "Offload",
     "OffloadConditions",
-    "OffloadStrategyBuilder",
     "OffloadTarget",
     "STRATEGY_PRESET_NAMES",
     "StashConfig",
