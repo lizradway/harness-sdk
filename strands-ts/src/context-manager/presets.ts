@@ -72,7 +72,8 @@ export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName
       strategies.push(...resolvePreset(entry as StrategyPresetName))
     } else if (typeof entry.apply !== 'function') {
       throw new Error(
-        'Offload strategies need .when() before use; call .when() with no conditions to run on every new message'
+        'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
+          'a target other than "*" can call .when({}) to run on every new message'
       )
     } else {
       strategies.push(entry)

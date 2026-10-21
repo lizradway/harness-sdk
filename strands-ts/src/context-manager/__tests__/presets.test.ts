@@ -81,7 +81,8 @@ describe('presets', () => {
       ['summarize', Offload.summarize('*')],
     ])('rejects an Offload.%s() builder without .when()', (_method, builder) => {
       expect(() => resolveStrategies([builder as unknown as ContextStrategy])).toThrow(
-        'Offload strategies need .when() before use; call .when() with no conditions to run on every new message'
+        'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
+          'a target other than "*" can call .when({}) to run on every new message'
       )
     })
 
