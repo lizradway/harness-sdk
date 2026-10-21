@@ -62,6 +62,7 @@ class TruncateStrategy(BaseOffloadStrategy):
 
         preview_tokens = _resolve_preview_tokens(self._truncate_config)
         block_threshold = (conditions or {}).get("block_threshold")
+        # A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
         if isinstance(block_threshold, int) and block_threshold <= preview_tokens:
             raise ValueError(
                 f"block_threshold ({block_threshold}) must be greater than preview_tokens ({preview_tokens}) "

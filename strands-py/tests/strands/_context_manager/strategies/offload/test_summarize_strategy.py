@@ -306,6 +306,26 @@ class TestSummarizeStrategyMessageLevel:
         assert mock_agent.model.count_tokens.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_preserves_alternation_when_a_later_run_fails(self, mock_agent):
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+        messages: Messages = [
+            Message(role="user" if index % 2 == 0 else "assistant", content=[ContentBlock(text=f"m{index}")])
+            for index in range(8)
+        ]
+        messages[3]["metadata"] = {"custom": {"pinned": True}}
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        with unittest.mock.patch(
+            "strands._context_manager.strategies.offload.summarize._summarize_content",
+            side_effect=["summary", RuntimeError("throttled")],
+        ):
+            with pytest.raises(RuntimeError, match="throttled"):
+                await strategy.apply(context)
+
+        assert all(messages[idx]["role"] != messages[idx + 1]["role"] for idx in range(len(messages) - 1))
+
+    @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
         strategy = Offload.summarize("*").when(utilization=0.8)
         messages: Messages = [

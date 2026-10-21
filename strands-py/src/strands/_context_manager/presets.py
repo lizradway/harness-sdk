@@ -68,8 +68,8 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
     for entry in entries:
         if isinstance(entry, OffloadStrategyBuilder):
             raise TypeError(
-                "Offload strategies need .when() before use; "
-                "call .when() with no conditions to run on every new message"
+                'Offload strategies need .when() before use, for example .when(utilization="80%"); '
+                'a target other than "*" can call .when() with no conditions to run on every new message'
             )
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
