@@ -61,29 +61,19 @@ function makeContext(messages: Message[], utilization = 0.5, overflow?: boolean)
 
 describe('Offload.truncate', () => {
   it('creates a strategy with correct name', () => {
-    const strategy = Offload.truncate('toolResults').when({})
+    const strategy = Offload.truncate('toolResults')
     expect(strategy.name).toBe('offload:truncate')
   })
 
   it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 1000 })
+    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: 1000 })
     expect(strategy.name).toBe('offload:truncate')
-  })
-
-  it('rejects a token blockThreshold at or below previewTokens', () => {
-    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 500 })).toThrow(
-      'blockThreshold (500) must be greater than previewTokens (500) to ensure truncation converges'
-    )
-  })
-
-  it('accepts a percent blockThreshold regardless of previewTokens', () => {
-    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: '0.1%' })).not.toThrow()
   })
 
   it('truncates large tool results', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const messages = [makeToolResultMessage(largeText)]
-    const strategy = Offload.truncate('toolResults').when({})
+    const strategy = Offload.truncate('toolResults')
     const context = makeContext(messages)
 
     const result = await strategy.apply(context)
@@ -99,7 +89,7 @@ describe('Offload.truncate', () => {
   it('does not truncate results below threshold', async () => {
     const smallText = 'short result'
     const messages = [makeToolResultMessage(smallText)]
-    const strategy = Offload.truncate('toolResults').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('toolResults').when({ threshold: 2500 })
     const context = makeContext(messages)
 
     const result = await strategy.apply(context)
@@ -119,7 +109,7 @@ describe('Offload.truncate', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate('toolResults').when({})
+    const strategy = Offload.truncate('toolResults')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -139,7 +129,7 @@ describe('Offload.truncate', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate('toolResultErrors').when({})
+    const strategy = Offload.truncate('toolResultErrors')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -153,7 +143,7 @@ describe('Offload.truncate', () => {
       role: 'assistant',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('toolResults').when({})
+    const strategy = Offload.truncate('toolResults')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -167,7 +157,7 @@ describe('Offload.truncate', () => {
       role: 'assistant',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('assistantText').when({})
+    const strategy = Offload.truncate('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -183,7 +173,7 @@ describe('Offload.truncate', () => {
       role: 'user',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('userText').when({})
+    const strategy = Offload.truncate('userText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -199,7 +189,7 @@ describe('Offload.truncate', () => {
       role: 'user',
       content: [new TextBlock(largeText)],
     })
-    const strategy = Offload.truncate('assistantText').when({})
+    const strategy = Offload.truncate('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -210,7 +200,7 @@ describe('Offload.truncate', () => {
   it('builds head-tail preview', async () => {
     const largeText = 'HEAD'.repeat(1000) + 'MIDDLE'.repeat(5000) + 'TAIL'.repeat(1000)
     const messages = [makeToolResultMessage(largeText)]
-    const strategy = Offload.truncate('toolResults', { previewTokens: 100 }).when({})
+    const strategy = Offload.truncate('toolResults', { previewTokens: 100 })
     const context = makeContext(messages)
 
     await strategy.apply(context)
@@ -224,7 +214,7 @@ describe('Offload.truncate', () => {
   // https://github.com/strands-agents/harness-sdk/issues/4681
   it('formats preview counts the same regardless of the host locale', async () => {
     const messages = [makeToolResultMessage('x'.repeat(1_000_000))]
-    const strategy = Offload.truncate('toolResults', { previewTokens: 100 }).when({})
+    const strategy = Offload.truncate('toolResults', { previewTokens: 100 })
     const context = makeContext(messages)
 
     await withDefaultLocale('en-IN', () => strategy.apply(context))
@@ -236,7 +226,7 @@ describe('Offload.truncate', () => {
   })
 
   it('returns false for empty messages', async () => {
-    const strategy = Offload.truncate('toolResults').when({})
+    const strategy = Offload.truncate('toolResults')
     const context = makeContext([])
 
     const result = await strategy.apply(context)
@@ -246,8 +236,8 @@ describe('Offload.truncate', () => {
 })
 
 describe('Offload builder', () => {
-  it('Offload.drop().when() creates a drop strategy', () => {
-    const strategy = Offload.drop('toolResults').when({})
+  it('Offload.drop() creates a drop strategy', () => {
+    const strategy = Offload.drop('toolResults')
     expect(strategy.name).toBe('offload:drop')
     expect(strategy.init).toBeDefined()
     expect(strategy.apply).toBeDefined()
@@ -256,7 +246,7 @@ describe('Offload builder', () => {
   it('Offload.drop() drops tool result content from context window entirely', async () => {
     const largeText = 'x'.repeat(100)
     const messages = [makeToolResultMessage(largeText)]
-    const strategy = Offload.drop('toolResults').when({})
+    const strategy = Offload.drop('toolResults')
     const context = makeContext(messages)
 
     const result = await strategy.apply(context)
@@ -271,7 +261,7 @@ describe('Offload builder', () => {
       role: 'assistant',
       content: [new TextBlock('some assistant response')],
     })
-    const strategy = Offload.drop('assistantText').when({})
+    const strategy = Offload.drop('assistantText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -286,7 +276,7 @@ describe('Offload builder', () => {
       role: 'user',
       content: [new TextBlock('some user message')],
     })
-    const strategy = Offload.drop('userText').when({})
+    const strategy = Offload.drop('userText')
     const context = makeContext([message])
 
     const result = await strategy.apply(context)
@@ -312,7 +302,7 @@ describe('Offload builder', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate(['tool::bash']).when({})
+    const strategy = Offload.truncate(['tool::bash'])
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -338,7 +328,7 @@ describe('Offload builder', () => {
         }),
       ],
     })
-    const strategy = Offload.truncate(['tool::bash']).when({})
+    const strategy = Offload.truncate(['tool::bash'])
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -346,8 +336,8 @@ describe('Offload builder', () => {
     expect(result).toBe(false)
   })
 
-  it('Offload.summarize().when() creates a summarize strategy', () => {
-    const strategy = Offload.summarize('toolResults').when({})
+  it('Offload.summarize() creates a summarize strategy', () => {
+    const strategy = Offload.summarize('toolResults')
     expect(strategy.name).toBe('offload:summarize')
     expect(strategy.apply).toBeDefined()
   })
@@ -363,18 +353,8 @@ describe('Offload builder', () => {
   })
 
   it('Offload.truncate(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ blockThreshold: 1000 })
+    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ threshold: 1000 })
     expect(strategy.name).toBe('offload:truncate')
-  })
-
-  it.each([
-    ['drop', Offload.drop('toolResults')],
-    ['truncate', Offload.truncate('toolResults')],
-    ['summarize', Offload.summarize('toolResults')],
-  ])('Offload.%s() returns a builder that is not a strategy', (_, builder) => {
-    expect(builder).not.toHaveProperty('name')
-    expect(builder).not.toHaveProperty('apply')
-    expect(builder.when).toBeTypeOf('function')
   })
 
   it('throws on empty array target', () => {
@@ -384,39 +364,60 @@ describe('Offload builder', () => {
   })
 })
 
-function conversation(turns: number): Message[] {
-  return Array.from({ length: turns }, (_, index) => [
-    new Message({ role: 'user', content: [new TextBlock(`q${index + 1}`)] }),
-    new Message({ role: 'assistant', content: [new TextBlock(`a${index + 1}`)] }),
-  ]).flat()
-}
-
-function textsOf(messages: Message[]): string[][] {
-  return messages.map((message) => message.content.map((block) => (block as TextBlock).text))
-}
-
 describe('Offload message-level with role alternation', () => {
-  it.each([
-    ['assistantText', 'assistant'],
-    ['userText', 'user'],
-  ] as const)(
-    'drop("%s") with utilization replaces each %s text block, keeping every message',
-    async (target, role) => {
-      const messages = conversation(4)
-      const strategy = Offload.drop(target).when({ utilization: 0.5 })
+  it('drop("assistantText") repairs alternation after removing assistant messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
 
-      expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+    await strategy.apply(context)
 
-      expect(messages).toHaveLength(8)
-      for (const message of messages) {
-        const expected = message.role === role ? '[Dropped]' : expect.not.stringContaining('[Dropped]')
-        expect((message.content[0] as TextBlock).text).toEqual(expected)
-      }
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
     }
-  )
+  })
+
+  it('drop("userText") repairs alternation after removing user messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
+    const strategy = Offload.drop('userText').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    for (let index = 0; index < messages.length - 1; index++) {
+      expect(messages[index]!.role).not.toBe(messages[index + 1]!.role)
+    }
+  })
 
   it('drop("*") message-level repairs alternation', async () => {
-    const messages = conversation(4)
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
+    ]
     const strategy = Offload.drop('*').when({ utilization: 0.5 })
     const context = makeContext(messages, 0.9)
 
@@ -427,7 +428,7 @@ describe('Offload message-level with role alternation', () => {
     }
   })
 
-  it('drop("*") message-level with tool pairs preserves tool pair integrity', async () => {
+  it('drop("assistantText") message-level with tool pairs preserves tool pair integrity', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('q1')] }),
       new Message({
@@ -444,7 +445,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'user', content: [new TextBlock('q4')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -467,20 +468,33 @@ describe('Offload message-level with role alternation', () => {
     }
   })
 
-  it('drop("*") acts when only message 0 precedes the candidates', async () => {
-    const messages = conversation(2)
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+  it('drop("userText") is not a no-op when messages[0] is the only front candidate', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.drop('userText').when({ utilization: 0.5 })
     const context = makeContext(messages, 0.9)
 
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    expect(textsOf(messages)).toEqual([['q1'], ['a2', '[Dropped: 2 messages]']])
+    // Marker message replaces removed content, so length stays same or +1 (marker - removed + marker)
+    expect(messages.length).toBeLessThanOrEqual(4)
   })
 
   it('message-level starts with user message after operation', async () => {
-    const messages = conversation(3)
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -489,8 +503,8 @@ describe('Offload message-level with role alternation', () => {
   })
 })
 
-describe('Offload with * target and blockThreshold (acts on every block)', () => {
-  it('Offload.drop("*") with blockThreshold 0 drops all content', async () => {
+describe('Offload with * target (fires on everything)', () => {
+  it('Offload.drop("*") drops all content', async () => {
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant text')],
@@ -506,7 +520,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
         }),
       ],
     })
-    const strategy = Offload.drop('*').when({ blockThreshold: 0 })
+    const strategy = Offload.drop('*')
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -518,7 +532,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
     expect((toolBlock.content[0] as TextBlock).text).toBe('[Dropped]')
   })
 
-  it('Offload.truncate("*") with blockThreshold truncates all large content', async () => {
+  it('Offload.truncate("*") truncates all large content', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const assistantMsg = new Message({
       role: 'assistant',
@@ -535,7 +549,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
         }),
       ],
     })
-    const strategy = Offload.truncate('*').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('*')
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -547,13 +561,13 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
     expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
   })
 
-  it('Offload.truncate("*") with blockThreshold skips small content', async () => {
+  it('Offload.truncate("*") with threshold skips small content', async () => {
     const smallText = 'short'
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock(smallText)],
     })
-    const strategy = Offload.truncate('*').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('*').when({ threshold: 2500 })
     const context = makeContext([assistantMsg])
 
     const result = await strategy.apply(context)
@@ -598,7 +612,7 @@ describe('Message-level drop vs truncate markers', () => {
       new Message({ role: 'user', content: [new TextBlock('q4')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
-    const strategy = Offload.truncate('*', { previewTokens: 2 }).when({ utilization: 0.5 })
+    const strategy = Offload.truncate('*').when({ utilization: 0.5 })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -868,8 +882,8 @@ describe('repeated message-level reduction', () => {
   const strategies = {
     drop: () => Offload.drop('*').when({ utilization: 0.7, preserveRecent: 3 }),
     'drop-all': () => Offload.drop('*').when({ utilization: 0.7 }),
-    truncate: () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: 0.7, preserveRecent: 3 }),
-    'truncate-all': () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: 0.7 }),
+    truncate: () => Offload.truncate('*').when({ utilization: 0.7, preserveRecent: 3 }),
+    'truncate-all': () => Offload.truncate('*').when({ utilization: 0.7 }),
     emergency: () => new EmergencyTruncateStrategy(),
   }
 

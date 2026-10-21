@@ -73,7 +73,7 @@ export class ContextManager implements Plugin {
       ? resolveStrategies(config.strategies)
       : [
           Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            blockThreshold: AUTO_TRUNCATE_THRESHOLD,
+            threshold: AUTO_TRUNCATE_THRESHOLD,
           }),
           Offload.summarize('*').when({ utilization: AUTO_SUMMARIZE_UTILIZATION, preserveRecent: 4 }),
         ]
@@ -100,7 +100,7 @@ export class ContextManager implements Plugin {
       return new ContextManager({
         strategies: [
           Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            blockThreshold: AGENTIC_TRUNCATE_THRESHOLD,
+            threshold: AGENTIC_TRUNCATE_THRESHOLD,
           }),
           Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),
         ],

@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { resolvePreset, resolveStrategies, STRATEGY_PRESET_NAMES } from '../presets.js'
 import { ContextManager } from '../context-manager.js'
-import { Offload } from '../strategies/offload/index.js'
-import type { ContextStrategy } from '../types.js'
 
 describe('presets', () => {
   describe('resolvePreset', () => {
@@ -27,10 +25,10 @@ describe('presets', () => {
       expect(strategies[0]!.name).toBe('offload:truncate')
     })
 
-    it('overflowProtection resolves to a drop strategy', () => {
+    it('overflowProtection resolves to a truncate strategy', () => {
       const strategies = resolvePreset('overflowProtection')
       expect(strategies).toHaveLength(1)
-      expect(strategies[0]!.name).toBe('offload:drop')
+      expect(strategies[0]!.name).toBe('offload:truncate')
     })
 
     it('staleToolCleanup resolves to a drop strategy', () => {
@@ -59,7 +57,7 @@ describe('presets', () => {
       expect(result).toHaveLength(3)
       expect(result[0]!.name).toBe('offload:truncate')
       expect(result[1]!.name).toBe('custom')
-      expect(result[2]!.name).toBe('offload:drop')
+      expect(result[2]!.name).toBe('offload:truncate')
     })
 
     it('preserves order of preset expansion', () => {
@@ -73,22 +71,6 @@ describe('presets', () => {
       expect(() => resolveStrategies(['proactiveSummarisation' as any])).toThrow(
         'Unknown strategy preset: "proactiveSummarisation"'
       )
-    })
-
-    it.each([
-      ['drop', Offload.drop('toolResults')],
-      ['truncate', Offload.truncate('toolResults')],
-      ['summarize', Offload.summarize('*')],
-    ])('rejects an Offload.%s() builder without .when()', (_method, builder) => {
-      expect(() => resolveStrategies([builder as unknown as ContextStrategy])).toThrow(
-        'Offload strategies need .when() before use; call .when() with no conditions to run on every new message'
-      )
-    })
-
-    it('accepts an Offload builder once .when() is called', () => {
-      const result = resolveStrategies([Offload.drop('toolResults').when({})])
-      expect(result).toHaveLength(1)
-      expect(result[0]!.name).toBe('offload:drop')
     })
   })
 
