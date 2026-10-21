@@ -10,7 +10,7 @@
  */
 
 import type { ContextStrategy } from './types.js'
-import { Offload, OffloadBuilder } from './strategies/offload/index.js'
+import { Offload } from './strategies/offload/index.js'
 
 /**
  * Known preset name strings accepted in the strategies array.
@@ -70,7 +70,7 @@ export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName
         throw new Error(`Unknown strategy preset: "${entry}". Valid presets: ${STRATEGY_PRESET_NAMES.join(', ')}`)
       }
       strategies.push(...resolvePreset(entry as StrategyPresetName))
-    } else if (entry instanceof OffloadBuilder) {
+    } else if (typeof entry.apply !== 'function') {
       throw new Error(
         'Offload strategies need .when() before use; call .when() with no conditions to run on every new message'
       )

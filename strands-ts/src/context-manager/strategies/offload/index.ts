@@ -17,22 +17,13 @@ export { EmergencyTruncateStrategy } from './base.js'
 export { DROPPED_MARKER } from './drop.js'
 export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder } from './base.js'
 
-/**
- * Builder returned by the `Offload` namespace; deliberately not a `ContextStrategy`, so `.when()` is required.
- *
- * @internal
- */
-export class OffloadBuilder implements OffloadStrategyBuilder {
-  private readonly _build: (conditions: OffloadConditions) => ContextStrategy
-
-  constructor(target: OffloadTarget, build: (conditions: OffloadConditions) => ContextStrategy) {
-    validateTarget(target)
-    this._build = build
-  }
-
-  when(conditions: OffloadConditions): ContextStrategy {
-    return this._build(conditions)
-  }
+/** Deliberately not a `ContextStrategy`, so `.when()` is required. */
+function builder(
+  target: OffloadTarget,
+  when: (conditions: OffloadConditions) => ContextStrategy
+): OffloadStrategyBuilder {
+  validateTarget(target)
+  return { when }
 }
 
 /**
@@ -73,14 +64,14 @@ interface OffloadNamespace {
  */
 export const Offload: OffloadNamespace = {
   drop(target: OffloadTarget): OffloadStrategyBuilder {
-    return new OffloadBuilder(target, (conditions) => new DropStrategy(target, conditions))
+    return builder(target, (conditions) => new DropStrategy(target, conditions))
   },
 
   truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder {
-    return new OffloadBuilder(target, (conditions) => new TruncateStrategy(target, config, conditions))
+    return builder(target, (conditions) => new TruncateStrategy(target, config, conditions))
   },
 
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder {
-    return new OffloadBuilder(target, (conditions) => new SummarizeStrategy(target, config, conditions))
+    return builder(target, (conditions) => new SummarizeStrategy(target, config, conditions))
   },
 }
