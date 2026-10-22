@@ -5,18 +5,19 @@ import type { Embedder } from './embedder.js'
 
 import { StorageError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
-import { BedrockEmbedder } from '../embeddings/bedrock.js'
 
 /** Configuration for {@link S3VectorSearchStrategy}. Every field is optional. */
 export interface S3VectorSearchStrategyConfig {
   /**
-   * Produces the embedding vectors. Defaults to a {@link BedrockEmbedder} (Titan Text
-   * Embeddings V2) in the resolved region.
+   * Produces the embedding vectors. Defaults to a `BedrockEmbedder` (Titan Text Embeddings V2)
+   * in the resolved region, loaded on first use so this module does not import the Bedrock
+   * provider.
    */
   embedder?: Embedder
   /**
    * Name of an existing S3 Vectors bucket. Not created automatically.
-   * Defaults to the storage bucket name suffixed with `-vectors`.
+   * Defaults to the storage bucket name suffixed with `-vectors`. Do not share one index
+   * across storages on different buckets: results are filtered by prefix only.
    */
   vectorBucketName?: string
   /**
@@ -78,7 +79,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private readonly _config: S3VectorSearchStrategyConfig
   private _client: import('@aws-sdk/client-s3vectors').S3VectorsClient | undefined
   private _sdk: Promise<typeof import('@aws-sdk/client-s3vectors')> | undefined
-  private _embedder: Embedder | undefined
+  private _embedder: Promise<Embedder> | undefined
 
   /**
    * @param config - Optional embedder, vector bucket and index, and client settings
@@ -92,7 +93,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     }
     this._config = config
     this._client = config.s3VectorsClient
-    this._embedder = config.embedder
+    if (config.embedder) this._embedder = Promise.resolve(config.embedder)
   }
 
   /**
@@ -100,6 +101,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    *
    * Empty or non-UTF-8 values are not embedded. Any vector from a previous write to the
    * same key is removed instead, so the index never matches content that is no longer stored.
+   * Writing such values therefore needs `s3vectors:DeleteVectors` as well as `PutVectors`.
    *
    * @param storage - The storage the content was written to
    * @param key - The storage key to associate the vector with
@@ -108,11 +110,12 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   async index(storage: S3Storage, key: string, data: Uint8Array): Promise<void> {
     const text = decodeText(data)
     if (!text) {
-      logger.warn(`key=<${key}> | value is empty or not valid utf-8 text | removing any existing vector`)
+      logger.debug(`key=<${key}> | value is empty or not valid utf-8 text | removing any existing vector`)
       await this.remove(storage, key)
       return
     }
-    const vector = await this._getEmbedder(storage).embed(text, { purpose: 'document' })
+    const embedder = await this._getEmbedder(storage)
+    const vector = await embedder.embed(text, { purpose: 'document' })
     const client = await this._getClient(storage)
     const { PutVectorsCommand } = await this._getSdk()
     await client.send(
@@ -144,7 +147,8 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    * @returns Matched keys under the storage's prefix with similarity scores, ranked best-first
    */
   async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
-    const queryVector = await this._getEmbedder(storage).embed(query, { purpose: 'query' })
+    const embedder = await this._getEmbedder(storage)
+    const queryVector = await embedder.embed(query, { purpose: 'query' })
     const client = await this._getClient(storage)
     const { QueryVectorsCommand } = await this._getSdk()
     const response = await client.send(
@@ -178,11 +182,12 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     return this._config.region ?? storage.region
   }
 
-  private _getEmbedder(storage: S3Storage): Embedder {
-    if (!this._embedder) {
+  /** Resolves the configured embedder, or loads the default Bedrock embedder once on first use. */
+  private _getEmbedder(storage: S3Storage): Promise<Embedder> {
+    this._embedder ??= import('../embeddings/bedrock.js').then(({ BedrockEmbedder }) => {
       const region = this._region(storage)
-      this._embedder = new BedrockEmbedder(region ? { region } : undefined)
-    }
+      return new BedrockEmbedder(region ? { region } : undefined)
+    })
     return this._embedder
   }
 

@@ -18,7 +18,7 @@ export interface BedrockEmbedderConfig {
    * a different request and response shape and are not supported yet; extend {@link Embedder}
    * for those.
    */
-  modelId?: 'amazon.titan-embed-text-v2:0' | (string & {})
+  modelId?: 'amazon.titan-embed-text-v2:0' | 'amazon.titan-embed-text-v1' | (string & {})
   /**
    * Output vector length, sent to the model as `dimensions`. Titan Text Embeddings V2 accepts
    * 256, 512 or 1024 (its default). Leave unset for models that do not take the parameter.
@@ -76,7 +76,7 @@ export class BedrockEmbedder extends Embedder {
       )
     }
     this._modelId = modelId
-    this._config = config
+    this._config = { ...config }
     this._client = config.bedrockClient
   }
 

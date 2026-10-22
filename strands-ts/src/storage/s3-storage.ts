@@ -204,10 +204,15 @@ export class S3Storage implements Storage {
    *
    * @param query - Natural-language search query
    * @returns All matches with relevance scores, ranked best-first
+   * @throws {@link StorageError} if the search strategy fails
    */
   async search(query: string): Promise<StorageSearchResult[]> {
     if (this._searchStrategy) {
-      return this._searchStrategy.search(this, query)
+      try {
+        return await this._searchStrategy.search(this, query)
+      } catch (error: unknown) {
+        throw new StorageError(`Failed to search S3 bucket '${this._bucket}'`, { cause: error })
+      }
     }
     return KeywordSearchStrategy.search(this, query)
   }

@@ -33,9 +33,14 @@ const TITAN_V2_DIMENSION = 1024
 
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text)
 
+const keys = (results: StorageSearchResult[]): string[] => results.map((r) => r.key)
+
+/** Setup and teardown make several sequential calls to real AWS; vitest's 10 s default is too short. */
+const HOOK_TIMEOUT_MS = 60_000
+
 /**
- * Polls `storage.search(query)` until `predicate` holds or the timeout elapses, and returns
- * the last results. Guards against any delay between a vector write and its visibility.
+ * Polls `storage.search(query)` until `predicate` holds, and returns those results. Guards against
+ * any delay between a vector write and its visibility. Throws if the timeout elapses first.
  */
 async function searchUntil(
   storage: S3Storage,
@@ -46,12 +51,15 @@ async function searchUntil(
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const results = await storage.search(query)
-    if (predicate(results) || Date.now() >= deadline) return results
+    if (predicate(results)) return results
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `search('${query}') did not reach the expected state within ${timeoutMs / 1000}s; last keys: ${JSON.stringify(keys(results))}`
+      )
+    }
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
 }
-
-const keys = (results: StorageSearchResult[]): string[] => results.map((r) => r.key)
 
 describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
   let credentials: any
@@ -100,7 +108,7 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
         distanceMetric: 'cosine',
       })
     )
-  })
+  }, HOOK_TIMEOUT_MS)
 
   afterAll(async () => {
     // Best-effort teardown in reverse order; one failure should not leak the rest.
@@ -111,16 +119,20 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
       await s3Vectors.send(new DeleteVectorBucketCommand({ vectorBucketName: vectorBucket })).catch(() => {})
     }
     if (s3 && bucket) {
-      let token: string | undefined
-      do {
-        const list = await s3.send(new ListObjectsV2Command({ Bucket: bucket, ContinuationToken: token }))
-        const objects = list.Contents?.map((o) => ({ Key: o.Key! })) ?? []
-        if (objects.length) await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }))
-        token = list.NextContinuationToken
-      } while (token)
+      try {
+        let token: string | undefined
+        do {
+          const list = await s3.send(new ListObjectsV2Command({ Bucket: bucket, ContinuationToken: token }))
+          const objects = list.Contents?.map((o) => ({ Key: o.Key! })) ?? []
+          if (objects.length) await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }))
+          token = list.NextContinuationToken
+        } while (token)
+      } catch {
+        // Best effort: still attempt DeleteBucket below (e.g. the bucket was never created).
+      }
       await s3.send(new DeleteBucketCommand({ Bucket: bucket })).catch(() => {})
     }
-  })
+  }, HOOK_TIMEOUT_MS)
 
   it('indexes on write, finds content by meaning, and de-indexes on delete', async () => {
     const storage = makeStorage('semantic')
@@ -128,9 +140,14 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
     await storage.write('deploy.md', encode('Services are deployed to ECS on Fargate with auto-scaling enabled.'))
 
     const query = 'how do people log in to the app?'
-    const results = await searchUntil(storage, query, (r) => r.length >= 2)
+    const results = await searchUntil(
+      storage,
+      query,
+      (r) => keys(r).includes('auth.md') && keys(r).includes('deploy.md')
+    )
+    const score = (key: string): number | undefined => results.find((r) => r.key === key)?.score
     expect(results[0]?.key).toBe('auth.md')
-    expect(results[0]!.score).toBeGreaterThan(results.find((r) => r.key === 'deploy.md')!.score)
+    expect(score('auth.md')).toBeGreaterThan(score('deploy.md')!)
 
     await storage.delete('auth.md')
     const afterDelete = await searchUntil(storage, query, (r) => !keys(r).includes('auth.md'))

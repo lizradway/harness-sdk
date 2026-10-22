@@ -269,7 +269,6 @@ export class IntegTestRole extends Construct {
           's3vectors:DeleteIndex',
           's3vectors:PutVectors',
           's3vectors:QueryVectors',
-          's3vectors:GetVectors',
           's3vectors:DeleteVectors',
         ],
         resources: [

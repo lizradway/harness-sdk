@@ -223,6 +223,19 @@ describe('S3Storage', () => {
       expect((error as StorageError).cause).toBe(cause)
       expect(mockDeleteObjectCommand).toHaveBeenCalled()
     })
+
+    it('wraps a search strategy failure in StorageError', async () => {
+      const cause = new Error('The vector dimension must be 1024, but was 3.')
+      const storage = new S3Storage('my-bucket', {
+        searchStrategy: { search: vi.fn().mockRejectedValue(cause) },
+      })
+
+      const error = await storage.search('q').catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain("Failed to search S3 bucket 'my-bucket'")
+      expect((error as StorageError).cause).toBe(cause)
+    })
   })
 
   describe('list', () => {

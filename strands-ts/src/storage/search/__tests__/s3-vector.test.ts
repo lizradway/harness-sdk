@@ -169,6 +169,15 @@ describe('S3VectorSearchStrategy', () => {
       )
     })
 
+    it('creates one default embedder for concurrent first calls', async () => {
+      mockSend.mockResolvedValue({ vectors: [] })
+      const strategy = new S3VectorSearchStrategy()
+
+      await Promise.all([strategy.search(storage, 'a'), strategy.search(storage, 'b')])
+
+      expect(MockBedrockEmbedder).toHaveBeenCalledTimes(1)
+    })
+
     it('uses the default region chain for the embedder when the storage has no region', async () => {
       mockSend.mockResolvedValue({ vectors: [] })
       const strategy = new S3VectorSearchStrategy()
@@ -247,6 +256,29 @@ describe('S3VectorSearchStrategy', () => {
       const results = await strategy.search(new S3Storage('b', { prefix: 'tenant-a/' }), 'q')
 
       expect(results).toEqual([{ key: 'doc.md', score: 1 / 1.5 }])
+    })
+
+    it('keys vectors by the namespace prefix and strips it on search', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = new S3VectorSearchStrategy({ embedder: fakeEmbedder })
+      const scoped = new S3Storage('b', { prefix: 'agents', searchStrategy: strategy })
+        .namespace('memory')
+        .namespace('a')
+
+      await strategy.index(scoped, 'x.md', new TextEncoder().encode('hi'))
+      await strategy.remove(scoped, 'x.md')
+      expect(mockPutVectorsCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ vectors: [expect.objectContaining({ key: 'agents/memory/a/x.md' })] })
+      )
+      expect(mockDeleteVectorsCommand).toHaveBeenCalledWith(expect.objectContaining({ keys: ['agents/memory/a/x.md'] }))
+
+      mockSend.mockResolvedValue({
+        vectors: [
+          { key: 'agents/memory/a/x.md', distance: 0 },
+          { key: 'agents/memory/b/y.md', distance: 0 },
+        ],
+      })
+      expect(await strategy.search(scoped, 'q')).toEqual([{ key: 'x.md', score: 1 }])
     })
 
     it('drops results with no key', async () => {
