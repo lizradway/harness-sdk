@@ -69,17 +69,20 @@ class SummarizeStrategy(BaseOffloadStrategy):
         runs = _contiguous_runs(_removable_indices(messages, self._get_eligible_messages(context)))
         summarized = False
         # Last run first so earlier indices stay valid as runs collapse.
-        try:
-            for run in reversed(runs):
-                summarized = await self._summarize_run(messages, run, model) or summarized
-        finally:
-            if summarized:
-                _repair_alternation(messages)
+        for run in reversed(runs):
+            summarized = await self._summarize_run(messages, run, model) or summarized
+        if summarized:
+            _repair_alternation(messages)
         return summarized
 
     async def _summarize_run(self, messages: Messages, run: list[int], model: Model) -> bool:
+        """Replace one run with its summary; a failure is logged and leaves the run intact so the pass continues."""
         safe = [messages[index] for index in run]
-        summary = await _summarize_content(_flatten_messages_to_content(safe), model, self._config)
+        try:
+            summary = await _summarize_content(_flatten_messages_to_content(safe), model, self._config)
+        except Exception as error:
+            logger.warning("run_length=<%s>, error=<%s> | run summarization failed", len(run), error)
+            return False
         if not summary:
             return False
 
