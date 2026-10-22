@@ -415,7 +415,7 @@ describe('Offload message-level with role alternation', () => {
     ['assistantText', 'assistant'],
     ['userText', 'user'],
   ] as const)(
-    'drop("%s") with utilization replaces each %s text block, keeping every message',
+    'drop("%s") with utilization replaces each %s text block but the newest, keeping every message',
     async (target, role) => {
       const messages = conversation(4)
       const strategy = Offload.drop(target).when({ utilization: 0.5 })
@@ -423,8 +423,9 @@ describe('Offload message-level with role alternation', () => {
       expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
 
       expect(messages).toHaveLength(8)
-      for (const message of messages) {
-        const expected = message.role === role ? '[Dropped]' : expect.not.stringContaining('[Dropped]')
+      for (const [index, message] of messages.entries()) {
+        const dropped = message.role === role && index < messages.length - 1
+        const expected = dropped ? '[Dropped]' : expect.not.stringContaining('[Dropped]')
         expect((message.content[0] as TextBlock).text).toEqual(expected)
       }
     }
@@ -1044,6 +1045,15 @@ describe('granularity', () => {
         }
       }
     )
+
+    it('leaves the newest message alone when gated by utilization', async () => {
+      const messages = [...history().slice(0, -1), text('user', BIG)]
+
+      expect(await BUILDERS[method]('userText').when({ utilization: 0.5 }).apply(makeContext(messages, 0.9))).toBe(true)
+
+      expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
+      expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(BIG)
+    })
   })
 })
 

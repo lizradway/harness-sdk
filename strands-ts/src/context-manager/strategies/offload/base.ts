@@ -478,6 +478,11 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._target === '*' && this._blockThreshold === undefined
   }
 
+  /** Whether the eager hook processes each message as it arrives. */
+  private get _runsEagerly(): boolean {
+    return this._utilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
+  }
+
   /** Block size at or below which blocks are left alone when `blockThreshold` is unset. */
   protected get _defaultBlockThreshold(): number {
     return 0
@@ -485,7 +490,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
-    if (this._utilization !== undefined || this._preserveRecent.value > 0 || this._actsOnMessages) return
+    if (!this._runsEagerly) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
@@ -523,7 +528,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
     const threshold = this._resolveBlockThreshold(agent)
-    const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : messages
+    const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : [...messages]
+    // Without the eager hook, the last message is one the model has not yet responded to.
+    if (!this._runsEagerly && eligible.at(-1) === messages.at(-1)) eligible.pop()
     let acted = false
 
     for (const message of eligible) {
