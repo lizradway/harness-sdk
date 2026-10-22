@@ -56,17 +56,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const runs = splitIntoRuns(indicesWithPairs(messages, this._getEligibleMessages(context)))
     let acted = false
-    try {
-      for (const run of runs.reverse()) {
-        if (await this._summarizeRun(messages, run, model, context.invocationContext)) acted = true
-      }
-    } finally {
-      if (acted) repairAlternation(messages)
+    for (const run of runs.reverse()) {
+      if (await this._summarizeRun(messages, run, model, context.invocationContext)) acted = true
     }
+    if (acted) repairAlternation(messages)
     return acted
   }
 
-  /** Replaces the messages at `run` (contiguous indices) with one summary marker. */
+  /** Replaces the messages at `run` (contiguous indices) with one summary marker; a failure leaves the run intact. */
   private async _summarizeRun(
     messages: Message[],
     run: number[],
@@ -75,12 +72,13 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   ): Promise<boolean> {
     const start = run[0]!
     const runMessages = messages.slice(start, start + run.length)
-    const summary = await summarizeContent(
-      flattenMessagesToContent(runMessages),
-      model,
-      this._config,
-      invocationContext
-    )
+    let summary: string | null
+    try {
+      summary = await summarizeContent(flattenMessagesToContent(runMessages), model, this._config, invocationContext)
+    } catch (error) {
+      logger.warn(`runLength=<${run.length}>, error=<${normalizeError(error).message}> | run summarization failed`)
+      return false
+    }
     if (!summary) return false
 
     const totalTokens = await model.countTokens(runMessages)

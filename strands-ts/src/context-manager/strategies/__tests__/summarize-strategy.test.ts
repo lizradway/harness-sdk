@@ -390,4 +390,29 @@ describe('summarizing whole messages', () => {
       ['u10'],
     ])
   })
+
+  it('leaves a failed run intact and still summarizes the others', async () => {
+    vi.mocked(summarizeContent)
+      .mockClear()
+      .mockResolvedValueOnce('late run')
+      .mockRejectedValueOnce(new Error('throttled'))
+    const pinned = { metadata: { custom: { pinned: true } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      ...['a1', 'u2', 'a3'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+      new Message({ role: 'user', content: [new TextBlock('u4')], ...pinned }),
+      ...['a5', 'u6', 'a7'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+    expect(texts.slice(0, 5)).toEqual([['task'], ['a1'], ['u2'], ['a3'], ['u4']])
+    expect(texts[5]).toContain('[Summarized: 2 messages, ~2 tokens]\n\nlate run')
+  })
 })
