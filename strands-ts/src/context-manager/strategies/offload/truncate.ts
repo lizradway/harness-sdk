@@ -54,7 +54,9 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
-    const middle = await this._selectMiddle(this._getEligibleMessages(context), context.agent)
+    // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
+    const eligible = this._getEligibleMessages(context).filter((message) => !hasElisionMarker(message))
+    const middle = await this._selectMiddle(eligible, context.agent)
     if (middle.length === 0) return false
 
     const { removed, lowestIndex } = spliceWithPairs(messages, middle)
@@ -123,6 +125,12 @@ async function countWithinBudget(messages: Message[], budget: number, agent: Loc
     count++
   }
   return count
+}
+
+const ELISION_MARKER = /^\[\.\.\. \d+ messages? elided \.\.\.\]$/
+
+function hasElisionMarker(message: Message): boolean {
+  return message.content.some((block) => block instanceof TextBlock && ELISION_MARKER.test(block.text))
 }
 
 function isTruncated(block: ContentBlock): boolean {

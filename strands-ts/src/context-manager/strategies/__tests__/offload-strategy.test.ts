@@ -1122,4 +1122,15 @@ describe('truncate whole messages', () => {
       expect(textsOf(messages)).toEqual(expected.map((value) => [label(value)]))
     }
   )
+
+  it('stops once only its own marker is left to elide', async () => {
+    const messages = history()
+    const strategy = Offload.truncate('*', { preview: 'head', previewTokens: 40 }).when({ utilization: 0.5 })
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+    const afterFirstPass = textsOf(messages)
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(false)
+
+    expect(textsOf(messages)).toEqual(afterFirstPass)
+  })
 })
