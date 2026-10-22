@@ -1068,6 +1068,22 @@ class TestTruncateMiddleOut:
         assert [text for text in texts if not text.startswith("[...")] == exp_kept
         assert "[... 10 messages elided ...]" in texts
 
+    @pytest.mark.asyncio
+    async def test_converges_instead_of_eliding_its_own_marker(self, mock_agent):
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(
+            side_effect=lambda msgs: 100 * sum(len(msg["content"]) for msg in msgs)
+        )
+        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization=0.8)
+        messages: Messages = [_text("user", "pin")] + [
+            _text("assistant" if index % 2 else "user", f"m{index}") for index in range(1, 21)
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        assert await strategy.apply(context) is True
+        exp_messages = [dict(msg, content=list(msg["content"])) for msg in messages]
+        assert await strategy.apply(context) is False
+        assert messages == exp_messages
+
 
 class TestTruncateBlockThreshold:
     """Tests for truncate's default block threshold and for skipping its own previews."""

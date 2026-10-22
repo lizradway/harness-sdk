@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
 from ...types import ContextState
 
 logger = logging.getLogger(__name__)
+
+_ELISION_MARKER = re.compile(r"\[\.\.\. \d+ messages? elided \.\.\.\]")
 
 
 def _append_stash_refs_to_tool_result(block: ContentBlock, refs: str) -> None:
@@ -75,7 +78,9 @@ class TruncateStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle."""
         messages = context.messages
-        middle = await self._middle_of(self._get_eligible_messages(context), context.agent)
+        # Skipping earlier markers lets a pass with nothing new to elide return False instead of re-eliding them.
+        eligible = [msg for msg in self._get_eligible_messages(context) if not _has_elision_marker(msg)]
+        middle = await self._middle_of(eligible, context.agent)
         if not middle:
             return False
 
@@ -139,6 +144,10 @@ async def _count_within_budget(messages: list[Message], budget: int, agent: Agen
         if used > budget:
             return count
     return len(messages)
+
+
+def _has_elision_marker(message: Message) -> bool:
+    return any(is_text_block(block) and _ELISION_MARKER.fullmatch(block["text"]) for block in message["content"])
 
 
 _EMERGENCY_REMOVAL_RATIO = 0.2
