@@ -421,6 +421,11 @@ class BaseOffloadStrategy(ABC):
     def _preserves_recent(self) -> bool:
         return self._preserve_recent.value > 0
 
+    @property
+    def _runs_eagerly(self) -> bool:
+        """Whether the eager hook processes each message as it arrives."""
+        return self._utilization is None and not self._preserves_recent and not self._acts_on_messages
+
     def _default_block_threshold(self) -> int:
         """Block size, in tokens, at or under which blocks are left alone when no block_threshold is set."""
         return 0
@@ -444,7 +449,7 @@ class BaseOffloadStrategy(ABC):
         self._stash = stash
         from ....hooks.events import MessageAddedEvent
 
-        if self._utilization is not None or self._preserves_recent or self._acts_on_messages:
+        if not self._runs_eagerly:
             return
 
         async def _eager_hook(event: MessageAddedEvent) -> None:
@@ -482,6 +487,10 @@ class BaseOffloadStrategy(ABC):
             if self._preserves_recent
             else list(messages)
         )
+
+        # Without the eager hook, the last message is one the model has not yet responded to.
+        if not self._runs_eagerly and eligible and eligible[-1] is messages[-1]:
+            eligible.pop()
 
         acted = False
         index_map = {id(msg): i for i, msg in enumerate(messages)}

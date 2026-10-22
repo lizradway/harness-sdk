@@ -948,6 +948,17 @@ class TestGranularity:
         assert messages[1]["content"][0]["text"] == DROPPED_MARKER
 
     @pytest.mark.asyncio
+    async def test_gated_block_strategy_leaves_the_last_message(self, mock_agent):
+        strategy = Offload.drop("tool_results").when(utilization=0.8)
+        old_use, old_result = _make_tool_pair(tool_use_id="tu-old")
+        live_use, live_result = _make_tool_pair(tool_use_id="tu-live")
+        messages: Messages = [_text("user", "pin"), old_use, old_result, live_use, live_result]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+        assert await strategy.apply(context) is True
+        assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == DROPPED_MARKER
+        assert messages[4]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
+
+    @pytest.mark.asyncio
     async def test_utilization_gates_block_strategy(self, mock_agent):
         strategy = Offload.drop("assistant_text").when(utilization=0.8)
         messages = self._conversation()
