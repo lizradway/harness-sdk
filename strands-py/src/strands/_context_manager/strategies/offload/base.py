@@ -438,10 +438,10 @@ class BaseOffloadStrategy(ABC):
         return math.ceil(self._threshold.of(_window_limit(agent)))
 
     def _check_utilization_fits(self, agent: Agent) -> None:
-        limit = agent.model.context_window_limit
-        if self._utilization is None or self._utilization.is_share or limit is None:
+        if self._utilization is None or self._utilization.is_share:
             return
-        if self._utilization.value > limit:
+        limit = agent.model.context_window_limit
+        if limit and self._utilization.value > limit:
             raise ValueError(
                 f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
                 f'({limit} tokens); use a smaller token count or a "N%" share'
