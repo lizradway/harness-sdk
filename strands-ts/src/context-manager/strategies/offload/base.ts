@@ -47,7 +47,7 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   above 1 fires at that many conversation tokens.
+ *   above 1 fires at that many conversation tokens, up to the model's context window.
  * - `threshold` sets which blocks it acts on. A whole number selects blocks over that many tokens; `'5%'` selects
  *   blocks over 5% of the context window.
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
@@ -63,7 +63,7 @@ export type Percent = `${number}%`
  * @experimental
  */
 export interface OffloadConditions {
-  /** Context usage at or above which the strategy fires, as conversation tokens or a share of the context window. */
+  /** Context usage at or above which the strategy fires, as conversation tokens (up to the context window) or a share. */
   utilization?: number | Percent
 
   /** Size above which an individual block is offloaded, as tokens or a share of the context window. */
@@ -488,8 +488,16 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return 0
   }
 
+  /**
+   * Checks utilization against the model's context window, then registers the eager hook if this runs eagerly.
+   *
+   * @param agent - The agent this strategy is attached to
+   * @param stash - The stash offloaded content is stored in
+   * @throws Error when `utilization` is a token count larger than the model's context window
+   */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
+    this._checkUtilizationFits(agent)
     if (!this._runsEagerly) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
@@ -505,6 +513,16 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (context.stash) this._stash = context.stash
     if (!this._utilizationReached(context)) return false
     return this._actsOnMessages ? this._applyPerMessage(context) : this._applyPerBlock(context)
+  }
+
+  private _checkUtilizationFits(agent: LocalAgent): void {
+    const utilization = this._utilization
+    if (!utilization || utilization.isShare) return
+    const limit = agent.model.getConfig().contextWindowLimit
+    if (!limit || utilization.value <= limit) return
+    throw new Error(
+      `utilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
+    )
   }
 
   /** Whether the utilization gate (if any) is open: on overflow, or at or above the configured share. */

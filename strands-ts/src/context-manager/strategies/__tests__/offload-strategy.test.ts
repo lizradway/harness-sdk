@@ -8,7 +8,7 @@ import {
   parseCondition,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
-import type { OffloadConditions, OffloadTarget } from '../offload/base.js'
+import type { OffloadConditions, OffloadTarget, Percent } from '../offload/base.js'
 import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -978,6 +978,25 @@ describe('condition resolution', () => {
     async (conditions, contextWindowLimit, utilization, fires) => {
       const strategy = Offload.drop('toolResults').when(conditions)
       expect(await strategy.apply(makeContext(toolHistory([10]), utilization, false, contextWindowLimit))).toBe(fires)
+    }
+  )
+
+  it('rejects a utilization token count larger than the context window on init', () => {
+    const strategy = Offload.drop('*').when({ utilization: 100_001 })
+    expect(() => strategy.init!(makeContext([], 0.5, false, 100_000).agent)).toThrow(
+      "utilization (100001) is larger than the model's context window (100000 tokens)"
+    )
+  })
+
+  it.each([
+    [100_000, 100_000],
+    [100_000, '100%'],
+    [undefined, 500_000],
+  ] as [number | undefined, number | Percent][])(
+    'inits with a %s-token window and utilization %s',
+    (contextWindowLimit, utilization) => {
+      const strategy = Offload.drop('*').when({ utilization })
+      expect(() => strategy.init!(makeContext([], 0.5, false, contextWindowLimit).agent)).not.toThrow()
     }
   )
 
