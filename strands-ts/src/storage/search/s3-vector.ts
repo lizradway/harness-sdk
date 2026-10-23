@@ -101,7 +101,6 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    *
    * Empty or non-UTF-8 values are not embedded. Any vector from a previous write to the
    * same key is removed instead, so the index never matches content that is no longer stored.
-   * Writing such values therefore needs `s3vectors:DeleteVectors` as well as `PutVectors`.
    *
    * @param storage - The storage the content was written to
    * @param key - The storage key to associate the vector with

@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const mockSend = vi.fn()
-const MockBedrockRuntimeClient = vi.fn(function (this: { send: typeof mockSend }) {
-  this.send = mockSend
-} as unknown as () => void)
-const MockInvokeModelCommand = vi.fn()
+const { mockSend, MockBedrockRuntimeClient, MockInvokeModelCommand } = vi.hoisted(() => {
+  const mockSend = vi.fn()
+  return {
+    mockSend,
+    MockBedrockRuntimeClient: vi.fn(function (this: { send: typeof mockSend }) {
+      this.send = mockSend
+    } as unknown as () => void),
+    MockInvokeModelCommand: vi.fn(),
+  }
+})
 
 vi.mock('@aws-sdk/client-bedrock-runtime', () => ({
   BedrockRuntimeClient: MockBedrockRuntimeClient,
@@ -62,18 +67,15 @@ describe('BedrockEmbedder', () => {
     )
   })
 
-  it.each(['cohere.embed-english-v3', 'amazon.nova-2-multimodal-embeddings-v1:0'])(
-    'rejects the non-Titan model %s at construction',
-    (modelId) => {
-      expect(() => new BedrockEmbedder({ modelId })).toThrow(StorageError)
-    }
-  )
+  it('passes any model ID through to Bedrock unchecked', async () => {
+    mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
-  it('accepts a model ARN and an inference profile ID', () => {
-    expect(
-      () => new BedrockEmbedder({ modelId: 'arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc' })
-    ).not.toThrow()
-    expect(() => new BedrockEmbedder({ modelId: 'us.amazon.titan-embed-text-v2:0' })).not.toThrow()
+    const embedder = new BedrockEmbedder({ modelId: 'amazon.titan-embed-text-v3:0' })
+    await embedder.embed('test')
+
+    expect(MockInvokeModelCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: 'amazon.titan-embed-text-v3:0' })
+    )
   })
 
   it.each([

@@ -11,15 +11,6 @@ export interface EmbedOptions {
 /**
  * Produces embedding vectors from text for vector search strategies. Provider-agnostic: extend
  * it to plug in any model, or use a vended implementation such as `BedrockEmbedder`.
- *
- * @example
- * ```typescript
- * class MyEmbedder extends Embedder {
- *   async embed(text: string): Promise<number[]> {
- *     return callMyModel(text)
- *   }
- * }
- * ```
  */
 export abstract class Embedder {
   /**
