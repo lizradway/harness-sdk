@@ -27,6 +27,7 @@ from .base import (
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -70,16 +71,24 @@ class SummarizeStrategy(BaseOffloadStrategy):
         summarized = False
         # Last run first so earlier indices stay valid as runs collapse.
         for run in reversed(runs):
-            summarized = await self._summarize_run(messages, run, model) or summarized
+            summarized = await self._summarize_run(messages, run, model, context.invocation_context) or summarized
         if summarized:
             _repair_alternation(messages)
         return summarized
 
-    async def _summarize_run(self, messages: Messages, run: list[int], model: Model) -> bool:
+    async def _summarize_run(
+        self,
+        messages: Messages,
+        run: list[int],
+        model: Model,
+        invocation_context: InvocationContext | None = None,
+    ) -> bool:
         """Replace one run with its summary; a failure is logged and leaves the run intact so the pass continues."""
         safe = [messages[index] for index in run]
         try:
-            summary = await _summarize_content(_flatten_messages_to_content(safe), model, self._config)
+            summary = await _summarize_content(
+                _flatten_messages_to_content(safe), model, self._config, invocation_context
+            )
         except Exception as error:
             logger.warning("run_length=<%s>, error=<%s> | run summarization failed", len(run), error)
             return False
@@ -99,6 +108,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         model = self._resolve_model(agent)
         if not model:
@@ -109,7 +119,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if "toolResult" in block:
             tool_result = block["toolResult"]
             content_blocks = _tool_result_to_content_blocks(tool_result["content"])
-            summary = await self._try_summarize(content_blocks, model, message)
+            summary = await self._try_summarize(content_blocks, model, message, invocation_context)
             if not summary:
                 return None
 
@@ -125,7 +135,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
 
         if "text" in block:
-            summary = await self._try_summarize([ContentBlock(text=block["text"])], model, message)
+            summary = await self._try_summarize([ContentBlock(text=block["text"])], model, message, invocation_context)
             if not summary:
                 return None
 
@@ -134,7 +144,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return ContentBlock(text=marker)
 
         if "image" in block or "document" in block:
-            summary = await self._try_summarize([block], model, message)
+            summary = await self._try_summarize([block], model, message, invocation_context)
             if summary:
                 logger.debug(
                     "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens
@@ -145,10 +155,16 @@ class SummarizeStrategy(BaseOffloadStrategy):
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
         return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
-    async def _try_summarize(self, content: list[ContentBlock], model: Model, message: Message) -> str | None:
+    async def _try_summarize(
+        self,
+        content: list[ContentBlock],
+        model: Model,
+        message: Message,
+        invocation_context: InvocationContext | None = None,
+    ) -> str | None:
         """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
         try:
-            return await _summarize_content(content, model, self._config)
+            return await _summarize_content(content, model, self._config, invocation_context)
         except Exception as error:
             logger.warning(
                 "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error

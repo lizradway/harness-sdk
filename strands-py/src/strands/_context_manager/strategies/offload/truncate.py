@@ -28,6 +28,7 @@ from .base import (
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
 
 from ...types import ContextState
 
@@ -110,6 +111,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         if _is_truncated(block):
             return None
