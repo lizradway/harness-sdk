@@ -46,7 +46,7 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
     case 'proactiveSummarization':
       return [Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 0.7 })]
     case 'largeToolOffloading':
-      return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ blockThreshold: 2500 })]
+      return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ threshold: 2500 })]
     case 'overflowProtection':
       return [Offload.drop('*').when({ utilization: 1.0, preserveRecent: 4 })]
     case 'staleToolCleanup':

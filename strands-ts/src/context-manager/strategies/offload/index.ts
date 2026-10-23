@@ -47,19 +47,19 @@ interface OffloadNamespace {
 /**
  * Builder for offload strategies — reduces content in the context window.
  *
- * Target `'*'` without `blockThreshold` acts on whole messages; any other target, or a set `blockThreshold`,
+ * Target `'*'` without `threshold` acts on whole messages; any other target, or a set `threshold`,
  * acts on each block. `utilization` only gates when the strategy fires.
  *
  * @example
  * ```typescript
  * // Per-block: truncate each tool result over 1500 tokens to a 750-token preview, eagerly
- * Offload.truncate("toolResults", { previewTokens: 750 }).when({ blockThreshold: 1500 })
+ * Offload.truncate("toolResults", { previewTokens: 750 }).when({ threshold: 1500 })
  * // Per-block: truncate specific tools' results over 5% of the context window
- * Offload.truncate(["tool::bash", "tool::read_file"]).when({ blockThreshold: "5%" })
+ * Offload.truncate(["tool::bash", "tool::read_file"]).when({ threshold: "5%" })
  * // Messages: summarize the oldest messages at 70% utilization, keeping the newest 4
  * Offload.summarize("*").when({ utilization: "70%", preserveRecent: 4 })
  * // Per-block: drop each failed tool result over 500 tokens
- * Offload.drop("toolResultErrors").when({ blockThreshold: 500 })
+ * Offload.drop("toolResultErrors").when({ threshold: 500 })
  * ```
  */
 export const Offload: OffloadNamespace = {

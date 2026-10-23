@@ -81,18 +81,18 @@ describe('Offload.truncate', () => {
   })
 
   it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 1000 })
+    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: 1000 })
     expect(strategy.name).toBe('offload:truncate')
   })
 
-  it('rejects a token blockThreshold at or below previewTokens', () => {
-    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 500 })).toThrow(
-      'blockThreshold (500) must be greater than previewTokens (500) to ensure truncation converges'
+  it('rejects a token threshold at or below previewTokens', () => {
+    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: 500 })).toThrow(
+      'threshold (500) must be greater than previewTokens (500) to ensure truncation converges'
     )
   })
 
-  it('accepts a percent blockThreshold regardless of previewTokens', () => {
-    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: '0.1%' })).not.toThrow()
+  it('accepts a percent threshold regardless of previewTokens', () => {
+    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: '0.1%' })).not.toThrow()
   })
 
   it('truncates large tool results', async () => {
@@ -114,7 +114,7 @@ describe('Offload.truncate', () => {
   it('does not truncate results below threshold', async () => {
     const smallText = 'short result'
     const messages = [makeToolResultMessage(smallText)]
-    const strategy = Offload.truncate('toolResults').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('toolResults').when({ threshold: 2500 })
     const context = makeContext(messages)
 
     const result = await strategy.apply(context)
@@ -378,7 +378,7 @@ describe('Offload builder', () => {
   })
 
   it('Offload.truncate(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ blockThreshold: 1000 })
+    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ threshold: 1000 })
     expect(strategy.name).toBe('offload:truncate')
   })
 
@@ -505,8 +505,8 @@ describe('Offload message-level with role alternation', () => {
   })
 })
 
-describe('Offload with * target and blockThreshold (acts on every block)', () => {
-  it('Offload.drop("*") with blockThreshold 0 drops all content', async () => {
+describe('Offload with * target and threshold (acts on every block)', () => {
+  it('Offload.drop("*") with threshold 0 drops all content', async () => {
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant text')],
@@ -522,7 +522,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
         }),
       ],
     })
-    const strategy = Offload.drop('*').when({ blockThreshold: 0 })
+    const strategy = Offload.drop('*').when({ threshold: 0 })
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -534,7 +534,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
     expect((toolBlock.content[0] as TextBlock).text).toBe('[Dropped]')
   })
 
-  it('Offload.truncate("*") with blockThreshold truncates all large content', async () => {
+  it('Offload.truncate("*") with threshold truncates all large content', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const assistantMsg = new Message({
       role: 'assistant',
@@ -551,7 +551,7 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
         }),
       ],
     })
-    const strategy = Offload.truncate('*').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('*').when({ threshold: 2500 })
     const context = makeContext([assistantMsg, userMsg])
 
     const result = await strategy.apply(context)
@@ -563,13 +563,13 @@ describe('Offload with * target and blockThreshold (acts on every block)', () =>
     expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
   })
 
-  it('Offload.truncate("*") with blockThreshold skips small content', async () => {
+  it('Offload.truncate("*") with threshold skips small content', async () => {
     const smallText = 'short'
     const assistantMsg = new Message({
       role: 'assistant',
       content: [new TextBlock(smallText)],
     })
-    const strategy = Offload.truncate('*').when({ blockThreshold: 2500 })
+    const strategy = Offload.truncate('*').when({ threshold: 2500 })
     const context = makeContext([assistantMsg])
 
     const result = await strategy.apply(context)
@@ -944,8 +944,8 @@ describe('parseCondition', () => {
     ['utilization', 0.5, { value: 0.5, isShare: true }],
     ['utilization', '70%', { value: 0.7, isShare: true }],
     ['utilization', 50_000, { value: 50_000, isShare: false }],
-    ['blockThreshold', 2500, { value: 2500, isShare: false }],
-    ['blockThreshold', '5%', { value: 0.05, isShare: true }],
+    ['threshold', 2500, { value: 2500, isShare: false }],
+    ['threshold', '5%', { value: 0.05, isShare: true }],
     ['preserveRecent', 4, { value: 4, isShare: false }],
     ['preserveRecent', 0.5, { value: 0.5, isShare: true }],
     ['preserveRecent', '50%', { value: 0.5, isShare: true }],
@@ -958,8 +958,8 @@ describe('parseCondition', () => {
     ['utilization', 1.5, '1.5'],
     ['utilization', '101%', '"101%"'],
     ['utilization', '70', '"70"'],
-    ['blockThreshold', -1, '-1'],
-    ['blockThreshold', 0.5, '0.5'],
+    ['threshold', -1, '-1'],
+    ['threshold', 0.5, '0.5'],
     ['preserveRecent', 1.5, '1.5'],
     ['preserveRecent', '100%', '"100%"'],
   ] as const)('rejects %s=%s', (name, raw, shown) => {
@@ -981,9 +981,9 @@ describe('condition resolution', () => {
     }
   )
 
-  it('resolves a percent blockThreshold against the context window', async () => {
+  it('resolves a percent threshold against the context window', async () => {
     const messages = toolHistory([100, 101])
-    const strategy = Offload.drop('toolResults').when({ blockThreshold: '1%' })
+    const strategy = Offload.drop('toolResults').when({ threshold: '1%' })
 
     expect(await strategy.apply(makeContext(messages, 0, false, 10_000))).toBe(true)
 
@@ -1017,7 +1017,7 @@ describe('granularity', () => {
     it.each([
       ['*', { utilization: 0.5 }, 0.9, 'messages'],
       ['*', { preserveRecent: 1 }, 0, 'messages'],
-      ['*', { blockThreshold: 200, utilization: 0.5 }, 0.9, [1, 2, 3, 4]],
+      ['*', { threshold: 200, utilization: 0.5 }, 0.9, [1, 2, 3, 4]],
       ['assistantText', { utilization: 0.5 }, 0.9, [1, 3]],
       ['assistantText', { utilization: 0.5 }, 0.1, 'nothing'],
     ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'nothing' | number[]][])(
@@ -1065,11 +1065,11 @@ describe('whole-message conditions', () => {
   ] as const)('Offload.%s("*")', (method, builder) => {
     it.each([{}, { preserveRecent: 0 }] as OffloadConditions[])('rejects %j', (conditions) => {
       expect(() => builder().when(conditions)).toThrow(
-        `Offload.${method}("*") without blockThreshold acts on whole messages; set utilization or preserveRecent`
+        `Offload.${method}("*") without threshold acts on whole messages; set utilization or preserveRecent`
       )
     })
 
-    it.each([{ utilization: 0.5 }, { preserveRecent: 1 }, { blockThreshold: 2500 }] as OffloadConditions[])(
+    it.each([{ utilization: 0.5 }, { preserveRecent: 1 }, { threshold: 2500 }] as OffloadConditions[])(
       'accepts %j',
       (conditions) => {
         expect(() => builder().when(conditions)).not.toThrow()

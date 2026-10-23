@@ -36,16 +36,16 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     this._truncateConfig = config ?? {}
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
-    const threshold = this._blockThreshold
+    const threshold = this._threshold
     // A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
     if (threshold && !threshold.isShare && threshold.value <= this._previewTokens) {
       throw new Error(
-        `blockThreshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges`
+        `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges`
       )
     }
   }
 
-  protected override get _defaultBlockThreshold(): number {
+  protected override get _defaultThreshold(): number {
     return this._previewTokens
   }
 

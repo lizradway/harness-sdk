@@ -46,19 +46,19 @@ export type Percent = `${number}%`
 /**
  * Conditions that determine when and how an offload strategy fires.
  *
- * A number is a count in the condition's unit, and a `'N%'` string is a share of the whole:
- * - `utilization`: an integer above 1 is conversation tokens; `0 < x <= 1` or `'N%'` (`0 < N <= 100`) is a share
- *   of the context window.
- * - `blockThreshold`: an integer `>= 0` is tokens per block; `'N%'` (`0 < N <= 100`) is a share of the context window.
- * - `preserveRecent`: an integer `>= 0` is a message count; `0 < x < 1` or `'N%'` (`0 <= N < 100`) is a share of the
- *   matching messages.
+ * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
+ *   above 1 fires at that many conversation tokens.
+ * - `threshold` sets which blocks it acts on. A whole number selects blocks over that many tokens; `'5%'` selects
+ *   blocks over 5% of the context window.
+ * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
+ *   `'70%'` or `0.7` keeps the newest 70% of them.
  *
- * Granularity: target `'*'` without `blockThreshold` acts on whole messages (drop removes them, truncate elides the
- * middle, summarize merges each contiguous run). Any other target, or a set `blockThreshold`, acts on each block.
+ * Granularity: target `'*'` without `threshold` acts on whole messages (drop removes them, truncate elides the
+ * middle, summarize merges each contiguous run). Any other target, or a set `threshold`, acts on each block.
  * `utilization` only gates when the strategy fires, and `preserveRecent` only protects the newest matching messages.
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
- * strategy's block threshold and gets skipped.
+ * strategy's threshold and gets skipped.
  *
  * @experimental
  */
@@ -67,7 +67,7 @@ export interface OffloadConditions {
   utilization?: number | Percent
 
   /** Size above which an individual block is offloaded, as tokens or a share of the context window. */
-  blockThreshold?: number | Percent
+  threshold?: number | Percent
 
   /** How many of the most recent matching messages to leave untouched, as a count or a share. */
   preserveRecent?: number | Percent
@@ -124,7 +124,7 @@ const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
     },
     expected: 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count',
   },
-  blockThreshold: {
+  threshold: {
     percentInRange: (percent) => percent > 0 && percent <= 100,
     parseNumber: (value) => (Number.isInteger(value) ? { value, isShare: false } : undefined),
     expected: 'a whole token count or a "N%" string up to "100%"',
@@ -438,7 +438,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   readonly name: string
 
   protected readonly _target: OffloadTarget | undefined
-  protected readonly _blockThreshold: ParsedCondition | undefined
+  protected readonly _threshold: ParsedCondition | undefined
   protected readonly _utilization: ParsedCondition | undefined
   protected readonly _preserveRecent: ParsedCondition
   protected readonly _includeFilter: Set<string> | undefined
@@ -458,7 +458,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this.name = name
     this._target = target
     this._utilization = parseCondition('utilization', conditions?.utilization)
-    this._blockThreshold = parseCondition('blockThreshold', conditions?.blockThreshold)
+    this._threshold = parseCondition('threshold', conditions?.threshold)
     this._preserveRecent = parseCondition('preserveRecent', conditions?.preserveRecent) ?? NO_PRESERVE
 
     const resolved = resolveToolFilter(target)
@@ -468,14 +468,14 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (conditions && this._actsOnMessages && this._utilization === undefined && this._preserveRecent.value === 0) {
       const method = name.slice(name.indexOf(':') + 1)
       throw new Error(
-        `Offload.${method}("*") without blockThreshold acts on whole messages; set utilization or preserveRecent`
+        `Offload.${method}("*") without threshold acts on whole messages; set utilization or preserveRecent`
       )
     }
   }
 
   /** Whether this strategy acts on whole messages rather than individual blocks. */
   protected get _actsOnMessages(): boolean {
-    return this._target === '*' && this._blockThreshold === undefined
+    return this._target === '*' && this._threshold === undefined
   }
 
   /** Whether the eager hook processes each message as it arrives. */
@@ -483,8 +483,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._utilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
   }
 
-  /** Block size at or below which blocks are left alone when `blockThreshold` is unset. */
-  protected get _defaultBlockThreshold(): number {
+  /** Block size at or below which blocks are left alone when `threshold` is unset. */
+  protected get _defaultThreshold(): number {
     return 0
   }
 
@@ -496,7 +496,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
-      const threshold = this._resolveBlockThreshold(event.agent)
+      const threshold = this._resolveThreshold(event.agent)
       await this._transformBlocks(event.message, messages, toolNameMap, threshold, event.agent)
     })
   }
@@ -516,9 +516,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   /** Tokens per block above which a block is offloaded. */
-  private _resolveBlockThreshold(agent: LocalAgent): number {
-    const threshold = this._blockThreshold
-    if (!threshold) return this._defaultBlockThreshold
+  private _resolveThreshold(agent: LocalAgent): number {
+    const threshold = this._threshold
+    if (!threshold) return this._defaultThreshold
     return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
   }
 
@@ -527,7 +527,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages, agent } = context
     const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
-    const threshold = this._resolveBlockThreshold(agent)
+    const threshold = this._resolveThreshold(agent)
     const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : [...messages]
     // Without the eager hook, the last message is one the model has not yet responded to.
     if (!this._runsEagerly && eligible.at(-1) === messages.at(-1)) eligible.pop()
