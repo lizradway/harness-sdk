@@ -44,7 +44,7 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
     if name == "proactive_summarization":
         return [Offload.summarize("*").when(utilization=0.7, preserve_recent=0.7)]
     if name == "large_tool_offloading":
-        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(block_threshold=2500)]
+        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)]
     if name == "overflow_protection":
         return [Offload.drop("*").when(utilization=1.0, preserve_recent=4)]
     if name == "stale_tool_cleanup":

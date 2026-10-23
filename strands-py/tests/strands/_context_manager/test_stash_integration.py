@@ -50,7 +50,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_truncated_text(self, mock_agent, stash):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(block_threshold=200)
+        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -65,7 +65,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_truncated_tool_result(self, mock_agent, stash):
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(block_threshold=200)
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(threshold=200)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -96,7 +96,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_no_stash_ref_without_stash(self, mock_agent):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(block_threshold=200)
+        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 50000)], tracking_id="track-1"),
@@ -113,7 +113,7 @@ class TestDropWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_dropped_marker(self, mock_agent, stash):
-        strategy = Offload.drop("*").when(block_threshold=100)
+        strategy = Offload.drop("*").when(threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -128,7 +128,7 @@ class TestDropWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_dropped_tool_result(self, mock_agent, stash):
-        strategy = Offload.drop("tool_results").when(block_threshold=100)
+        strategy = Offload.drop("tool_results").when(threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -191,7 +191,7 @@ class TestRetrievalLoopPrevention:
 
     @pytest.mark.asyncio
     async def test_does_not_offload_retrieve_context_results_when_stash_active(self, mock_agent, stash):
-        strategy = Offload.drop("tool_results").when(block_threshold=100)
+        strategy = Offload.drop("tool_results").when(threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -220,7 +220,7 @@ class TestRetrievalLoopPrevention:
 
     @pytest.mark.asyncio
     async def test_does_offload_retrieve_context_results_without_stash(self, mock_agent):
-        strategy = Offload.drop("tool_results").when(block_threshold=100)
+        strategy = Offload.drop("tool_results").when(threshold=100)
         assistant_msg = Message(
             role="assistant",
             content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
@@ -252,7 +252,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_summarized_tool_result(self, mock_agent, stash):
-        strategy = Offload.summarize("tool_results").when(block_threshold=100)
+        strategy = Offload.summarize("tool_results").when(threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -284,7 +284,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_media_offload_marker(self, mock_agent, stash):
-        strategy = Offload.summarize("*").when(block_threshold=100)
+        strategy = Offload.summarize("*").when(threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -308,7 +308,7 @@ class TestStashRefRoundTrip:
     @pytest.mark.asyncio
     async def test_truncated_ref_resolves_via_retrieval_tool(self, mock_agent, stash):
         original_text = "x" * 50_000
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(block_threshold=200)
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(threshold=200)
         strategy._stash = stash
 
         assistant_msg = Message(

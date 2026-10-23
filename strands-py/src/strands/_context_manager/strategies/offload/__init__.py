@@ -19,7 +19,7 @@ class _OffloadNamespace:
     """Factory for creating offload strategies via ``Offload.truncate(...)``, ``Offload.drop(...)``, etc.
 
     Example:
-        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500)
+        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(threshold=1500)
         >>> Offload.summarize("*").when(utilization="85%", preserve_recent=2)
         >>> Offload.drop("tool_result_errors").when()
     """

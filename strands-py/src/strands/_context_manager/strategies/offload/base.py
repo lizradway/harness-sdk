@@ -33,20 +33,20 @@ class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and on what an offload strategy acts.
 
     A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
-    Target ``"*"`` without ``block_threshold`` acts on whole messages; any other target, or any
-    ``block_threshold``, acts on individual blocks.
+    Target ``"*"`` without ``threshold`` acts on whole messages; any other target, or any
+    ``threshold``, acts on individual blocks.
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
             window; a whole number above 1 fires at that many conversation tokens.
-        block_threshold: Which blocks the strategy acts on. A whole number selects blocks over
+        threshold: Which blocks the strategy acts on. A whole number selects blocks over
             that many tokens; ``"5%"`` selects blocks over 5% of the context window.
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
             many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
     """
 
     utilization: float | str
-    block_threshold: int | str
+    threshold: int | str
     preserve_recent: int | float | str
 
 
@@ -64,7 +64,7 @@ class _Measure:
 
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
 _UTILIZATION_FORMS = 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count'
-_BLOCK_THRESHOLD_FORMS = 'a whole token count or a "N%" string up to "100%"'
+_THRESHOLD_FORMS = 'a whole token count or a "N%" string up to "100%"'
 _PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
 
 
@@ -92,14 +92,14 @@ def _parse_utilization(value: int | float | str) -> _Measure:
     return _Measure(float(value), is_share=False)
 
 
-def _parse_block_threshold(value: int | str) -> _Measure:
+def _parse_threshold(value: int | str) -> _Measure:
     if isinstance(value, str):
         share = _percent_share(value)
         if share is None or not 0 < share <= 1:
-            raise _invalid_condition("block_threshold", value, _BLOCK_THRESHOLD_FORMS)
+            raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
         return _Measure(share, is_share=True)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise _invalid_condition("block_threshold", value, _BLOCK_THRESHOLD_FORMS)
+        raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
     return _Measure(float(value), is_share=False)
 
 
@@ -121,15 +121,15 @@ def _parse_preserve_recent(value: int | float | str) -> _Measure:
 def _build_conditions(
     *,
     utilization: float | str | None = None,
-    block_threshold: int | str | None = None,
+    threshold: int | str | None = None,
     preserve_recent: int | float | str = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
     if utilization is not None:
         conditions["utilization"] = utilization
-    if block_threshold is not None:
-        conditions["block_threshold"] = block_threshold
+    if threshold is not None:
+        conditions["threshold"] = threshold
     if preserve_recent:
         conditions["preserve_recent"] = preserve_recent
     return conditions
@@ -376,7 +376,7 @@ class BaseOffloadStrategy(ABC):
 
     _target: OffloadTarget | None
     _utilization: _Measure | None
-    _block_threshold: _Measure | None
+    _threshold: _Measure | None
     _preserve_recent: _Measure
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
@@ -400,22 +400,21 @@ class BaseOffloadStrategy(ABC):
         conditions_given = conditions is not None
         conditions = conditions or {}
         utilization = conditions.get("utilization")
-        block_threshold = conditions.get("block_threshold")
+        threshold = conditions.get("threshold")
         self._utilization = _parse_utilization(utilization) if utilization is not None else None
-        self._block_threshold = _parse_block_threshold(block_threshold) if block_threshold is not None else None
+        self._threshold = _parse_threshold(threshold) if threshold is not None else None
         self._preserve_recent = _parse_preserve_recent(conditions.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
         if conditions_given and self._acts_on_messages and self._utilization is None and not self._preserves_recent:
             method = self.name.removeprefix("offload:")
             raise ValueError(
-                f'Offload.{method}("*") without block_threshold acts on whole messages; '
-                "set utilization or preserve_recent"
+                f'Offload.{method}("*") without threshold acts on whole messages; set utilization or preserve_recent'
             )
 
     @property
     def _acts_on_messages(self) -> bool:
-        return self._target == "*" and self._block_threshold is None
+        return self._target == "*" and self._threshold is None
 
     @property
     def _preserves_recent(self) -> bool:
@@ -426,16 +425,16 @@ class BaseOffloadStrategy(ABC):
         """Whether the eager hook processes each message as it arrives."""
         return self._utilization is None and not self._preserves_recent and not self._acts_on_messages
 
-    def _default_block_threshold(self) -> int:
-        """Block size, in tokens, at or under which blocks are left alone when no block_threshold is set."""
+    def _default_threshold(self) -> int:
+        """Block size, in tokens, at or under which blocks are left alone when no threshold is set."""
         return 0
 
-    def _resolve_block_threshold(self, agent: Agent) -> int:
-        if self._block_threshold is None:
-            return self._default_block_threshold()
-        if not self._block_threshold.is_share:
-            return int(self._block_threshold.value)
-        return math.ceil(self._block_threshold.of(_window_limit(agent)))
+    def _resolve_threshold(self, agent: Agent) -> int:
+        if self._threshold is None:
+            return self._default_threshold()
+        if not self._threshold.is_share:
+            return int(self._threshold.value)
+        return math.ceil(self._threshold.of(_window_limit(agent)))
 
     def _utilization_reached(self, context: ContextState) -> bool:
         if self._utilization is None or context.overflow:
@@ -552,7 +551,7 @@ class BaseOffloadStrategy(ABC):
         agent: Agent,
     ) -> bool:
         """Process eligible blocks in a message."""
-        effective_threshold = self._resolve_block_threshold(agent)
+        effective_threshold = self._resolve_threshold(agent)
         acted = False
         content = message["content"]
         for block_index in range(len(content)):
@@ -623,7 +622,7 @@ class OffloadStrategyBuilder:
         self,
         *,
         utilization: float | str | None = None,
-        block_threshold: int | str | None = None,
+        threshold: int | str | None = None,
         preserve_recent: int | float | str = 0,
     ) -> ContextStrategy:
         """Return the strategy with these conditions.
@@ -633,7 +632,7 @@ class OffloadStrategyBuilder:
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
                 window; a whole number above 1 fires at that many conversation tokens.
-            block_threshold: Which blocks the strategy acts on. A whole number selects blocks over
+            threshold: Which blocks the strategy acts on. A whole number selects blocks over
                 that many tokens; ``"5%"`` selects blocks over 5% of the context window.
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
                 many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
@@ -643,8 +642,8 @@ class OffloadStrategyBuilder:
 
         Raises:
             ValueError: If a condition value is invalid, or a target ``"*"`` strategy without
-                ``block_threshold`` has neither ``utilization`` nor ``preserve_recent``.
+                ``threshold`` has neither ``utilization`` nor ``preserve_recent``.
         """
         return self._factory(
-            _build_conditions(utilization=utilization, block_threshold=block_threshold, preserve_recent=preserve_recent)
+            _build_conditions(utilization=utilization, threshold=threshold, preserve_recent=preserve_recent)
         )

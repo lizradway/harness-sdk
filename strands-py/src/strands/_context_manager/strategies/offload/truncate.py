@@ -64,15 +64,15 @@ class TruncateStrategy(BaseOffloadStrategy):
         super().__init__(target, conditions)
 
         preview_tokens = _resolve_preview_tokens(self._truncate_config)
-        block_threshold = (conditions or {}).get("block_threshold")
+        threshold = (conditions or {}).get("threshold")
         # A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
-        if isinstance(block_threshold, int) and block_threshold <= preview_tokens:
+        if isinstance(threshold, int) and threshold <= preview_tokens:
             raise ValueError(
-                f"block_threshold ({block_threshold}) must be greater than preview_tokens ({preview_tokens}) "
+                f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges"
             )
 
-    def _default_block_threshold(self) -> int:
+    def _default_threshold(self) -> int:
         return _resolve_preview_tokens(self._truncate_config)
 
     async def _apply_per_message(self, context: ContextState) -> bool:

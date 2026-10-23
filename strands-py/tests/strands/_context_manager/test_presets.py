@@ -44,12 +44,12 @@ class TestResolveStrategies:
         assert strategies[1].name == "offload:drop"
 
     def test_passes_through_instances(self):
-        custom = Offload.drop("*").when(block_threshold=500)
+        custom = Offload.drop("*").when(threshold=500)
         strategies = _resolve_strategies([custom])
         assert strategies == [custom]
 
     def test_mixed_presets_and_instances(self):
-        custom = Offload.drop("*").when(block_threshold=500)
+        custom = Offload.drop("*").when(threshold=500)
         strategies = _resolve_strategies(["proactive_summarization", custom])
         assert len(strategies) == 2
         assert strategies[0].name == "offload:summarize"
