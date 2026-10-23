@@ -353,6 +353,20 @@ class TestConditionResolution:
         context = ContextState(messages=[], agent=mock_agent, utilization=utilization)
         assert strategy._utilization_reached(context) is exp_reached
 
+    def test_token_utilization_above_window_raises_on_init(self, mock_agent):
+        mock_agent.model.context_window_limit = 100_000
+        strategy = Offload.drop("*").when(utilization=100_001)
+        with pytest.raises(ValueError, match=r"utilization \(100001\) is larger than the model's context window"):
+            strategy.init(mock_agent)
+
+    @pytest.mark.parametrize(
+        ("window", "utilization"),
+        [(100_000, 100_000), (100_000, "100%"), (None, 500_000)],
+    )
+    def test_utilization_within_or_without_window_inits(self, mock_agent, window, utilization):
+        mock_agent.model.context_window_limit = window
+        Offload.drop("*").when(utilization=utilization).init(mock_agent)
+
 
 class TestToolMatchesTarget:
     """Tests for tool_matches_target — all branch paths."""

@@ -38,7 +38,8 @@ class OffloadConditions(TypedDict, total=False):
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-            window; a whole number above 1 fires at that many conversation tokens.
+            window; a whole number above 1 fires at that many conversation tokens, up to the
+            model's context window.
         threshold: Which blocks the strategy acts on. A whole number selects blocks over
             that many tokens; ``"5%"`` selects blocks over 5% of the context window.
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
@@ -436,6 +437,16 @@ class BaseOffloadStrategy(ABC):
             return int(self._threshold.value)
         return math.ceil(self._threshold.of(_window_limit(agent)))
 
+    def _check_utilization_fits(self, agent: Agent) -> None:
+        limit = agent.model.context_window_limit
+        if self._utilization is None or self._utilization.is_share or limit is None:
+            return
+        if self._utilization.value > limit:
+            raise ValueError(
+                f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
+                f'({limit} tokens); use a smaller token count or a "N%" share'
+            )
+
     def _utilization_reached(self, context: ContextState) -> bool:
         if self._utilization is None or context.overflow:
             return True
@@ -444,8 +455,13 @@ class BaseOffloadStrategy(ABC):
         return context.utilization >= self._utilization.value / _window_limit(context.agent)
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """Register the eager hook for block strategies with no utilization or preserve_recent."""
+        """Check utilization against the model's context window, then register the eager hook if this runs eagerly.
+
+        Raises:
+            ValueError: If ``utilization`` is a token count larger than the model's context window.
+        """
         self._stash = stash
+        self._check_utilization_fits(agent)
         from ....hooks.events import MessageAddedEvent
 
         if not self._runs_eagerly:
@@ -631,7 +647,8 @@ class OffloadStrategyBuilder:
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-                window; a whole number above 1 fires at that many conversation tokens.
+                window; a whole number above 1 fires at that many conversation tokens, up to the
+                model's context window.
             threshold: Which blocks the strategy acts on. A whole number selects blocks over
                 that many tokens; ``"5%"`` selects blocks over 5% of the context window.
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
