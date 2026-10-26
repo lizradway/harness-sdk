@@ -147,6 +147,7 @@ function hasElisionMarker(message: Message): boolean {
   return message.content.some((block) => block instanceof TextBlock && ELISION_MARKER.test(block.text))
 }
 
+/** Matches on the text prefix, so content that genuinely starts with it is also treated as truncated. */
 function isTruncated(block: ContentBlock): boolean {
   if (block instanceof TextBlock) return block.text.startsWith(TRUNCATED_PREFIX)
   if (!(block instanceof ToolResultBlock)) return false
