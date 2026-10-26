@@ -49,7 +49,7 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   above 1 fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
+ *   of 1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
  * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
  *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
@@ -71,7 +71,7 @@ export type Percent = `${number}%`
 export interface OffloadConditions {
   /**
    * Context usage at or above which the strategy fires: `'80%'` or `0.8` for a share of the context window, or a whole
-   * number above 1 for conversation tokens, at most the model's `contextWindowLimit`. `1` is 100%.
+   * number of 1,000 or more for conversation tokens, at most the model's `contextWindowLimit`. `1` is 100%.
    */
   utilization?: number | Percent
 
@@ -129,15 +129,19 @@ interface ConditionRule {
 
 const PERCENT_PATTERN = /^\d+(\.\d+)?%$/
 
+/** Smaller whole numbers are almost always a percent written without "%", like `utilization: 80`. */
+const MIN_UTILIZATION_TOKENS = 1000
+
 const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
   utilization: {
     percentInRange: (percent) => percent > 0 && percent <= 100,
     parseNumber: (value) => {
       if (value > 0 && value <= 1) return { value, isShare: true }
-      if (value > 1 && Number.isInteger(value)) return { value, isShare: false }
-      return undefined
+      if (value <= 1 || !Number.isInteger(value)) return undefined
+      if (value < MIN_UTILIZATION_TOKENS) throw new Error(tokenUtilizationTooSmall(value))
+      return { value, isShare: false }
     },
-    expected: 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count',
+    expected: `a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
   },
   threshold: {
     percentInRange: (percent) => percent > 0 && percent <= 100,
@@ -172,6 +176,11 @@ export function parseCondition(name: ConditionName, raw: unknown): ParsedConditi
     throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}`)
   }
   return parsed
+}
+
+function tokenUtilizationTooSmall(value: number): string {
+  const hint = value <= 100 ? `; for ${value}% of the context window, write "${value}%"` : ''
+  return `utilization=${value} is invalid: a token count must be at least ${MIN_UTILIZATION_TOKENS}${hint}`
 }
 
 function parsePercent(raw: string, rule: ConditionRule): ParsedCondition | undefined {

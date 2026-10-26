@@ -1017,6 +1017,7 @@ describe('parseCondition', () => {
     ['utilization', 0.5, { value: 0.5, isShare: true }],
     ['utilization', '70%', { value: 0.7, isShare: true }],
     ['utilization', 50_000, { value: 50_000, isShare: false }],
+    ['utilization', 1000, { value: 1000, isShare: false }],
     ['threshold', 2500, { value: 2500, isShare: false }],
     ['threshold', '5%', { value: 0.05, isShare: true }],
     ['preserveRecent', 4, { value: 4, isShare: false }],
@@ -1038,6 +1039,13 @@ describe('parseCondition', () => {
     ['preserveRecent', '100%', '"100%"'],
   ] as const)('rejects %s=%s', (name, raw, shown) => {
     expect(() => parseCondition(name, raw)).toThrow(`${name}=${shown} is invalid: expected `)
+  })
+
+  it.each([
+    [80, 'utilization=80 is invalid: a token count must be at least 1000; for 80% of the context window, write "80%"'],
+    [999, 'utilization=999 is invalid: a token count must be at least 1000'],
+  ])('rejects a token utilization of %s, below the floor', (raw, message) => {
+    expect(() => parseCondition('utilization', raw)).toThrow(new Error(message))
   })
 })
 
