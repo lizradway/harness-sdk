@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text", "media"] | list[str]
 """Target for offload operations. ``"*"`` is whole messages, ``"media"`` is image, document, video, and
-audio blocks outside tool results, and a list names tools to include (``["bash"]`` or ``["tool::bash"]``) or,
-each prefixed ``!``, tools to exclude."""
+audio blocks outside tool results, and a list names tools to include (``["bash"]`` or ``["tool::bash"]``) and,
+prefixed ``!``, tools to exclude. A list of only exclusions acts on every other tool."""
 
 _MEDIA_KEYS = ("image", "document", "video", "audio")
 
@@ -160,11 +160,9 @@ def _build_conditions(
 def _validate_target(target: OffloadTarget | None) -> None:
     if isinstance(target, list) and len(target) == 0:
         raise ValueError("Empty array target matches nothing — provide at least one target")
-    if isinstance(target, list) and len({entry.startswith("!") for entry in target}) > 1:
-        raise ValueError(
-            f"Tool target {target!r} mixes included and excluded tools; list only tools to include"
-            " or only tools to exclude"
-        )
+    include_filter, _ = _resolve_tool_filter(target)
+    if include_filter is not None and not include_filter:
+        raise ValueError(f"Tool target {target!r} excludes every tool it includes, so it matches nothing")
 
 
 def _window_limit(agent: Agent) -> int:
@@ -397,10 +395,10 @@ def _resolve_tool_filter(target: OffloadTarget | None) -> tuple[set[str] | None,
         else:
             includes.append(entry.removeprefix("tool::"))
 
+    if includes:
+        return set(includes) - set(excludes), None
     if excludes:
         return None, set(excludes)
-    if includes:
-        return set(includes), None
 
     return None, None
 
@@ -431,7 +429,7 @@ class BaseOffloadStrategy(ABC):
                 internal strategies that override ``apply``.
 
         Raises:
-            ValueError: If ``target`` is an empty list or mixes included and excluded tools, a condition
+            ValueError: If ``target`` is an empty list or excludes every tool it includes, a condition
                 value is invalid, a message-level strategy has no ``utilization``, ``threshold``, or
                 ``preserve_recent``, or a ``"media"`` strategy has neither ``utilization`` nor ``preserve_recent``.
         """
@@ -716,7 +714,7 @@ class OffloadStrategyBuilder:
             factory: Builds the strategy from its conditions.
 
         Raises:
-            ValueError: If ``target`` is an empty list or mixes included and excluded tools.
+            ValueError: If ``target`` is an empty list or excludes every tool it includes.
         """
         _validate_target(target)
         self._factory = factory

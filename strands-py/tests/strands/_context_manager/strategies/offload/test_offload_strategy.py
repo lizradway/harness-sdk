@@ -103,9 +103,14 @@ class TestResolveToolFilter:
         assert include is None
         assert exclude == {"bash"}
 
-    def test_mixed_include_and_exclude_raises(self):
-        with pytest.raises(ValueError, match="mixes included and excluded tools"):
-            Offload.drop(["tool::bash", "!tool::python"])
+    def test_mixed_list_subtracts_excludes_from_includes(self):
+        include, exclude = _resolve_tool_filter(["tool::bash", "python", "!tool::python", "!grep"])
+        assert include == {"bash"}
+        assert exclude is None
+
+    def test_rejects_list_that_excludes_every_include(self):
+        with pytest.raises(ValueError, match="excludes every tool it includes"):
+            Offload.drop(["tool::bash", "!bash"])
 
     def test_entries_without_tool_prefix_still_parsed(self):
         include, exclude = _resolve_tool_filter(["raw_name"])
