@@ -531,6 +531,22 @@ describe('Offload with * target and threshold (acts on messages larger than thre
     expect(texts).toContain('next')
   })
 
+  it('Offload.truncate("*") with threshold shortens large messages in place and leaves the newest alone', async () => {
+    const messages = [
+      text('user', 'task'),
+      text('assistant', LARGE),
+      text('user', 'small question'),
+      text('assistant', LARGE),
+    ]
+
+    expect(await Offload.truncate('*').when({ threshold: 2500 }).apply(makeContext(messages))).toBe(true)
+
+    expect(messages).toHaveLength(4)
+    expect((messages[1]!.content[0] as TextBlock).text.startsWith(TRUNCATED_PREFIX)).toBe(true)
+    expect((messages[2]!.content[0] as TextBlock).text).toBe('small question')
+    expect((messages[3]!.content[0] as TextBlock).text).toBe(LARGE)
+  })
+
   it('Offload.truncate("*") with threshold skips small content', async () => {
     const messages = [text('user', 'task'), text('assistant', 'short'), text('user', 'next')]
     const strategy = Offload.truncate('*').when({ threshold: 2500 })
@@ -1045,7 +1061,9 @@ describe('granularity', () => {
       ['assistantText', { utilization: 0.5 }, 0.1, 'nothing'],
     ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'large messages' | 'nothing' | number[]][])(
       'target=%j with %j at utilization %s acts on %j',
-      async (target, conditions, utilization, outcome) => {
+      async (target, conditions, utilization, expected) => {
+        // Truncate shortens large messages in place rather than removing them.
+        const outcome = expected === 'large messages' && method === 'truncate' ? [1, 2, 3, 4] : expected
         const messages = history()
         const acted = await BUILDERS[method](target).when(conditions).apply(makeContext(messages, utilization))
 

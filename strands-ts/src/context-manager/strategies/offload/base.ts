@@ -55,10 +55,10 @@ export type Percent = `${number}%`
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
  *   `'70%'` or `0.7` keeps the newest 70% of them.
  *
- * Granularity: target `'*'` acts on whole messages (drop removes them, truncate elides the middle, summarize merges
- * each contiguous run), and `threshold` measures each message. Any other target acts on each block, and `threshold`
- * measures each block. `utilization` only gates when the strategy fires, and `preserveRecent` only protects the newest
- * matching messages.
+ * Granularity: target `'*'` acts on whole messages, and `threshold` measures each message. Drop removes them,
+ * summarize merges each contiguous run, and truncate elides the middle or, with a `threshold`, shortens each one. Any
+ * other target acts on each block, and `threshold` measures each block. `utilization` only gates when the strategy
+ * fires, and `preserveRecent` only protects the newest matching messages.
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
  * strategy's threshold and gets skipped.

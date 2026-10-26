@@ -20,6 +20,7 @@ import {
 import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
+  buildToolNameMap,
   insertMarker,
   repairAlternation,
   spliceWithPairs,
@@ -49,10 +50,14 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     return this._previewTokens
   }
 
-  /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
+  /**
+   * Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. With a
+   * `threshold`, shortens each eligible message in place instead.
+   */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages } = context
     if (messages.length <= 1) return false
+    if (this._threshold) return this._shortenEach(context)
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
     const eligible = (await this._getEligibleMessages(context)).filter((message) => !hasElisionMarker(message))
@@ -65,6 +70,18 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
     repairAlternation(messages)
     return true
+  }
+
+  /** Previews each block over `previewTokens` in the eligible messages, leaving the newest message alone. */
+  private async _shortenEach(context: ContextState): Promise<boolean> {
+    const { messages, agent } = context
+    const toolNameMap = buildToolNameMap(messages)
+    let acted = false
+    for (const message of await this._getEligibleMessages(context)) {
+      if (message === messages.at(-1)) continue
+      if (await this._transformBlocks(message, messages, toolNameMap, this._previewTokens, agent)) acted = true
+    }
+    return acted
   }
 
   protected override _makeRemovalMarker(count: number): string {
