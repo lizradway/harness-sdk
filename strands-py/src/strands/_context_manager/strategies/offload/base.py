@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,9 +47,9 @@ class OffloadConditions(TypedDict, total=False):
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-            window; a whole number above 1 fires at that many conversation tokens, and raises if the model
-            has no ``context_window_limit`` or the count exceeds it. Unset, the strategy runs before every
-            model call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
+            window; a whole number above 1 fires at that many conversation tokens, and raises if it
+            exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
+            call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
         threshold: How large content must be to act on. A whole number selects content larger than
             that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
             tokens of a 200,000-token window).
@@ -474,10 +475,13 @@ class BaseOffloadStrategy(ABC):
             return
         limit = agent.model.context_window_limit
         if not limit:
-            raise ValueError(
-                f"utilization ({int(self._utilization.value)}) is a token count but the model has no "
-                'context_window_limit; set context_window_limit on the model or use a "N%" share'
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"utilization ({int(self._utilization.value)}) can't be checked against the context window because"
+                " context_window_limit is not set on the model; set context_window_limit in your model config",
+                stacklevel=1,
             )
+            return
         if self._utilization.value > limit:
             raise ValueError(
                 f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
@@ -495,8 +499,7 @@ class BaseOffloadStrategy(ABC):
         """Check utilization against the model's context window, then register the eager hook if this runs eagerly.
 
         Raises:
-            ValueError: If ``utilization`` is a token count and the model has no ``context_window_limit``,
-                or the count is larger than it.
+            ValueError: If ``utilization`` is a token count larger than the model's ``context_window_limit``.
         """
         self._stash = stash
         self._check_utilization_fits(agent)
@@ -705,10 +708,9 @@ class OffloadStrategyBuilder:
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-                window; a whole number above 1 fires at that many conversation tokens, and raises if the model
-                has no ``context_window_limit`` or the count exceeds it. Unset, the strategy runs before
-                every model call, or on each message as it arrives when the target isn't ``"*"`` and
-                ``preserve_recent`` is unset.
+                window; a whole number above 1 fires at that many conversation tokens, and raises if it
+                exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
+                call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
             threshold: How large content must be to act on. A whole number selects content larger than
                 that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
                 tokens of a 200,000-token window).

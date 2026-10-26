@@ -371,12 +371,10 @@ class TestConditionResolution:
         mock_agent.model.context_window_limit = window
         Offload.drop("*").when(utilization=utilization).init(mock_agent)
 
-    def test_token_utilization_without_window_raises_on_init(self, mock_agent):
+    def test_token_utilization_without_window_warns_on_init(self, mock_agent):
         mock_agent.model.context_window_limit = None
-        strategy = Offload.drop("*").when(utilization=50_000)
-        with pytest.raises(
-            ValueError, match=r"utilization \(50000\) is a token count but the model has no context_window_limit"
-        ):
+        strategy = Offload.drop("*").when(utilization=500_000)
+        with pytest.warns(UserWarning, match=r"utilization \(500000\) can't be checked against the context window"):
             strategy.init(mock_agent)
 
 
