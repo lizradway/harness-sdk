@@ -94,8 +94,22 @@ describe('Offload.truncate', () => {
     )
   })
 
-  it('accepts a percent threshold regardless of previewTokens', () => {
-    expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: '0.1%' })).not.toThrow()
+  it.each([
+    [10_000, '5%', 500],
+    [undefined, '0.25%', 500],
+  ] as [number | undefined, Percent, number][])(
+    'rejects on init a percent threshold of a %s-token window at or below previewTokens (%s)',
+    (contextWindowLimit, threshold, tokens) => {
+      const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold })
+      expect(() => strategy.init!(makeContext([], 0.5, false, contextWindowLimit).agent)).toThrow(
+        `threshold (${tokens} tokens of the context window) must be greater than previewTokens (500)`
+      )
+    }
+  )
+
+  it('accepts on init a percent threshold above previewTokens', () => {
+    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: '6%' })
+    expect(() => strategy.init!(makeContext([], 0.5, false, 10_000).agent)).not.toThrow()
   })
 
   it('truncates large tool results', async () => {
@@ -579,8 +593,8 @@ describe('Offload with media target', () => {
     const message = withImage()
 
     const result = await Offload.drop('media')
-      .when({ threshold: 10 })
-      .apply(makeContext([message]))
+      .when({ utilization: '50%', threshold: 10 })
+      .apply(makeContext([text('user', 'task'), message, text('assistant', 'b')]))
 
     expect(result).toBe(true)
     expect(message.content[0]).toEqual(new TextBlock('look at this'))
@@ -613,8 +627,8 @@ describe('Offload with media target', () => {
 
       expect(
         await Offload.drop('media')
-          .when({})
-          .apply(withHeuristicModel([message]))
+          .when({ utilization: '50%' })
+          .apply(withHeuristicModel([text('user', 'task'), message, text('assistant', 'b')]))
       ).toBe(true)
       expect(message.content).toEqual([
         new TextBlock('look at this'),
@@ -628,8 +642,8 @@ describe('Offload with media target', () => {
 
       expect(
         await Offload.truncate('media')
-          .when({})
-          .apply(withHeuristicModel([message]))
+          .when({ utilization: '50%' })
+          .apply(withHeuristicModel([text('user', 'task'), message, text('assistant', 'b')]))
       ).toBe(true)
       expect((message.content[1] as TextBlock).text).toBe(
         '[Offloaded: image, removed from context after it was viewed]'
@@ -1035,6 +1049,7 @@ describe('parseCondition', () => {
     ['threshold', -1, '-1'],
     ['threshold', 0, '0'],
     ['threshold', 0.5, '0.5'],
+    ['threshold', '100%', '"100%"'],
     ['preserveRecent', 1.5, '1.5'],
     ['preserveRecent', '100%', '"100%"'],
   ] as const)('rejects %s=%s', (name, raw, shown) => {
@@ -1195,17 +1210,46 @@ describe('whole-message conditions', () => {
     ['truncate', () => Offload.truncate('*')],
     ['summarize', () => Offload.summarize('*')],
   ] as const)('Offload.%s("*")', (method, builder) => {
-    it.each([{}, { preserveRecent: 0 }] as OffloadConditions[])('rejects %j', (conditions) => {
-      expect(() => builder().when(conditions)).toThrow(
-        `Offload.${method}("*") would act on every message; set utilization, threshold, or preserveRecent`
-      )
-    })
+    it.each([{}, { preserveRecent: 0 }, { preserveRecent: '0%' }] as OffloadConditions[])(
+      'rejects %j',
+      (conditions) => {
+        expect(() => builder().when(conditions)).toThrow(
+          `Offload.${method}("*") would act on every message; set utilization, threshold, or a preserveRecent above 0`
+        )
+      }
+    )
 
     it.each([{ utilization: 0.5 }, { preserveRecent: 1 }, { threshold: 2500 }] as OffloadConditions[])(
       'accepts %j',
       (conditions) => {
         expect(() => builder().when(conditions)).not.toThrow()
       }
+    )
+  })
+})
+
+describe('media conditions', () => {
+  describe.each([
+    ['drop', () => Offload.drop('media')],
+    ['truncate', () => Offload.truncate('media')],
+    ['summarize', () => Offload.summarize('media')],
+  ] as const)('Offload.%s("media")', (method, builder) => {
+    it.each([{}, { threshold: 100 }, { preserveRecent: '0%' }] as OffloadConditions[])('rejects %j', (conditions) => {
+      expect(() => builder().when(conditions)).toThrow(
+        `Offload.${method}("media") would remove media before the model sees it; set utilization or a preserveRecent above 0`
+      )
+    })
+
+    it.each([{ utilization: '80%' }, { preserveRecent: 1 }] as OffloadConditions[])('accepts %j', (conditions) => {
+      expect(() => builder().when(conditions)).not.toThrow()
+    })
+  })
+})
+
+describe('tool list targets', () => {
+  it('rejects a list that mixes included and excluded tools', () => {
+    expect(() => Offload.drop(['tool::bash', '!tool::python'])).toThrow(
+      'Tool target ["tool::bash","!tool::python"] mixes included and excluded tools'
     )
   })
 })

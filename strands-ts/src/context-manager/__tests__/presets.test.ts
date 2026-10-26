@@ -82,7 +82,13 @@ describe('presets', () => {
     ])('rejects an Offload.%s() builder without .when()', (_method, builder) => {
       expect(() => resolveStrategies([builder as unknown as ContextStrategy])).toThrow(
         'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
-          'a target other than "*" can call .when({}) to run on every new message'
+          'a target other than "*" or "media" can call .when({}) to run on every new message'
+      )
+    })
+
+    it.each([null, undefined])('rejects a %s entry', (entry) => {
+      expect(() => resolveStrategies([entry as unknown as ContextStrategy])).toThrow(
+        `Strategy entries must be a strategy or a preset name, got ${String(entry)}`
       )
     })
 

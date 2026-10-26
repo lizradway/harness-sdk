@@ -292,17 +292,22 @@ describe('summarizer errors', () => {
   it('offloads a video block without summarizing it', async () => {
     vi.mocked(summarizeContent).mockClear()
     const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({
         role: 'user',
         content: [new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array(4000) } })],
       }),
+      new Message({ role: 'assistant', content: [new TextBlock('latest')] }),
     ]
-    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({
+      utilization: '50%',
+      threshold: 10,
+    })
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[0]!.content).toEqual([
+    expect(messages[1]!.content).toEqual([
       expect.objectContaining({
         text: expect.stringMatching(/^\[Offloaded: video, ~\d+ tokens, removed from context after it was viewed\]/),
       }),
@@ -314,17 +319,22 @@ describe('summarizer errors', () => {
     vi.mocked(summarizeContent).mockRejectedValueOnce(new Error('images unsupported'))
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({
         role: 'user',
         content: [new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } })],
       }),
+      new Message({ role: 'assistant', content: [new TextBlock('latest')] }),
     ]
-    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({
+      utilization: '50%',
+      threshold: 10,
+    })
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[0]!.content).toEqual([
+    expect(messages[1]!.content).toEqual([
       expect.objectContaining({
         text: expect.stringMatching(/^\[Offloaded: image, ~\d+ tokens, removed from context after it was viewed\]/),
       }),

@@ -59,7 +59,7 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
  *
  * @param entries - Array of raw strategies and/or preset name strings
  * @returns Flattened array of concrete strategies
- * @throws Error when an entry is an unknown preset name or an `Offload` builder without `.when()`
+ * @throws Error when an entry is nullish, an unknown preset name, or an `Offload` builder without `.when()`
  * @internal
  */
 export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName)[]): ContextStrategy[] {
@@ -70,10 +70,12 @@ export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName
         throw new Error(`Unknown strategy preset: "${entry}". Valid presets: ${STRATEGY_PRESET_NAMES.join(', ')}`)
       }
       strategies.push(...resolvePreset(entry as StrategyPresetName))
+    } else if (entry === null || entry === undefined) {
+      throw new Error(`Strategy entries must be a strategy or a preset name, got ${String(entry)}`)
     } else if (typeof entry.apply !== 'function') {
       throw new Error(
         'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
-          'a target other than "*" can call .when({}) to run on every new message'
+          'a target other than "*" or "media" can call .when({}) to run on every new message'
       )
     } else {
       strategies.push(entry)

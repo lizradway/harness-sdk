@@ -17,7 +17,7 @@ import {
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
-import { formatStashRefs } from '../../stash.js'
+import { formatStashRefs, type Stash } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   buildToolNameMap,
@@ -38,13 +38,33 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     this._truncateConfig = config ?? {}
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
-    const threshold = this._threshold
-    // A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
-    if (!this._actsOnMessages && threshold && !threshold.isShare && threshold.value <= this._previewTokens) {
-      throw new Error(
-        `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise threshold or lower previewTokens`
-      )
+    // A percent needs the context window, so init checks it.
+    if (this._threshold && !this._threshold.isShare) {
+      this._checkThresholdExceedsPreview(this._threshold.value, String(this._threshold.value))
     }
+  }
+
+  /**
+   * Checks a percent threshold against `previewTokens`, then initializes the strategy.
+   *
+   * @param agent - The agent this strategy is attached to
+   * @param stash - The stash offloaded content is stored in
+   * @throws Error when a percent `threshold` of the context window is no larger than `previewTokens`, or
+   *   `utilization` is a token count larger than the model's `contextWindowLimit`
+   */
+  override init(agent: LocalAgent, stash?: Stash): void {
+    if (this._threshold?.isShare) {
+      const tokens = this._resolveThreshold(agent) ?? 0
+      this._checkThresholdExceedsPreview(tokens, `${tokens} tokens of the context window`)
+    }
+    super.init(agent, stash)
+  }
+
+  private _checkThresholdExceedsPreview(tokens: number, shown: string): void {
+    if (this._actsOnMessages || tokens > this._previewTokens) return
+    throw new Error(
+      `threshold (${shown}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise threshold or lower previewTokens`
+    )
   }
 
   /**

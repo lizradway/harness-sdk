@@ -31,7 +31,8 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
  * - `"assistantText"` — text blocks in assistant messages
  * - `"userText"` — text blocks in user messages (excluding tool results)
  * - `"media"` — image, document, video, and audio blocks outside tool results
- * - `string[]` — tool results from specific tools (e.g. `['bash']` or `['tool::bash']`); prefix with `!` to exclude
+ * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) or, each prefixed with `!`,
+ *   tools to exclude
  * - `"*"` — whole messages
  *
  * @experimental
@@ -90,7 +91,8 @@ export interface OffloadConditions {
 
 /**
  * Result of `Offload.drop/truncate/summarize`. Call `.when()` to get a strategy; pass `{}` to run on every new
- * message.
+ * message as it arrives, before the model sees it. A strategy keeps per-agent state, so give each agent its own: call
+ * `.when()` once per agent.
  *
  * @experimental
  */
@@ -144,9 +146,9 @@ const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
     expected: `a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
   },
   threshold: {
-    percentInRange: (percent) => percent > 0 && percent <= 100,
+    percentInRange: (percent) => percent > 0 && percent < 100,
     parseNumber: (value) => (Number.isInteger(value) && value >= 1 ? { value, isShare: false } : undefined),
-    expected: 'a whole token count above 0 or a "N%" string up to "100%"',
+    expected: 'a whole token count above 0 or a "N%" string below "100%"',
   },
   preserveRecent: {
     percentInRange: (percent) => percent >= 0 && percent < 100,
@@ -215,12 +217,18 @@ function effectiveWindowLimit(agent: LocalAgent): number {
  * Throws if an offload target matches nothing.
  *
  * @param target - The offload target
- * @throws Error when the target is an empty array
+ * @throws Error when the target is an empty array or mixes included and excluded tools
  * @internal
  */
 export function validateTarget(target: OffloadTarget | undefined): void {
-  if (Array.isArray(target) && target.length === 0) {
+  if (!Array.isArray(target)) return
+  if (target.length === 0) {
     throw new Error('Empty array target matches nothing — provide at least one target')
+  }
+  if (new Set(target.map((entry) => entry.startsWith('!'))).size > 1) {
+    throw new Error(
+      `Tool target ${JSON.stringify(target)} mixes included and excluded tools; list only tools to include or only tools to exclude`
+    )
   }
 }
 
@@ -486,10 +494,6 @@ export function resolveToolFilter(target: OffloadTarget | undefined): { include?
     }
   }
 
-  if (excludes.length > 0 && includes.length > 0) {
-    logger.warn('tool filter contains both includes and excludes, excludes will be ignored')
-    return { include: new Set(includes) }
-  }
   if (excludes.length > 0) {
     return { exclude: new Set(excludes) }
   }
@@ -520,8 +524,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    * @param name - Strategy name, `offload:<method>`
    * @param target - Content the strategy acts on
    * @param conditions - When and how the strategy fires; omitted only by internal strategies
-   * @throws Error when the target is empty, a condition value is invalid, or a whole-message strategy has none of
-   *   `utilization`, `threshold`, or `preserveRecent`
+   * @throws Error when the target is empty or mixes included and excluded tools, a condition value is invalid, a
+   *   whole-message strategy has none of `utilization`, `threshold`, or `preserveRecent`, or a `'media'` strategy has
+   *   neither `utilization` nor `preserveRecent`
    */
   constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
     validateTarget(target)
@@ -537,10 +542,16 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this._includeFilter = resolved.include
     this._excludeFilter = resolved.exclude
 
-    if (conditions && this._actsOnMessages && this._isUnconditional) {
-      const method = name.slice(name.indexOf(':') + 1)
+    if (!conditions) return
+    const method = name.slice(name.indexOf(':') + 1)
+    if (this._actsOnMessages && this._isUnconditional) {
       throw new Error(
-        `Offload.${method}("*") would act on every message; set utilization, threshold, or preserveRecent`
+        `Offload.${method}("*") would act on every message; set utilization, threshold, or a preserveRecent above 0`
+      )
+    }
+    if (this._target === 'media' && this._runsEagerly) {
+      throw new Error(
+        `Offload.${method}("media") would remove media before the model sees it; set utilization or a preserveRecent above 0`
       )
     }
   }
@@ -612,7 +623,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   /** Tokens above which content is offloaded, or undefined when `threshold` is unset so no size check applies. */
-  private _resolveThreshold(agent: LocalAgent): number | undefined {
+  protected _resolveThreshold(agent: LocalAgent): number | undefined {
     const threshold = this._threshold
     if (!threshold) return undefined
     return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
