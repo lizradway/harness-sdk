@@ -47,9 +47,9 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   above 1 fires at that many conversation tokens, up to the model's context window.
- * - `threshold` sets which blocks it acts on. A whole number selects blocks over that many tokens; `'5%'` selects
- *   blocks over 5% of the context window.
+ *   above 1 fires at that many conversation tokens, and throws if it exceeds the model's context window.
+ * - `threshold` sets which blocks it acts on. A whole number selects blocks larger than that many tokens; `'5%'`
+ *   selects blocks larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
  *   `'70%'` or `0.7` keeps the newest 70% of them.
  *
@@ -63,7 +63,7 @@ export type Percent = `${number}%`
  * @experimental
  */
 export interface OffloadConditions {
-  /** Context usage at or above which the strategy fires, as conversation tokens (up to the context window) or a share. */
+  /** Context usage at or above which the strategy fires, as conversation tokens or a share of the context window. */
   utilization?: number | Percent
 
   /** Size above which an individual block is offloaded, as tokens or a share of the context window. */
