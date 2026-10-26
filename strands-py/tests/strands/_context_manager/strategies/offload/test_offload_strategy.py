@@ -875,7 +875,7 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Dropped]"
+        assert message["content"][0]["text"] == "[Dropped: image, removed from context after it was viewed]"
 
     @pytest.mark.asyncio
     async def test_drop_document_block(self, mock_agent):
@@ -883,7 +883,7 @@ class TestTransformBlocks:
         doc_block = ContentBlock(document={"format": "pdf", "name": "doc", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[doc_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Dropped]"
+        assert message["content"][0]["text"] == "[Dropped: document, removed from context after it was viewed]"
 
     @pytest.mark.asyncio
     async def test_truncate_image_block(self, mock_agent):
@@ -901,7 +901,10 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[ContentBlock(text="what color?"), image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"] == [ContentBlock(text="what color?"), ContentBlock(text="[Dropped]")]
+        assert message["content"] == [
+            ContentBlock(text="what color?"),
+            ContentBlock(text="[Dropped: image, removed from context after it was viewed]"),
+        ]
 
     @pytest.mark.asyncio
     async def test_offloaded_marker_leaves_out_an_unmeasured_size(self, mock_agent):
