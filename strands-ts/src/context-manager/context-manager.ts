@@ -23,7 +23,7 @@ import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.
 const AUTO_TRUNCATE_THRESHOLD = 1_500
 const AGENTIC_TRUNCATE_THRESHOLD = 8_000
 const TRUNCATE_PREVIEW_TOKENS = 750
-const AUTO_SUMMARIZE_UTILIZATION = 0.85
+const AUTO_SUMMARIZE_UTILIZATION = '85%'
 
 /** @internal */
 export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
@@ -102,7 +102,7 @@ export class ContextManager implements Plugin {
           Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
             threshold: AGENTIC_TRUNCATE_THRESHOLD,
           }),
-          Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),
+          Offload.summarize('*').when({ utilization: '100%', preserveRecent: 4 }),
         ],
       })
     }

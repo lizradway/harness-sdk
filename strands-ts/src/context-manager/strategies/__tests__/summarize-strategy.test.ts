@@ -70,7 +70,7 @@ describe('Offload.summarize', () => {
   })
 
   it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+    const strategy = Offload.summarize('toolResults').when({ utilization: '85%' })
     expect(strategy.name).toBe('offload:summarize')
   })
 
@@ -167,7 +167,7 @@ describe('Offload.summarize', () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+      const strategy = Offload.summarize('toolResults').when({ utilization: '85%' })
       const context = makeContext(messages, 0.5, mockModel)
 
       const result = await strategy.apply(context)
@@ -182,7 +182,7 @@ describe('Offload.summarize', () => {
       const latest = new Message({ role: 'assistant', content: [new TextBlock('latest')] })
       const messages = [firstMessage, toolResultMessage, latest]
       const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
-      const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+      const strategy = Offload.summarize('toolResults').when({ utilization: '85%' })
       const context = makeContext(messages, 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -247,7 +247,7 @@ describe('Offload.summarize', () => {
         new Message({ role: 'assistant', content: [new TextBlock('done')] }),
         new Message({ role: 'user', content: [new TextBlock('next')] }),
       ]
-      const strategy = Offload.summarize('*', { model: summarizer }).when({ utilization: 0.7, preserveRecent: 2 })
+      const strategy = Offload.summarize('*', { model: summarizer }).when({ utilization: '70%', preserveRecent: 2 })
 
       const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
@@ -347,7 +347,7 @@ describe('summarizer errors', () => {
 describe('repeated summarization', () => {
   // Regression test for https://github.com/strands-agents/harness-sdk/issues/4685
   it('keeps summaries out of a pinned message 0', async () => {
-    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const strategy = Offload.summarize('*').when({ utilization: '70%', preserveRecent: 4 })
     const mockModel = { stream: vi.fn() }
     const task = () =>
       new Message({ role: 'user', content: [new TextBlock('task')], metadata: { custom: { pinned: true } } })
@@ -386,7 +386,7 @@ describe('summarizing whole messages', () => {
         (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
       ),
     ]
-    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 3 })
+    const strategy = Offload.summarize('*').when({ utilization: '50%', preserveRecent: 3 })
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
 
@@ -421,7 +421,7 @@ describe('summarizing whole messages', () => {
         (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
       ),
     ]
-    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 1 })
+    const strategy = Offload.summarize('*').when({ utilization: '50%', preserveRecent: 1 })
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
 

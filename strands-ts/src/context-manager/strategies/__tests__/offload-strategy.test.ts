@@ -386,12 +386,12 @@ describe('Offload builder', () => {
   })
 
   it('Offload.summarize().when() creates a strategy with conditions', () => {
-    const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+    const strategy = Offload.summarize('toolResults').when({ utilization: '85%' })
     expect(strategy.name).toBe('offload:summarize')
   })
 
   it('Offload.summarize(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.summarize('*', { systemPrompt: 'summarize briefly' }).when({ utilization: 0.85 })
+    const strategy = Offload.summarize('*', { systemPrompt: 'summarize briefly' }).when({ utilization: '85%' })
     expect(strategy.name).toBe('offload:summarize')
   })
 
@@ -436,7 +436,7 @@ describe('Offload message-level with role alternation', () => {
     'drop("%s") with utilization replaces each %s text block between the first and last message, keeping every message',
     async (target, role) => {
       const messages = conversation(4)
-      const strategy = Offload.drop(target).when({ utilization: 0.5 })
+      const strategy = Offload.drop(target).when({ utilization: '50%' })
 
       expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
 
@@ -451,7 +451,7 @@ describe('Offload message-level with role alternation', () => {
 
   it('drop("*") message-level repairs alternation', async () => {
     const messages = conversation(4)
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -478,7 +478,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'user', content: [new TextBlock('q4')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
+    const strategy = Offload.drop('*').when({ utilization: '50%', preserveRecent: 4 })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -503,7 +503,7 @@ describe('Offload message-level with role alternation', () => {
 
   it('drop("*") acts when only message 0 precedes the candidates', async () => {
     const messages = conversation(2)
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     const result = await strategy.apply(context)
@@ -514,7 +514,7 @@ describe('Offload message-level with role alternation', () => {
 
   it('message-level starts with user message after operation', async () => {
     const messages = conversation(3)
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -683,7 +683,7 @@ describe('Message-level drop vs truncate markers', () => {
       new Message({ role: 'user', content: [new TextBlock('q4')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -707,7 +707,7 @@ describe('Message-level drop vs truncate markers', () => {
       new Message({ role: 'user', content: [new TextBlock('q4')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
-    const strategy = Offload.truncate('*', { previewTokens: 2 }).when({ utilization: 0.5 })
+    const strategy = Offload.truncate('*', { previewTokens: 2 }).when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -735,7 +735,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'user', content: [new TextBlock('q3')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -762,7 +762,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'user', content: [new TextBlock('q3')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const strategy = Offload.drop('*').when({ utilization: '50%' })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -793,7 +793,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a9')] }),
       new Message({ role: 'user', content: [new TextBlock('q10')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
+    const strategy = Offload.drop('*').when({ utilization: '50%', preserveRecent: 4 })
     const context = makeContext(messages, 0.9)
 
     await strategy.apply(context)
@@ -818,7 +818,7 @@ describe('overflow bypass', () => {
       new Message({ role: 'user', content: [new TextBlock('q2')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.85 })
+    const strategy = Offload.drop('*').when({ utilization: '85%' })
     const context = makeContext(messages, 0.5, true)
 
     const acted = await strategy.apply(context)
@@ -833,7 +833,7 @@ describe('overflow bypass', () => {
       new Message({ role: 'user', content: [new TextBlock('q2')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
     ]
-    const strategy = Offload.drop('*').when({ utilization: 0.85 })
+    const strategy = Offload.drop('*').when({ utilization: '85%' })
     const context = makeContext(messages, 0.5)
 
     const acted = await strategy.apply(context)
@@ -975,10 +975,10 @@ describe('EmergencyTruncateStrategy', () => {
 describe('repeated message-level reduction', () => {
   // Regression tests for https://github.com/strands-agents/harness-sdk/issues/4685
   const strategies = {
-    drop: () => Offload.drop('*').when({ utilization: 0.7, preserveRecent: 3 }),
-    'drop-all': () => Offload.drop('*').when({ utilization: 0.7 }),
-    truncate: () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: 0.7, preserveRecent: 3 }),
-    'truncate-all': () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: 0.7 }),
+    drop: () => Offload.drop('*').when({ utilization: '70%', preserveRecent: 3 }),
+    'drop-all': () => Offload.drop('*').when({ utilization: '70%' }),
+    truncate: () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: '70%', preserveRecent: 3 }),
+    'truncate-all': () => Offload.truncate('*', { previewTokens: 4 }).when({ utilization: '70%' }),
     emergency: () => new EmergencyTruncateStrategy(),
   }
 
@@ -1033,15 +1033,18 @@ function resultTexts(messages: Message[]): string[] {
 }
 
 describe('parseCondition', () => {
+  const EXPECTED_FORMS = {
+    utilization: 'a "N%" string up to "100%" or a whole token count of at least 1000',
+    preserveRecent: 'a "N%" string below "100%" or a whole message count',
+  }
+
   it.each([
-    ['utilization', 0.5, { value: 0.5, isShare: true }],
     ['utilization', '70%', { value: 0.7, isShare: true }],
     ['utilization', 50_000, { value: 50_000, isShare: false }],
     ['utilization', 1000, { value: 1000, isShare: false }],
     ['threshold', 2500, { value: 2500, isShare: false }],
     ['threshold', '5%', { value: 0.05, isShare: true }],
     ['preserveRecent', 4, { value: 4, isShare: false }],
-    ['preserveRecent', 0.5, { value: 0.5, isShare: true }],
     ['preserveRecent', '50%', { value: 0.5, isShare: true }],
   ] as const)('accepts %s=%j', (name, raw, expected) => {
     expect(parseCondition(name, raw)).toEqual(expected)
@@ -1049,6 +1052,8 @@ describe('parseCondition', () => {
 
   it.each([
     ['utilization', 0, '0'],
+    ['utilization', 0.5, '0.5'],
+    ['utilization', 1, '1'],
     ['utilization', 1.5, '1.5'],
     ['utilization', '101%', '"101%"'],
     ['utilization', '70', '"70"'],
@@ -1056,6 +1061,7 @@ describe('parseCondition', () => {
     ['threshold', 0, '0'],
     ['threshold', 0.5, '0.5'],
     ['threshold', '100%', '"100%"'],
+    ['preserveRecent', 0.5, '0.5'],
     ['preserveRecent', 1.5, '1.5'],
     ['preserveRecent', '100%', '"100%"'],
   ] as const)('rejects %s=%s', (name, raw, shown) => {
@@ -1063,10 +1069,15 @@ describe('parseCondition', () => {
   })
 
   it.each([
-    [80, 'utilization=80 is invalid: a token count must be at least 1000; for 80% of the context window, write "80%"'],
-    [999, 'utilization=999 is invalid: a token count must be at least 1000'],
-  ])('rejects a token utilization of %s, below the floor', (raw, message) => {
-    expect(() => parseCondition('utilization', raw)).toThrow(new Error(message))
+    ['utilization', 80, '; for 80%, write "80%"'],
+    ['utilization', 0.8, '; for 80%, write "80%"'],
+    ['utilization', 1, '; for 100%, write "100%"'],
+    ['utilization', 999, ''],
+    ['preserveRecent', 0.07, '; for 7%, write "7%"'],
+  ] as const)('rejects %s=%s and suggests a percent when it reads as one', (name, raw, hint) => {
+    expect(() => parseCondition(name, raw)).toThrow(
+      new Error(`${name}=${raw} is invalid: expected ${EXPECTED_FORMS[name]}${hint}`)
+    )
   })
 })
 
@@ -1079,7 +1090,7 @@ describe('condition resolution', () => {
 
   it.each([
     [{ utilization: '70%' }, undefined, 0.7, true],
-    [{ utilization: 0.7 }, undefined, 0.69, false],
+    [{ utilization: '70%' }, undefined, 0.69, false],
     [{ utilization: 50_000 }, 100_000, 0.5, true],
     [{ utilization: 50_000 }, 100_000, 0.49, false],
   ] as [OffloadConditions, number | undefined, number, boolean][])(
@@ -1113,7 +1124,6 @@ describe('condition resolution', () => {
     [100_000, 100_000],
     [100_000, '100%'],
     [undefined, '80%'],
-    [undefined, 0.8],
   ] as [number | undefined, number | Percent][])(
     'inits with a %s-token window and utilization %s',
     (contextWindowLimit, utilization) => {
@@ -1156,11 +1166,11 @@ describe('granularity', () => {
 
   describe.each(['drop', 'truncate', 'summarize'] as const)('%s', (method) => {
     it.each([
-      ['*', { utilization: 0.5 }, 0.9, 'messages'],
+      ['*', { utilization: '50%' }, 0.9, 'messages'],
       ['*', { preserveRecent: 1 }, 0, 'messages'],
-      ['*', { threshold: 200, utilization: 0.5 }, 0.9, 'large messages'],
-      ['assistantText', { utilization: 0.5 }, 0.9, [1, 3]],
-      ['assistantText', { utilization: 0.5 }, 0.1, 'nothing'],
+      ['*', { threshold: 200, utilization: '50%' }, 0.9, 'large messages'],
+      ['assistantText', { utilization: '50%' }, 0.9, [1, 3]],
+      ['assistantText', { utilization: '50%' }, 0.1, 'nothing'],
     ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'large messages' | 'nothing' | number[]][])(
       'target=%j with %j at utilization %s acts on %j',
       async (target, conditions, utilization, expected) => {
@@ -1193,7 +1203,9 @@ describe('granularity', () => {
     it('leaves the newest message alone when gated by utilization', async () => {
       const messages = [...history().slice(0, -1), text('user', BIG)]
 
-      expect(await BUILDERS[method]('userText').when({ utilization: 0.5 }).apply(makeContext(messages, 0.9))).toBe(true)
+      expect(await BUILDERS[method]('userText').when({ utilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(
+        true
+      )
 
       expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
       expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(BIG)
@@ -1202,7 +1214,9 @@ describe('granularity', () => {
     it('leaves the first message alone when gated by utilization', async () => {
       const messages = [text('user', BIG), ...history().slice(1)]
 
-      expect(await BUILDERS[method]('userText').when({ utilization: 0.5 }).apply(makeContext(messages, 0.9))).toBe(true)
+      expect(await BUILDERS[method]('userText').when({ utilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(
+        true
+      )
 
       expect((messages[0]!.content[0] as TextBlock).text).toBe(BIG)
       expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
@@ -1225,7 +1239,7 @@ describe('whole-message conditions', () => {
       }
     )
 
-    it.each([{ utilization: 0.5 }, { preserveRecent: 1 }, { threshold: 2500 }] as OffloadConditions[])(
+    it.each([{ utilization: '50%' }, { preserveRecent: 1 }, { threshold: 2500 }] as OffloadConditions[])(
       'accepts %j',
       (conditions) => {
         expect(() => builder().when(conditions)).not.toThrow()
@@ -1302,7 +1316,7 @@ describe('truncate whole messages', () => {
     'preview=%s with previewTokens=%s elides the middle',
     async (preview, previewTokens, expected) => {
       const messages = history()
-      const strategy = Offload.truncate('*', { preview, previewTokens }).when({ utilization: 0.5 })
+      const strategy = Offload.truncate('*', { preview, previewTokens }).when({ utilization: '50%' })
 
       expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
 
@@ -1313,7 +1327,7 @@ describe('truncate whole messages', () => {
 
   it('stops once only its own marker is left to elide', async () => {
     const messages = history()
-    const strategy = Offload.truncate('*', { preview: 'head', previewTokens: 40 }).when({ utilization: 0.5 })
+    const strategy = Offload.truncate('*', { preview: 'head', previewTokens: 40 }).when({ utilization: '50%' })
     expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
     const afterFirstPass = textsOf(messages)
 

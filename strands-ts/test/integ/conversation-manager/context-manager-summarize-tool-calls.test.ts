@@ -38,7 +38,7 @@ describe.each([openaiResponses, openai, bedrock, anthropic])(
         const model = createModel()
         const streamSpy = vi.spyOn(model, 'stream')
         const agent = new Agent({ model, printer: false, messages: toolCallHistory() })
-        const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
+        const strategy = Offload.summarize('*', { model }).when({ utilization: '50%', preserveRecent: 2 })
 
         const acted = await strategy.apply({ messages: agent.messages, agent, utilization: 1 })
 

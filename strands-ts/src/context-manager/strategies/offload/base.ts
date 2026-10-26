@@ -49,12 +49,12 @@ export type Percent = `${number}%`
 /**
  * Conditions that determine when and how an offload strategy fires.
  *
- * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   of 1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
+ * - `utilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of 1,000
+ *   or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
  * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
  *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
- *   `'70%'` or `0.7` keeps the newest 70% of them.
+ *   `'70%'` keeps the newest 70% of them.
  *
  * With no `utilization`, the strategy runs before every model call, or on each message as it arrives when the target
  * isn't `'*'` and `preserveRecent` is unset.
@@ -71,8 +71,8 @@ export type Percent = `${number}%`
  */
 export interface OffloadConditions {
   /**
-   * Context usage at or above which the strategy fires: `'80%'` or `0.8` for a share of the context window, or a whole
-   * number of 1,000 or more for conversation tokens, at most the model's `contextWindowLimit`. `1` is 100%.
+   * Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or
+   * more for conversation tokens, at most the model's `contextWindowLimit`.
    */
   utilization?: number | Percent
 
@@ -83,8 +83,8 @@ export interface OffloadConditions {
   threshold?: number | Percent
 
   /**
-   * Newest matching messages never touched: a count, or `'70%'` / `0.7` of the matches, rounded up so a share above 0
-   * keeps at least one.
+   * Newest matching messages never touched: a count, or `'70%'` of the matches, rounded up so a share above 0 keeps at
+   * least one.
    */
   preserveRecent?: number | Percent
 }
@@ -122,8 +122,8 @@ interface ConditionRule {
   /** Whether a `'N%'` value's N is in range. */
   percentInRange(percent: number): boolean
 
-  /** Parses a finite non-negative number, or returns undefined to reject it. */
-  parseNumber(value: number): ParsedCondition | undefined
+  /** The smallest accepted whole-number count. */
+  minCount: number
 
   /** Accepted values, for error messages. */
   expected: string
@@ -137,32 +137,23 @@ const MIN_UTILIZATION_TOKENS = 1000
 const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
   utilization: {
     percentInRange: (percent) => percent > 0 && percent <= 100,
-    parseNumber: (value) => {
-      if (value > 0 && value <= 1) return { value, isShare: true }
-      if (value <= 1 || !Number.isInteger(value)) return undefined
-      if (value < MIN_UTILIZATION_TOKENS) throw new Error(tokenUtilizationTooSmall(value))
-      return { value, isShare: false }
-    },
-    expected: `a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
+    minCount: MIN_UTILIZATION_TOKENS,
+    expected: `a "N%" string up to "100%" or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
   },
   threshold: {
     percentInRange: (percent) => percent > 0 && percent < 100,
-    parseNumber: (value) => (Number.isInteger(value) && value >= 1 ? { value, isShare: false } : undefined),
-    expected: 'a whole token count above 0 or a "N%" string below "100%"',
+    minCount: 1,
+    expected: 'a "N%" string below "100%" or a whole token count above 0',
   },
   preserveRecent: {
     percentInRange: (percent) => percent >= 0 && percent < 100,
-    parseNumber: (value) => {
-      if (Number.isInteger(value)) return { value, isShare: false }
-      if (value < 1) return { value, isShare: true }
-      return undefined
-    },
-    expected: 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)',
+    minCount: 0,
+    expected: 'a "N%" string below "100%" or a whole message count',
   },
 }
 
 /**
- * Parses one offload condition value.
+ * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
  *
  * @param name - The condition name
  * @param raw - The value as supplied, or undefined when unset
@@ -173,27 +164,19 @@ const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
 export function parseCondition(name: ConditionName, raw: unknown): ParsedCondition | undefined {
   if (raw === undefined) return undefined
   const rule = CONDITION_RULES[name]
-  const parsed = typeof raw === 'string' ? parsePercent(raw, rule) : parseNumber(raw, rule)
-  if (!parsed) {
-    throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}`)
+  if (typeof raw === 'string' && PERCENT_PATTERN.test(raw)) {
+    const percent = Number(raw.slice(0, -1))
+    if (rule.percentInRange(percent)) return { value: percent / 100, isShare: true }
   }
-  return parsed
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return { value: raw, isShare: false }
+  throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
 }
 
-function tokenUtilizationTooSmall(value: number): string {
-  const hint = value <= 100 ? `; for ${value}% of the context window, write "${value}%"` : ''
-  return `utilization=${value} is invalid: a token count must be at least ${MIN_UTILIZATION_TOKENS}${hint}`
-}
-
-function parsePercent(raw: string, rule: ConditionRule): ParsedCondition | undefined {
-  if (!PERCENT_PATTERN.test(raw)) return undefined
-  const percent = Number(raw.slice(0, -1))
-  return rule.percentInRange(percent) ? { value: percent / 100, isShare: true } : undefined
-}
-
-function parseNumber(raw: unknown, rule: ConditionRule): ParsedCondition | undefined {
-  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined
-  return rule.parseNumber(raw)
+/** Suggests the `'N%'` spelling for a rejected number that reads as a share or a percent. */
+function percentHint(raw: unknown): string {
+  if (typeof raw !== 'number' || !(raw > 0 && raw <= 100)) return ''
+  const percent = raw <= 1 ? Number((raw * 100).toPrecision(6)) : raw
+  return `; for ${percent}%, write "${percent}%"`
 }
 
 function validateConditionNames(conditions: OffloadConditions | undefined): void {

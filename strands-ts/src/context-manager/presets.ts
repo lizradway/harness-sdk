@@ -44,11 +44,11 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
   // Defaults are tuning decisions, not API promises — adjust freely.
   switch (name) {
     case 'proactiveSummarization':
-      return [Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 0.7 })]
+      return [Offload.summarize('*').when({ utilization: '70%', preserveRecent: '70%' })]
     case 'largeToolOffloading':
       return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ threshold: 2500 })]
     case 'overflowProtection':
-      return [Offload.drop('*').when({ utilization: 1.0, preserveRecent: 4 })]
+      return [Offload.drop('*').when({ utilization: '100%', preserveRecent: 4 })]
     case 'staleToolCleanup':
       return [Offload.drop('toolResults').when({ preserveRecent: 5 })]
   }
