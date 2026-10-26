@@ -22,6 +22,7 @@ class _OffloadNamespace:
         >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(threshold=1500)
         >>> Offload.summarize("*").when(utilization="85%", preserve_recent=2)
         >>> Offload.drop("tool_result_errors").when()
+        >>> Offload.drop("media").when(utilization="80%", preserve_recent=1)
         >>> Offload.summarize("*").when(utilization="90%", threshold=2000, preserve_recent=4)
     """
 

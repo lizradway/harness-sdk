@@ -85,7 +85,7 @@ class TruncateStrategy(BaseOffloadStrategy):
 
     def _check_threshold_exceeds_preview(self, tokens: int, shown: str) -> None:
         preview_tokens = _resolve_preview_tokens(self._truncate_config)
-        if not self._acts_on_messages and tokens <= preview_tokens:
+        if tokens <= preview_tokens:
             raise ValueError(
                 f"threshold ({shown}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges; raise threshold or lower preview_tokens"

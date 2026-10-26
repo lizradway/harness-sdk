@@ -314,8 +314,9 @@ class TestOffloadBuilder:
     def test_allows_wildcard_with_only_threshold(self):
         assert Offload.drop("*").when(threshold=100).name == "offload:drop"
 
-    def test_truncate_wildcard_skips_preview_check(self):
-        assert Offload.truncate("*", {"preview_tokens": 1000}).when(threshold=500).name == "offload:truncate"
+    def test_truncate_wildcard_validates_threshold_gt_preview(self):
+        with pytest.raises(ValueError, match=r"threshold \(500\) must be greater than preview_tokens \(1000\)"):
+            Offload.truncate("*", {"preview_tokens": 1000}).when(threshold=500)
 
 
 class TestConditionParsing:
@@ -940,10 +941,11 @@ class TestTransformBlocks:
         )
 
     @pytest.mark.asyncio
-    async def test_media_without_threshold_acts_on_media_counted_as_zero_tokens(self, mock_agent):
+    @pytest.mark.parametrize("threshold", [None, 1000])
+    async def test_acts_on_media_counted_as_zero_tokens(self, mock_agent, threshold):
         # The heuristic token count measures media as 0 tokens.
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=0)
-        strategy = Offload.drop("media").when(utilization="50%")
+        strategy = Offload.drop("media").when(utilization="50%", threshold=threshold)
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[ContentBlock(text="what color?"), image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True

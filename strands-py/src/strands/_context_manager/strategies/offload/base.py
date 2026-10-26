@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -52,7 +53,7 @@ class OffloadConditions(TypedDict, total=False):
             call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
         threshold: How large content must be to act on. A whole number selects content larger than
             that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
-            tokens of a 200,000-token window).
+            tokens of a 200,000-token window). Media the token count can't measure always passes.
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
             many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
     """
@@ -640,7 +641,12 @@ class BaseOffloadStrategy(ABC):
                 continue
 
             tokens = await agent.model.count_tokens([Message(role=message["role"], content=[block])])
-            if effective_threshold is not None and tokens <= effective_threshold:
+            # The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
+            if (
+                effective_threshold is not None
+                and tokens <= effective_threshold
+                and not (tokens == 0 and _is_media_block(block))
+            ):
                 continue
 
             stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
@@ -679,7 +685,8 @@ class BaseOffloadStrategy(ABC):
         threshold = self._resolve_threshold(context.agent)
         if threshold is None:
             return eligible
-        return [msg for msg in eligible if await context.agent.model.count_tokens([msg]) > threshold]
+        sizes = await asyncio.gather(*(context.agent.model.count_tokens([msg]) for msg in eligible))
+        return [msg for msg, size in zip(eligible, sizes, strict=True) if size > threshold]
 
     @abstractmethod
     async def _replace_block(
@@ -723,7 +730,8 @@ class OffloadStrategyBuilder:
     ) -> ContextStrategy:
         """Return the strategy with these conditions.
 
-        Call with no arguments to act on every new message as it arrives, before the model sees it.
+        For targets other than ``"*"`` and ``"media"``, call with no arguments to act on each message as it
+        arrives, including the one the model answers next.
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
@@ -732,7 +740,7 @@ class OffloadStrategyBuilder:
                 call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
             threshold: How large content must be to act on. A whole number selects content larger than
                 that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
-                tokens of a 200,000-token window).
+                tokens of a 200,000-token window). Media the token count can't measure always passes.
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
                 many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
 
