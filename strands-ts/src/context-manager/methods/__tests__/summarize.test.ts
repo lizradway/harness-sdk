@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
+import { flattenMessagesToContent, formatSummarized, summarizeContent } from '../summarize.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AudioBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
@@ -133,6 +133,12 @@ describe('flattenMessagesToContent', () => {
         new TextBlock('denied'),
       ])
     })
+  })
+})
+
+describe('formatSummarized', () => {
+  it('leaves out a size the token count could not measure', () => {
+    expect(formatSummarized('media block', 0, 'a red square')).toBe('[Summarized: media block]\n\na red square')
   })
 })
 

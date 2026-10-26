@@ -21,6 +21,7 @@ import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   buildToolNameMap,
+  formatOffloaded,
   insertMarker,
   repairAlternation,
   spliceWithPairs,
@@ -44,10 +45,6 @@ export class TruncateStrategy extends BaseOffloadStrategy {
         `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges`
       )
     }
-  }
-
-  protected override get _defaultThreshold(): number {
-    return this._previewTokens
   }
 
   /**
@@ -119,7 +116,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return new TextBlock(formatOffloaded(tokens, stashRefs))
   }
 
   /** The eligible messages between the head and tail kept within the preview token budget. */

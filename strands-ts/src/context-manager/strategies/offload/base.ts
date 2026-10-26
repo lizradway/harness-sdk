@@ -17,7 +17,7 @@ import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../type
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import type { Stash } from '../../stash.js'
+import { formatStashRefs, type Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
@@ -201,6 +201,16 @@ export function validateTarget(target: OffloadTarget | undefined): void {
  * Builds a toolUseId → toolName map from all assistant messages in the conversation.
  * Called once per apply() to avoid O(messages × toolResults) scanning.
  */
+/**
+ * Format an `[Offloaded]` marker, leaving out a size the token count could not measure.
+ *
+ * @internal
+ */
+export function formatOffloaded(tokens: number, stashRefs: string[]): string {
+  const size = tokens ? `: ~${tokens} tokens` : ''
+  return `[Offloaded${size}]${formatStashRefs(stashRefs)}`
+}
+
 export function buildToolNameMap(messages: Message[]): Map<string, string> {
   const map = new Map<string, string>()
   for (const message of messages) {
@@ -501,11 +511,6 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._utilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
   }
 
-  /** Block size at or below which blocks are left alone when `threshold` is unset. */
-  protected get _defaultThreshold(): number {
-    return 0
-  }
-
   /**
    * Checks utilization against the model's context window, then registers the eager hook if this runs eagerly.
    *
@@ -551,10 +556,10 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return context.utilization >= share
   }
 
-  /** Tokens per block above which a block is offloaded. */
-  private _resolveThreshold(agent: LocalAgent): number {
+  /** Tokens above which content is offloaded, or undefined when `threshold` is unset so no size check applies. */
+  private _resolveThreshold(agent: LocalAgent): number | undefined {
     const threshold = this._threshold
-    if (!threshold) return this._defaultThreshold
+    if (!threshold) return undefined
     return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
   }
 
@@ -610,7 +615,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
-    if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
+    if (block instanceof TextBlock) return block.text.trim() !== '' && targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       return (
@@ -622,12 +627,12 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._target === 'media' && isMediaBlock(block)
   }
 
-  /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens. */
+  /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens, or every one if unset. */
   protected async _transformBlocks(
     message: Message,
     messages: Message[],
     toolNameMap: Map<string, string>,
-    threshold: number,
+    threshold: number | undefined,
     agent: LocalAgent,
     invocationContext?: InvocationContext
   ): Promise<boolean> {
@@ -637,7 +642,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      if (tokens <= threshold) continue
+      if (threshold !== undefined && tokens <= threshold) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
       const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
@@ -661,9 +666,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const index = messages.indexOf(message)
       return index > 0 && !isPinned(messages, index)
     })
-    if (this._threshold === undefined) return eligible
-
     const threshold = this._resolveThreshold(agent)
+    if (threshold === undefined) return eligible
+
     const larger: Message[] = []
     for (const message of eligible) {
       if ((await agent.model.countTokens([message])) > threshold) larger.push(message)

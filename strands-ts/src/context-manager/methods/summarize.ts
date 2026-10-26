@@ -25,12 +25,14 @@ import { logger } from '../../logging/logger.js'
 export const SUMMARIZED_PREFIX = '[Summarized:'
 
 /**
- * Format a `[Summarized: ...]` marker with an optional summary body.
+ * Format a `[Summarized: ...]` marker with an optional summary body, leaving out a size the token count could not
+ * measure.
  *
  * @internal
  */
 export function formatSummarized(description: string, tokens: number, summary?: string): string {
-  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
+  const size = tokens ? `, ~${tokens.toLocaleString('en-US')} tokens` : ''
+  const header = `${SUMMARIZED_PREFIX} ${description}${size}]`
   return summary ? `${header}\n\n${summary}` : header
 }
 

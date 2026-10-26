@@ -15,6 +15,7 @@ import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../type
 import { ImageBlock } from '../../../types/media.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
@@ -596,6 +597,55 @@ describe('Offload with media target', () => {
     expect((older.content[1] as TextBlock).text).toBe('[Dropped]')
     expect(newer.content[1]).toBeInstanceOf(ImageBlock)
   })
+
+  describe('without a threshold, under the model token heuristic that counts media as 0 tokens', () => {
+    function withHeuristicModel(messages: Message[]): ContextState {
+      const agent = createMockAgent({
+        messages,
+        extra: { model: new MockMessageModel() } as unknown as Partial<Agent>,
+      })
+      return { messages, agent, utilization: 0.5 }
+    }
+
+    it('drops the media', async () => {
+      const message = withImage()
+
+      expect(
+        await Offload.drop('media')
+          .when({})
+          .apply(withHeuristicModel([message]))
+      ).toBe(true)
+      expect(message.content).toEqual([
+        new TextBlock('look at this'),
+        new TextBlock('[Dropped]'),
+        withImage().content[2],
+      ])
+    })
+
+    it('offloads the media with a marker that leaves out the unmeasured size', async () => {
+      const message = withImage()
+
+      expect(
+        await Offload.truncate('media')
+          .when({})
+          .apply(withHeuristicModel([message]))
+      ).toBe(true)
+      expect((message.content[1] as TextBlock).text).toBe('[Offloaded]')
+    })
+  })
+})
+
+describe('without a threshold', () => {
+  it('skips empty text blocks', async () => {
+    const message = new Message({ role: 'assistant', content: [new TextBlock(''), new TextBlock('  \n')] })
+
+    expect(
+      await Offload.drop('assistantText')
+        .when({})
+        .apply(makeContext([message]))
+    ).toBe(false)
+    expect(message.content).toEqual([new TextBlock(''), new TextBlock('  \n')])
+  })
 })
 
 describe('Message-level drop vs truncate markers', () => {
@@ -1121,7 +1171,7 @@ describe('whole-message conditions', () => {
 })
 
 describe('truncate block threshold', () => {
-  it('defaults to previewTokens and skips blocks it already truncated', async () => {
+  it('leaves blocks within the preview alone and skips blocks it already truncated', async () => {
     const messages = toolHistory([100, 2000])
     const strategy = Offload.truncate('toolResults', { previewTokens: 100 }).when({})
 

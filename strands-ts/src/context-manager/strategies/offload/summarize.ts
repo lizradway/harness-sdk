@@ -24,6 +24,7 @@ import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
+  formatOffloaded,
   insertMarker,
   repairAlternation,
   type OffloadConditions,
@@ -133,7 +134,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return new TextBlock(formatOffloaded(tokens, stashRefs))
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
