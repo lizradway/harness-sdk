@@ -13,6 +13,7 @@ import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
+import { logger } from '../../../logging/logger.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -1067,11 +1068,16 @@ describe('condition resolution', () => {
     )
   })
 
-  it('rejects a utilization token count on init when the model has no context window', () => {
-    const strategy = Offload.drop('*').when({ utilization: 50_000 })
-    expect(() => strategy.init!(makeContext([], 0.5).agent)).toThrow(
-      'utilization (50000) is a token count but the model has no contextWindowLimit'
+  it('warns and skips the window check on init when the model has no context window', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const strategy = Offload.drop('*').when({ utilization: 500_000 })
+
+    expect(() => strategy.init!(makeContext([], 0.5).agent)).not.toThrow()
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('utilization=<500000> | contextWindowLimit is not set')
     )
+    warnSpy.mockRestore()
   })
 
   it.each([

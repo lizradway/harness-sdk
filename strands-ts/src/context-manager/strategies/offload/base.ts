@@ -49,8 +49,7 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   above 1 fires at that many conversation tokens, and throws if the model has no `contextWindowLimit` or the count
- *   exceeds it.
+ *   above 1 fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
  * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
  *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
@@ -557,8 +556,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    *
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
-   * @throws Error when `utilization` is a token count and the model has no `contextWindowLimit`, or the count is
-   *   larger than it
+   * @throws Error when `utilization` is a token count larger than the model's `contextWindowLimit`
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
@@ -585,9 +583,10 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (!utilization || utilization.isShare) return
     const limit = agent.model.getConfig().contextWindowLimit
     if (!limit) {
-      throw new Error(
-        `utilization (${utilization.value}) is a token count but the model has no contextWindowLimit; set contextWindowLimit on the model or use a "N%" share`
+      logger.warn(
+        `utilization=<${utilization.value}> | contextWindowLimit is not set on the model, skipping the context window check | set contextWindowLimit in your model config`
       )
+      return
     }
     if (utilization.value <= limit) return
     throw new Error(
