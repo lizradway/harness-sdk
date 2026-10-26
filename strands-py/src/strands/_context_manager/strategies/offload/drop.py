@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import _format_stash_refs
-from .base import _MEDIA_KEYS, BaseOffloadStrategy, OffloadConditions, OffloadTarget
+from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _media_kind
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -56,7 +56,7 @@ class DropStrategy(BaseOffloadStrategy):
                     content=dropped_content,
                 )
             )
-        media_kind = next((key for key in _MEDIA_KEYS if key in block), None)
+        media_kind = _media_kind(block)
         if media_kind:
             logger.debug("tracking_id=<%s> | dropped media block from context window", message.get("tracking_id"))
             # A bare marker reads to the model as media that never arrived, so it doubts what it saw.

@@ -18,10 +18,10 @@ StrategyPresetName = str
 Preset names are the stable contract. The strategies they resolve to may change
 between releases.
 
-- ``'proactive_summarization'`` — batch summarize oldest messages at 70% utilization
+- ``'proactive_summarization'`` — batch summarize the oldest 30% of messages at 70% utilization
 - ``'large_tool_offloading'`` — truncate tool results over 2500 tokens to a 1000-token preview
 - ``'overflow_protection'`` — drop the oldest messages when the context window is full
-- ``'stale_tool_cleanup'`` — drop tool results older than 5 messages
+- ``'stale_tool_cleanup'`` — drop tool results outside the newest 5 tool-result messages
 """
 
 STRATEGY_PRESET_NAMES: tuple[str, ...] = (

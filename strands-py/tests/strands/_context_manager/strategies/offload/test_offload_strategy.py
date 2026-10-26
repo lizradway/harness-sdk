@@ -326,6 +326,7 @@ class TestConditionParsing:
             ("utilization", 1.5),
             ("utilization", "101%"),
             ("utilization", "70"),
+            ("threshold", 0),
             ("threshold", -1),
             ("threshold", 0.5),
             ("preserve_recent", 1.5),
@@ -364,11 +365,17 @@ class TestConditionResolution:
 
     @pytest.mark.parametrize(
         ("window", "utilization"),
-        [(100_000, 100_000), (100_000, "100%"), (None, 500_000)],
+        [(100_000, 100_000), (100_000, "100%"), (None, 200_000)],
     )
-    def test_utilization_within_or_without_window_inits(self, mock_agent, window, utilization):
+    def test_utilization_within_window_inits(self, mock_agent, window, utilization):
         mock_agent.model.context_window_limit = window
         Offload.drop("*").when(utilization=utilization).init(mock_agent)
+
+    def test_token_utilization_above_default_window_raises_on_init(self, mock_agent):
+        mock_agent.model.context_window_limit = None
+        strategy = Offload.drop("*").when(utilization=200_001)
+        with pytest.raises(ValueError, match=r"\(200000 tokens\)"):
+            strategy.init(mock_agent)
 
 
 class TestToolMatchesTarget:
@@ -891,7 +898,10 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert "[Offloaded: ~" in message["content"][0]["text"]
+        assert (
+            message["content"][0]["text"]
+            == "[Offloaded: image, ~5000 tokens, removed from context after it was viewed]"
+        )
 
     @pytest.mark.asyncio
     async def test_media_without_threshold_acts_on_media_counted_as_zero_tokens(self, mock_agent):
@@ -913,7 +923,7 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Offloaded]"
+        assert message["content"][0]["text"] == "[Offloaded: image, removed from context after it was viewed]"
 
     @pytest.mark.asyncio
     async def test_without_threshold_skips_empty_text_blocks(self, mock_agent):
@@ -1061,6 +1071,20 @@ class TestGranularity:
         assert await strategy.apply(context) is True
         assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == DROPPED_MARKER
         assert messages[4]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
+
+    @pytest.mark.asyncio
+    async def test_gated_block_strategy_leaves_the_first_message(self, mock_agent):
+        strategy = Offload.drop("user_text").when(utilization=0.8)
+        messages = [*self._conversation(), _text("user", "live question")]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+        assert await strategy.apply(context) is True
+        assert [msg["content"][0]["text"] for msg in messages] == [
+            "pin",
+            "old answer",
+            DROPPED_MARKER,
+            "recent answer",
+            "live question",
+        ]
 
     @pytest.mark.asyncio
     async def test_utilization_gates_block_strategy(self, mock_agent):

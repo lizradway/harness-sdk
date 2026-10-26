@@ -72,7 +72,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         if not self._acts_on_messages and isinstance(threshold, int) and threshold <= preview_tokens:
             raise ValueError(
                 f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
-                "to ensure truncation converges"
+                "to ensure truncation converges; raise threshold or lower preview_tokens"
             )
 
     async def _apply_per_message(self, context: ContextState) -> bool:
@@ -152,7 +152,7 @@ class TruncateStrategy(BaseOffloadStrategy):
                 result = ContentBlock(text=result["text"] + f"\n\n[Stashed]{refs}")
             return result
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=_format_offloaded(tokens, refs))
+        return ContentBlock(text=_format_offloaded(block, tokens, refs))
 
 
 async def _count_within_budget(messages: list[Message], budget: int, agent: Agent) -> int:

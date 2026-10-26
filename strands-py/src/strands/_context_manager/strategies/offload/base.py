@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text", "media"] | list[str]
 """Target for offload operations. ``"*"`` is whole messages, ``"media"`` is image, document, video, and
-audio blocks outside tool results, and a list names tools (``["tool::bash"]``; prefix ``!`` to exclude)."""
+audio blocks outside tool results, and a list names tools (``["bash"]`` or ``["tool::bash"]``; prefix ``!`` to
+exclude)."""
 
 _MEDIA_KEYS = ("image", "document", "video", "audio")
 
@@ -46,7 +47,8 @@ class OffloadConditions(TypedDict, total=False):
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
             window; a whole number above 1 fires at that many conversation tokens, and raises if it
-            exceeds the model's context window.
+            exceeds the model's context window. Unset, the strategy runs before every model call, or
+            on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
         threshold: How large content must be to act on. A whole number selects content larger than
             that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
             tokens of a 200,000-token window).
@@ -73,7 +75,7 @@ class _Measure:
 
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
 _UTILIZATION_FORMS = 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count'
-_THRESHOLD_FORMS = 'a whole token count or a "N%" string up to "100%"'
+_THRESHOLD_FORMS = 'a whole token count above 0 or a "N%" string up to "100%"'
 _PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
 
 
@@ -107,7 +109,7 @@ def _parse_threshold(value: int | str) -> _Measure:
         if share is None or not 0 < share <= 1:
             raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
         return _Measure(share, is_share=True)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
     return _Measure(float(value), is_share=False)
 
@@ -153,8 +155,16 @@ def _window_limit(agent: Agent) -> int:
     return agent.model.context_window_limit or DEFAULT_CONTEXT_WINDOW_LIMIT
 
 
-def _format_offloaded(tokens: int, refs: str) -> str:
-    """Format an ``[Offloaded]`` marker, leaving out a size the token count could not measure."""
+def _media_kind(block: ContentBlock) -> str | None:
+    return next((key for key in _MEDIA_KEYS if key in block), None)
+
+
+def _format_offloaded(block: ContentBlock, tokens: int, refs: str) -> str:
+    """Format an ``[Offloaded]`` marker naming the media kind, leaving out a size the token count could not measure."""
+    kind = _media_kind(block)
+    if kind:
+        size = f", ~{tokens} tokens" if tokens else ""
+        return f"[Offloaded: {kind}{size}, removed from context after it was viewed]{refs}"
     size = f": ~{tokens} tokens" if tokens else ""
     return f"[Offloaded{size}]{refs}"
 
@@ -462,8 +472,8 @@ class BaseOffloadStrategy(ABC):
     def _check_utilization_fits(self, agent: Agent) -> None:
         if self._utilization is None or self._utilization.is_share:
             return
-        limit = agent.model.context_window_limit
-        if limit and self._utilization.value > limit:
+        limit = _window_limit(agent)
+        if self._utilization.value > limit:
             raise ValueError(
                 f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
                 f'({limit} tokens); use a smaller token count or a "N%" share'
@@ -526,9 +536,9 @@ class BaseOffloadStrategy(ABC):
             else list(messages)
         )
 
-        # Without the eager hook, the last message is one the model has not yet responded to.
-        if not self._runs_eagerly and eligible and eligible[-1] is messages[-1]:
-            eligible.pop()
+        # Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
+        if not self._runs_eagerly and messages:
+            eligible = [msg for msg in eligible if msg is not messages[0] and msg is not messages[-1]]
 
         acted = False
         index_map = {id(msg): i for i, msg in enumerate(messages)}
@@ -690,7 +700,8 @@ class OffloadStrategyBuilder:
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
                 window; a whole number above 1 fires at that many conversation tokens, and raises if it
-                exceeds the model's context window.
+                exceeds the model's context window. Unset, the strategy runs before every model call, or
+                on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
             threshold: How large content must be to act on. A whole number selects content larger than
                 that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
                 tokens of a 200,000-token window).

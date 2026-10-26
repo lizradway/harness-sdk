@@ -154,7 +154,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 return ContentBlock(text=marker)
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=_format_offloaded(tokens, refs))
+        return ContentBlock(text=_format_offloaded(block, tokens, refs))
 
     async def _try_summarize(
         self,
