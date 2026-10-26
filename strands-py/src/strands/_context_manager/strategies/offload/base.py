@@ -47,7 +47,7 @@ class OffloadConditions(TypedDict, total=False):
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-            window; a whole number above 1 fires at that many conversation tokens, and raises if it
+            window; a whole number of 1,000 or more fires at that many conversation tokens, and raises if it
             exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
             call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
         threshold: How large content must be to act on. A whole number selects content larger than
@@ -75,7 +75,11 @@ class _Measure:
 
 
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
-_UTILIZATION_FORMS = 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count'
+# Smaller whole numbers are almost always a percent written without "%", like utilization=80.
+_MIN_UTILIZATION_TOKENS = 1000
+_UTILIZATION_FORMS = (
+    f'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least {_MIN_UTILIZATION_TOKENS}'
+)
 _THRESHOLD_FORMS = 'a whole token count above 0 or a "N%" string up to "100%"'
 _PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
 
@@ -101,6 +105,11 @@ def _parse_utilization(value: int | float | str) -> _Measure:
         return _Measure(float(value), is_share=True)
     if isinstance(value, float):
         raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
+    if value < _MIN_UTILIZATION_TOKENS:
+        hint = f'; for {value}% of the context window, write "{value}%"' if value <= 100 else ""
+        raise ValueError(
+            f"utilization={value!r} is invalid: a token count must be at least {_MIN_UTILIZATION_TOKENS}{hint}"
+        )
     return _Measure(float(value), is_share=False)
 
 
@@ -708,7 +717,7 @@ class OffloadStrategyBuilder:
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-                window; a whole number above 1 fires at that many conversation tokens, and raises if it
+                window; a whole number of 1,000 or more fires at that many conversation tokens, and raises if it
                 exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
                 call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
             threshold: How large content must be to act on. A whole number selects content larger than

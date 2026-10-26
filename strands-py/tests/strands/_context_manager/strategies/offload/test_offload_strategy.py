@@ -308,6 +308,7 @@ class TestConditionParsing:
             ("utilization", 0.5, _Measure(0.5, is_share=True)),
             ("utilization", "70%", _Measure(0.7, is_share=True)),
             ("utilization", 50_000, _Measure(50_000, is_share=False)),
+            ("utilization", 1000, _Measure(1000, is_share=False)),
             ("threshold", 2500, _Measure(2500, is_share=False)),
             ("threshold", "5%", _Measure(0.05, is_share=True)),
             ("preserve_recent", 4, _Measure(4, is_share=False)),
@@ -336,6 +337,21 @@ class TestConditionParsing:
     def test_rejects(self, name, value):
         with pytest.raises(ValueError, match=f"{name}="):
             Offload.drop("tool_results").when(**{name: value})
+
+    @pytest.mark.parametrize(
+        ("value", "exp_message"),
+        [
+            (
+                80,
+                "utilization=80 is invalid: a token count must be at least 1000; "
+                'for 80% of the context window, write "80%"$',
+            ),
+            (999, "utilization=999 is invalid: a token count must be at least 1000$"),
+        ],
+    )
+    def test_rejects_a_token_utilization_below_the_floor(self, value, exp_message):
+        with pytest.raises(ValueError, match=exp_message):
+            Offload.drop("tool_results").when(utilization=value)
 
 
 class TestConditionResolution:
