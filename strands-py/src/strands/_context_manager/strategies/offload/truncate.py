@@ -66,12 +66,28 @@ class TruncateStrategy(BaseOffloadStrategy):
         self._truncate_config: TruncateConfig = config or {}
         super().__init__(target, conditions)
 
-        preview_tokens = _resolve_preview_tokens(self._truncate_config)
         threshold = (conditions or {}).get("threshold")
-        # A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
-        if not self._acts_on_messages and isinstance(threshold, int) and threshold <= preview_tokens:
+        # A percent needs the context window, so init checks it.
+        if isinstance(threshold, int):
+            self._check_threshold_exceeds_preview(threshold, str(threshold))
+
+    def init(self, agent: Agent, stash: Stash | None = None) -> None:
+        """Check a percent threshold against ``preview_tokens``, then initialize the strategy.
+
+        Raises:
+            ValueError: If a percent ``threshold`` of the context window is no larger than ``preview_tokens``,
+                or ``utilization`` is a token count larger than the model's ``context_window_limit``.
+        """
+        if self._threshold is not None and self._threshold.is_share:
+            tokens = self._resolve_threshold(agent) or 0
+            self._check_threshold_exceeds_preview(tokens, f"{tokens} tokens of the context window")
+        super().init(agent, stash)
+
+    def _check_threshold_exceeds_preview(self, tokens: int, shown: str) -> None:
+        preview_tokens = _resolve_preview_tokens(self._truncate_config)
+        if not self._acts_on_messages and tokens <= preview_tokens:
             raise ValueError(
-                f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
+                f"threshold ({shown}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges; raise threshold or lower preview_tokens"
             )
 

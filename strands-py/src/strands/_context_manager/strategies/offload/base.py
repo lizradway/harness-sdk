@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text", "media"] | list[str]
 """Target for offload operations. ``"*"`` is whole messages, ``"media"`` is image, document, video, and
-audio blocks outside tool results, and a list names tools (``["bash"]`` or ``["tool::bash"]``; prefix ``!`` to
-exclude)."""
+audio blocks outside tool results, and a list names tools to include (``["bash"]`` or ``["tool::bash"]``) or,
+each prefixed ``!``, tools to exclude."""
 
 _MEDIA_KEYS = ("image", "document", "video", "audio")
 
@@ -80,7 +80,7 @@ _MIN_UTILIZATION_TOKENS = 1000
 _UTILIZATION_FORMS = (
     f'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least {_MIN_UTILIZATION_TOKENS}'
 )
-_THRESHOLD_FORMS = 'a whole token count above 0 or a "N%" string up to "100%"'
+_THRESHOLD_FORMS = 'a whole token count above 0 or a "N%" string below "100%"'
 _PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
 
 
@@ -116,7 +116,7 @@ def _parse_utilization(value: int | float | str) -> _Measure:
 def _parse_threshold(value: int | str) -> _Measure:
     if isinstance(value, str):
         share = _percent_share(value)
-        if share is None or not 0 < share <= 1:
+        if share is None or not 0 < share < 1:
             raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
         return _Measure(share, is_share=True)
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -159,6 +159,11 @@ def _build_conditions(
 def _validate_target(target: OffloadTarget | None) -> None:
     if isinstance(target, list) and len(target) == 0:
         raise ValueError("Empty array target matches nothing — provide at least one target")
+    if isinstance(target, list) and len({entry.startswith("!") for entry in target}) > 1:
+        raise ValueError(
+            f"Tool target {target!r} mixes included and excluded tools; list only tools to include"
+            " or only tools to exclude"
+        )
 
 
 def _window_limit(agent: Agent) -> int:
@@ -391,13 +396,6 @@ def _resolve_tool_filter(target: OffloadTarget | None) -> tuple[set[str] | None,
         else:
             includes.append(entry.removeprefix("tool::"))
 
-    if excludes and includes:
-        logger.warning(
-            "includes=<%s>, excludes=<%s> | tool filter contains both, excludes will be ignored",
-            includes,
-            excludes,
-        )
-        return set(includes), None
     if excludes:
         return None, set(excludes)
     if includes:
@@ -432,8 +430,9 @@ class BaseOffloadStrategy(ABC):
                 internal strategies that override ``apply``.
 
         Raises:
-            ValueError: If ``target`` is an empty list, a condition value is invalid, or a
-                message-level strategy has no ``utilization``, ``threshold``, or ``preserve_recent``.
+            ValueError: If ``target`` is an empty list or mixes included and excluded tools, a condition
+                value is invalid, a message-level strategy has no ``utilization``, ``threshold``, or
+                ``preserve_recent``, or a ``"media"`` strategy has neither ``utilization`` nor ``preserve_recent``.
         """
         _validate_target(target)
         self._target = target
@@ -447,10 +446,18 @@ class BaseOffloadStrategy(ABC):
         self._preserve_recent = _parse_preserve_recent(conditions.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
-        if conditions_given and self._acts_on_messages and self._is_unconditional:
-            method = self.name.removeprefix("offload:")
+        if not conditions_given:
+            return
+        method = self.name.removeprefix("offload:")
+        if self._acts_on_messages and self._is_unconditional:
             raise ValueError(
-                f'Offload.{method}("*") would act on every message; set utilization, threshold, or preserve_recent'
+                f'Offload.{method}("*") would act on every message; set utilization, threshold,'
+                " or a preserve_recent above 0"
+            )
+        if self._target == "media" and self._runs_eagerly:
+            raise ValueError(
+                f'Offload.{method}("media") would remove media before the model sees it;'
+                " set utilization or a preserve_recent above 0"
             )
 
     @property
@@ -689,7 +696,10 @@ class BaseOffloadStrategy(ABC):
 
 
 class OffloadStrategyBuilder:
-    """An offload strategy waiting for its conditions. Call ``.when()`` to get the strategy."""
+    """An offload strategy waiting for its conditions. Call ``.when()`` to get the strategy.
+
+    A strategy keeps per-agent state, so give each agent its own: call ``.when()`` once per agent.
+    """
 
     def __init__(self, target: OffloadTarget, factory: Callable[[OffloadConditions], ContextStrategy]) -> None:
         """Initialize the builder.
@@ -699,7 +709,7 @@ class OffloadStrategyBuilder:
             factory: Builds the strategy from its conditions.
 
         Raises:
-            ValueError: If ``target`` is an empty list.
+            ValueError: If ``target`` is an empty list or mixes included and excluded tools.
         """
         _validate_target(target)
         self._factory = factory
@@ -713,7 +723,7 @@ class OffloadStrategyBuilder:
     ) -> ContextStrategy:
         """Return the strategy with these conditions.
 
-        Call with no arguments to act on every new message as it arrives.
+        Call with no arguments to act on every new message as it arrives, before the model sees it.
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
@@ -730,8 +740,9 @@ class OffloadStrategyBuilder:
             The configured strategy.
 
         Raises:
-            ValueError: If a condition value is invalid, or a target ``"*"`` strategy has none of
-                ``utilization``, ``threshold``, or ``preserve_recent``.
+            ValueError: If a condition value is invalid, a target ``"*"`` strategy has none of
+                ``utilization``, ``threshold``, or ``preserve_recent``, or a target ``"media"`` strategy
+                has neither ``utilization`` nor ``preserve_recent``.
         """
         return self._factory(
             _build_conditions(utilization=utilization, threshold=threshold, preserve_recent=preserve_recent)

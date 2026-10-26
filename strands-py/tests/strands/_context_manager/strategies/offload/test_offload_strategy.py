@@ -103,10 +103,9 @@ class TestResolveToolFilter:
         assert include is None
         assert exclude == {"bash"}
 
-    def test_mixed_include_and_exclude_prefers_include(self):
-        include, exclude = _resolve_tool_filter(["tool::bash", "!tool::python"])
-        assert include == {"bash"}
-        assert exclude is None
+    def test_mixed_include_and_exclude_raises(self):
+        with pytest.raises(ValueError, match="mixes included and excluded tools"):
+            Offload.drop(["tool::bash", "!tool::python"])
 
     def test_entries_without_tool_prefix_still_parsed(self):
         include, exclude = _resolve_tool_filter(["raw_name"])
@@ -279,18 +278,38 @@ class TestOffloadBuilder:
         with pytest.raises(ValueError, match="must be greater than preview_tokens"):
             Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=500)
 
-    def test_truncate_skips_preview_check_for_percent_threshold(self):
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold="0.1%")
-        assert strategy._threshold == _Measure(0.001, is_share=True)
+    @pytest.mark.parametrize(("window", "threshold", "exp_tokens"), [(100_000, "1%", 1000), (None, "0.1%", 200)])
+    def test_truncate_checks_percent_threshold_against_preview_on_init(self, mock_agent, window, threshold, exp_tokens):
+        mock_agent.model.context_window_limit = window
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=threshold)
+        with pytest.raises(
+            ValueError, match=rf"threshold \({exp_tokens} tokens of the context window\) must be greater"
+        ):
+            strategy.init(mock_agent)
+
+    def test_truncate_accepts_percent_threshold_above_preview_on_init(self, mock_agent):
+        mock_agent.model.context_window_limit = 100_000
+        Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold="2%").init(mock_agent)
 
     def test_empty_list_target_raises(self):
         with pytest.raises(ValueError, match="Empty array target"):
             Offload.drop([])
 
     @pytest.mark.parametrize("builder", [Offload.drop("*"), Offload.truncate("*"), Offload.summarize("*")])
-    def test_rejects_eager_message_level(self, builder):
+    @pytest.mark.parametrize("preserve_recent", [0, "0%"])
+    def test_rejects_eager_message_level(self, builder, preserve_recent):
         with pytest.raises(ValueError, match=r'\("\*"\) would act on every message'):
-            builder.when()
+            builder.when(preserve_recent=preserve_recent)
+
+    @pytest.mark.parametrize("builder", [Offload.drop("media"), Offload.truncate("media"), Offload.summarize("media")])
+    @pytest.mark.parametrize("conditions", [{}, {"threshold": 100}, {"preserve_recent": "0%"}])
+    def test_rejects_eager_media(self, builder, conditions):
+        with pytest.raises(ValueError, match=r'\("media"\) would remove media before the model sees it'):
+            builder.when(**conditions)
+
+    @pytest.mark.parametrize("conditions", [{"utilization": "80%"}, {"preserve_recent": 1}])
+    def test_allows_gated_media(self, conditions):
+        assert Offload.drop("media").when(**conditions).name == "offload:drop"
 
     def test_allows_wildcard_with_only_threshold(self):
         assert Offload.drop("*").when(threshold=100).name == "offload:drop"
@@ -330,6 +349,7 @@ class TestConditionParsing:
             ("threshold", 0),
             ("threshold", -1),
             ("threshold", 0.5),
+            ("threshold", "100%"),
             ("preserve_recent", 1.5),
             ("preserve_recent", "100%"),
         ],
@@ -847,14 +867,14 @@ class TestBlockMatchesTarget:
     """Tests for _block_matches_target — non-text/non-tool blocks."""
 
     def test_image_block_matches_media(self):
-        strategy = Offload.drop("media").when(threshold=100)
+        strategy = Offload.drop("media").when(utilization="50%", threshold=100)
         block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[ContentBlock(text="look"), block])
         assert strategy._block_matches_target(block, message, {}) is True
         assert strategy._block_matches_target(message["content"][0], message, {}) is False
 
     def test_media_target_skips_media_inside_tool_results(self):
-        strategy = Offload.drop("media").when(threshold=100)
+        strategy = Offload.drop("media").when(utilization="50%", threshold=100)
         _, user_msg = _make_tool_pair()
         assert strategy._block_matches_target(user_msg["content"][0], user_msg, {"tu-1": "my_tool"}) is False
 
@@ -923,7 +943,7 @@ class TestTransformBlocks:
     async def test_media_without_threshold_acts_on_media_counted_as_zero_tokens(self, mock_agent):
         # The heuristic token count measures media as 0 tokens.
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=0)
-        strategy = Offload.drop("media").when()
+        strategy = Offload.drop("media").when(utilization="50%")
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[ContentBlock(text="what color?"), image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
@@ -935,7 +955,7 @@ class TestTransformBlocks:
     @pytest.mark.asyncio
     async def test_offloaded_marker_leaves_out_an_unmeasured_size(self, mock_agent):
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=0)
-        strategy = Offload.truncate("media").when()
+        strategy = Offload.truncate("media").when(utilization="50%")
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True

@@ -284,7 +284,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_media_offload_marker(self, mock_agent, stash):
-        strategy = Offload.summarize("media").when(threshold=100)
+        strategy = Offload.summarize("media").when(utilization="50%", threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -293,6 +293,7 @@ class TestSummarizeWithStash:
                 content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
                 tracking_id="track-1",
             ),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)

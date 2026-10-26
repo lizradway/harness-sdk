@@ -140,13 +140,14 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_replaces_media_block_with_marker(self, mock_agent):
-        strategy = Offload.summarize("media").when(threshold=100)
+        strategy = Offload.summarize("media").when(utilization="50%", threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
                 role="user",
                 content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
             ),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
@@ -156,13 +157,14 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_falls_back_to_offloaded_when_media_summary_empty(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("media").when(threshold=100)
+        strategy = Offload.summarize("media").when(utilization="50%", threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
                 role="user",
                 content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
             ),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
@@ -200,34 +202,38 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_offloads_video_block_without_summarizing(self, mock_agent):
         mock_agent.model.stream = unittest.mock.Mock()
-        strategy = Offload.summarize("media").when(threshold=100)
+        strategy = Offload.summarize("media").when(utilization="50%", threshold=100)
         messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
 
         assert await strategy.apply(context) is True
-        assert messages[0]["content"][0]["text"].startswith("[Offloaded:")
+        assert messages[1]["content"][0]["text"].startswith("[Offloaded:")
         mock_agent.model.stream.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
         # guards against summarizer failures being hidden by a lossy retry (#5291)
         mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
-        strategy = Offload.summarize("media").when(threshold=100)
+        strategy = Offload.summarize("media").when(utilization="50%", threshold=100)
         messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
                 role="user",
                 content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
             ),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(context) is True
-        assert "[Offloaded:" in messages[0]["content"][0]["text"]
+        assert "[Offloaded:" in messages[1]["content"][0]["text"]
         assert "error=<images unsupported>" in caplog.text
 
 
