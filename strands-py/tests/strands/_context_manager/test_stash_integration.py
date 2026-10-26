@@ -50,7 +50,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_truncated_text(self, mock_agent, stash):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("assistant_text", {"preview_tokens": 100}).when(threshold=200)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -96,7 +96,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_no_stash_ref_without_stash(self, mock_agent):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("assistant_text", {"preview_tokens": 100}).when(threshold=200)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 50000)], tracking_id="track-1"),
@@ -113,7 +113,7 @@ class TestDropWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_dropped_marker(self, mock_agent, stash):
-        strategy = Offload.drop("*").when(threshold=100)
+        strategy = Offload.drop("assistant_text").when(threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -284,7 +284,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_media_offload_marker(self, mock_agent, stash):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),

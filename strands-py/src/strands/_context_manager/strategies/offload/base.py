@@ -27,23 +27,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text"] | list[str]
-"""Target for offload operations."""
+OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text", "media"] | list[str]
+"""Target for offload operations. ``"*"`` is whole messages, ``"media"`` is image, document, video, and
+audio blocks outside tool results, and a list names tools (``["tool::bash"]``; prefix ``!`` to exclude)."""
+
+_MEDIA_KEYS = ("image", "document", "video", "audio")
 
 
 class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and on what an offload strategy acts.
 
     A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
-    Target ``"*"`` without ``threshold`` acts on whole messages; any other target, or any
-    ``threshold``, acts on individual blocks.
+    Target ``"*"`` acts on whole messages, and ``threshold`` measures each message. Any other
+    target acts on individual blocks, and ``threshold`` measures each block.
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
             window; a whole number above 1 fires at that many conversation tokens, and raises if it
             exceeds the model's context window.
-        threshold: Which blocks the strategy acts on. A whole number selects blocks larger than
-            that many tokens; ``"5%"`` selects blocks larger than 5% of the context window (10,000
+        threshold: How large content must be to act on. A whole number selects content larger than
+            that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
             tokens of a 200,000-token window).
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
             many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
@@ -189,6 +192,10 @@ def _tool_matches_target(
     return False
 
 
+def _is_media_block(block: ContentBlock) -> bool:
+    return any(key in block for key in _MEDIA_KEYS)
+
+
 def _target_matches_message(target: OffloadTarget | None, message: Message) -> bool:
     """Check if a message matches a text-level target."""
     if target is None or target == "*":
@@ -212,6 +219,8 @@ def _message_matches_target(
         return True
     if target is None:
         return False
+    if target == "media":
+        return any(_is_media_block(block) for block in message["content"])
 
     if message["role"] != "user":
         return False
@@ -396,7 +405,7 @@ class BaseOffloadStrategy(ABC):
 
         Raises:
             ValueError: If ``target`` is an empty list, a condition value is invalid, or a
-                message-level strategy has no ``utilization`` or ``preserve_recent``.
+                message-level strategy has no ``utilization``, ``threshold``, or ``preserve_recent``.
         """
         _validate_target(target)
         self._target = target
@@ -410,15 +419,20 @@ class BaseOffloadStrategy(ABC):
         self._preserve_recent = _parse_preserve_recent(conditions.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
-        if conditions_given and self._acts_on_messages and self._utilization is None and not self._preserves_recent:
+        if conditions_given and self._acts_on_messages and self._is_unconditional:
             method = self.name.removeprefix("offload:")
             raise ValueError(
-                f'Offload.{method}("*") without threshold acts on whole messages; set utilization or preserve_recent'
+                f'Offload.{method}("*") would act on every message; set utilization, threshold, or preserve_recent'
             )
 
     @property
     def _acts_on_messages(self) -> bool:
-        return self._target == "*" and self._threshold is None
+        return self._target == "*"
+
+    @property
+    def _is_unconditional(self) -> bool:
+        """Whether no condition narrows when or what the strategy acts on."""
+        return self._utilization is None and self._threshold is None and not self._preserves_recent
 
     @property
     def _preserves_recent(self) -> bool:
@@ -530,7 +544,7 @@ class BaseOffloadStrategy(ABC):
         if len(messages) <= 1:
             return False
 
-        eligible = self._get_eligible_messages(context)
+        eligible = await self._get_eligible_messages(context)
         if not eligible:
             return False
 
@@ -563,7 +577,9 @@ class BaseOffloadStrategy(ABC):
             return self._target is None or _tool_matches_target(
                 block, self._target, tool_name_map, self._include_filter, self._exclude_filter
             )
-        return self._target is None or self._target == "*"
+        if self._target is None or self._target == "*":
+            return True
+        return self._target == "media" and _is_media_block(block)
 
     async def _transform_blocks(
         self,
@@ -601,10 +617,11 @@ class BaseOffloadStrategy(ABC):
 
         return acted
 
-    def _get_eligible_messages(self, context: ContextState) -> list[Message]:
+    async def _get_eligible_messages(self, context: ContextState) -> list[Message]:
         """Collect the messages a message-level strategy may act on, oldest first.
 
-        Excludes message 0, pinned messages, and the matches ``preserve_recent`` keeps.
+        Excludes message 0, pinned messages, the matches ``preserve_recent`` keeps, and messages at
+        or under ``threshold``.
         """
         messages = context.messages
         tool_name_map = _build_tool_name_map(messages)
@@ -617,7 +634,12 @@ class BaseOffloadStrategy(ABC):
             self._exclude_filter,
         )
         index_map = {id(msg): i for i, msg in enumerate(messages)}
-        return [msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])]
+        eligible = [msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])]
+        if self._threshold is None:
+            return eligible
+
+        threshold = self._resolve_threshold(context.agent)
+        return [msg for msg in eligible if await context.agent.model.count_tokens([msg]) > threshold]
 
     @abstractmethod
     async def _replace_block(
@@ -664,8 +686,8 @@ class OffloadStrategyBuilder:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
                 window; a whole number above 1 fires at that many conversation tokens, and raises if it
                 exceeds the model's context window.
-            threshold: Which blocks the strategy acts on. A whole number selects blocks larger than
-                that many tokens; ``"5%"`` selects blocks larger than 5% of the context window (10,000
+            threshold: How large content must be to act on. A whole number selects content larger than
+                that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
                 tokens of a 200,000-token window).
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
                 many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
@@ -674,8 +696,8 @@ class OffloadStrategyBuilder:
             The configured strategy.
 
         Raises:
-            ValueError: If a condition value is invalid, or a target ``"*"`` strategy without
-                ``threshold`` has neither ``utilization`` nor ``preserve_recent``.
+            ValueError: If a condition value is invalid, or a target ``"*"`` strategy has none of
+                ``utilization``, ``threshold``, or ``preserve_recent``.
         """
         return self._factory(
             _build_conditions(utilization=utilization, threshold=threshold, preserve_recent=preserve_recent)

@@ -81,7 +81,7 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_summarizes_large_text_block(self, mock_agent):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("assistant_text").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
@@ -95,7 +95,7 @@ class TestSummarizeStrategyPerBlock:
     async def test_skips_when_no_model(self):
         agent = unittest.mock.MagicMock()
         agent.aux_model = None
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("assistant_text").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
@@ -129,7 +129,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_returns_none_when_summary_empty_for_text_block(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("assistant_text").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="x" * 10000)]),
@@ -140,7 +140,7 @@ class TestSummarizeStrategyPerBlock:
 
     @pytest.mark.asyncio
     async def test_replaces_media_block_with_marker(self, mock_agent):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -156,7 +156,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_falls_back_to_offloaded_when_media_summary_empty(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -200,7 +200,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_offloads_video_block_without_summarizing(self, mock_agent):
         mock_agent.model.stream = unittest.mock.Mock()
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
         ]
@@ -215,7 +215,7 @@ class TestSummarizeStrategyPerBlock:
     async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
         # guards against summarizer failures being hidden by a lossy retry (#5291)
         mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(threshold=100)
         messages: Messages = [
             Message(
                 role="user",

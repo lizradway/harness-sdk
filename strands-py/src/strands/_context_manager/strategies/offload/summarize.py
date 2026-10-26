@@ -67,7 +67,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if len(messages) <= 1:
             return False
 
-        runs = _contiguous_runs(_removable_indices(messages, self._get_eligible_messages(context)))
+        runs = _contiguous_runs(_removable_indices(messages, await self._get_eligible_messages(context)))
         summarized = False
         # Last run first so earlier indices stay valid as runs collapse.
         for run in reversed(runs):

@@ -67,7 +67,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         preview_tokens = _resolve_preview_tokens(self._truncate_config)
         threshold = (conditions or {}).get("threshold")
         # A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
-        if isinstance(threshold, int) and threshold <= preview_tokens:
+        if not self._acts_on_messages and isinstance(threshold, int) and threshold <= preview_tokens:
             raise ValueError(
                 f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges"
@@ -80,7 +80,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle."""
         messages = context.messages
         # Skipping earlier markers lets a pass with nothing new to elide return False instead of re-eliding them.
-        eligible = [msg for msg in self._get_eligible_messages(context) if not _has_elision_marker(msg)]
+        eligible = [msg for msg in await self._get_eligible_messages(context) if not _has_elision_marker(msg)]
         middle = await self._middle_of(eligible, context.agent)
         if not middle:
             return False

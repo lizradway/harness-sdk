@@ -289,11 +289,14 @@ class TestOffloadBuilder:
 
     @pytest.mark.parametrize("builder", [Offload.drop("*"), Offload.truncate("*"), Offload.summarize("*")])
     def test_rejects_eager_message_level(self, builder):
-        with pytest.raises(ValueError, match=r'\("\*"\) without threshold acts on whole messages'):
+        with pytest.raises(ValueError, match=r'\("\*"\) would act on every message'):
             builder.when()
 
-    def test_allows_eager_wildcard_with_threshold(self):
+    def test_allows_wildcard_with_only_threshold(self):
         assert Offload.drop("*").when(threshold=100).name == "offload:drop"
+
+    def test_truncate_wildcard_skips_preview_check(self):
+        assert Offload.truncate("*", {"preview_tokens": 1000}).when(threshold=500).name == "offload:truncate"
 
 
 class TestConditionParsing:
@@ -556,7 +559,7 @@ class TestDropStrategy:
 
     @pytest.mark.asyncio
     async def test_replaces_text_with_marker(self, mock_agent):
-        strategy = Offload.drop("*").when(threshold=100)
+        strategy = Offload.drop("assistant_text").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="x" * 10000)]),
@@ -570,7 +573,7 @@ class TestDropStrategy:
     @pytest.mark.asyncio
     async def test_skips_below_threshold(self, mock_agent):
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=50)
-        strategy = Offload.drop("*").when(threshold=100)
+        strategy = Offload.drop("assistant_text").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="short")]),
@@ -598,7 +601,7 @@ class TestTruncateStrategy:
 
     @pytest.mark.asyncio
     async def test_truncates_large_text_block(self, mock_agent):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("assistant_text", {"preview_tokens": 100}).when(threshold=200)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 50000)]),
@@ -799,7 +802,7 @@ class TestEagerHookRegistration:
 
     @pytest.mark.asyncio
     async def test_eager_hook_fires_and_transforms(self):
-        strategy = Offload.drop("*").when(threshold=100)
+        strategy = Offload.drop("assistant_text").when(threshold=100)
         agent = unittest.mock.MagicMock()
         agent.hooks = HookRegistry()
         agent.model = unittest.mock.AsyncMock()
@@ -819,6 +822,18 @@ class TestEagerHookRegistration:
 
 class TestBlockMatchesTarget:
     """Tests for _block_matches_target — non-text/non-tool blocks."""
+
+    def test_image_block_matches_media(self):
+        strategy = Offload.drop("media").when(threshold=100)
+        block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
+        message = Message(role="user", content=[ContentBlock(text="look"), block])
+        assert strategy._block_matches_target(block, message, {}) is True
+        assert strategy._block_matches_target(message["content"][0], message, {}) is False
+
+    def test_media_target_skips_media_inside_tool_results(self):
+        strategy = Offload.drop("media").when(threshold=100)
+        _, user_msg = _make_tool_pair()
+        assert strategy._block_matches_target(user_msg["content"][0], user_msg, {"tu-1": "my_tool"}) is False
 
     def test_image_block_matches_wildcard(self):
         strategy = Offload.drop("*").when(threshold=100)
@@ -896,9 +911,10 @@ class TestTransformBlocks:
 
 
 class TestGetEligibleMessages:
-    """Tests for _get_eligible_messages — preserve_recent filtering."""
+    """Tests for _get_eligible_messages — preserve_recent and threshold filtering."""
 
-    def test_preserve_recent_excludes_recent_matches(self, mock_agent):
+    @pytest.mark.asyncio
+    async def test_preserve_recent_excludes_recent_matches(self, mock_agent):
         strategy = Offload.drop("*").when(utilization=0.8, preserve_recent=1)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -907,9 +923,10 @@ class TestGetEligibleMessages:
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
-        assert strategy._get_eligible_messages(context) == [messages[1]]
+        assert await strategy._get_eligible_messages(context) == [messages[1]]
 
-    def test_no_preserve_recent_returns_all_candidates(self, mock_agent):
+    @pytest.mark.asyncio
+    async def test_no_preserve_recent_returns_all_candidates(self, mock_agent):
         strategy = Offload.drop("*").when(utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -918,7 +935,23 @@ class TestGetEligibleMessages:
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
-        assert len(strategy._get_eligible_messages(context)) == 2
+        assert len(await strategy._get_eligible_messages(context)) == 2
+
+    @pytest.mark.asyncio
+    async def test_threshold_excludes_messages_at_or_under_it(self, mock_agent):
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(
+            side_effect=lambda msgs: len(msgs[0]["content"][0]["text"])
+        )
+        strategy = Offload.drop("*").when(threshold=100)
+        messages: Messages = [
+            _text("user", "pin"),
+            _text("assistant", "x" * 101),
+            _text("user", "x" * 100),
+            _text("assistant", "x" * 500),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        assert await strategy._get_eligible_messages(context) == [messages[1], messages[3]]
 
 
 class TestGranularity:
@@ -943,14 +976,23 @@ class TestGranularity:
         assert any("[Dropped: " in block.get("text", "") for msg in messages for block in msg["content"])
 
     @pytest.mark.asyncio
-    async def test_wildcard_with_threshold_stubs_blocks(self, mock_agent):
+    async def test_wildcard_with_threshold_removes_only_large_messages(self, mock_agent):
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(
+            side_effect=lambda msgs: len(msgs[0]["content"][0]["text"])
+        )
         strategy = Offload.drop("*").when(utilization=0.8, threshold=100, preserve_recent=1)
-        messages = self._conversation()
+        messages: Messages = [
+            _text("user", "pin"),
+            _text("assistant", "x" * 500),
+            _text("user", "old question"),
+            _text("assistant", "recent answer"),
+        ]
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
-        assert len(messages) == 4
-        assert messages[1]["content"][0]["text"] == DROPPED_MARKER
-        assert messages[3]["content"][0]["text"] == "recent answer"
+        texts = [block.get("text", "") for msg in messages for block in msg["content"]]
+        assert "x" * 500 not in texts
+        assert "old question" in texts
+        assert "recent answer" in texts
 
     @pytest.mark.asyncio
     async def test_block_target_with_utilization_stubs_blocks(self, mock_agent):
