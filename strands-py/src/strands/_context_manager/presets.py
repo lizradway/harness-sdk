@@ -69,7 +69,7 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
         if isinstance(entry, OffloadStrategyBuilder):
             raise TypeError(
                 'Offload strategies need .when() before use, for example .when(utilization="80%"); '
-                'a target other than "*" can call .when() with no conditions to run on every new message'
+                'a target other than "*" or "media" can call .when() with no conditions to run on every new message'
             )
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
