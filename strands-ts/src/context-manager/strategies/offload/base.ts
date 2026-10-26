@@ -187,7 +187,7 @@ function parseNumber(raw: unknown, rule: ConditionRule): ParsedCondition | undef
 
 function validateConditionNames(conditions: OffloadConditions | undefined): void {
   for (const name of Object.keys(conditions ?? {})) {
-    if (!(name in CONDITION_RULES)) {
+    if (!Object.hasOwn(CONDITION_RULES, name)) {
       throw new Error(`unknown condition "${name}": expected utilization, threshold, or preserveRecent`)
     }
   }

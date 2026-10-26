@@ -1042,9 +1042,9 @@ describe('parseCondition', () => {
 })
 
 describe('condition resolution', () => {
-  it('rejects an unknown condition name', () => {
-    expect(() => Offload.drop('toolResults').when({ utilisation: 0.5 } as OffloadConditions)).toThrow(
-      'unknown condition "utilisation": expected utilization, threshold, or preserveRecent'
+  it.each(['utilisation', 'constructor', 'toString'])('rejects the unknown condition name %s', (name) => {
+    expect(() => Offload.drop('toolResults').when({ [name]: 0.5 } as OffloadConditions)).toThrow(
+      `unknown condition "${name}": expected utilization, threshold, or preserveRecent`
     )
   })
 
