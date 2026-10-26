@@ -12,6 +12,7 @@ import type { OffloadConditions, OffloadTarget, Percent } from '../offload/base.
 import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { ImageBlock } from '../../../types/media.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -505,76 +506,79 @@ describe('Offload message-level with role alternation', () => {
   })
 })
 
-describe('Offload with * target and threshold (acts on every block)', () => {
-  it('Offload.drop("*") with threshold 0 drops all content', async () => {
-    const assistantMsg = new Message({
-      role: 'assistant',
-      content: [new TextBlock('assistant text')],
-    })
-    const userMsg = new Message({
-      role: 'user',
-      content: [
-        new TextBlock('user text'),
-        new ToolResultBlock({
-          toolUseId: 'tool-1',
-          status: 'success',
-          content: [new TextBlock('tool output')],
-        }),
-      ],
-    })
-    const strategy = Offload.drop('*').when({ threshold: 0 })
-    const context = makeContext([assistantMsg, userMsg])
+describe('Offload with * target and threshold (acts on messages larger than threshold)', () => {
+  const LARGE = 'x'.repeat(2500 * 4 + 100)
 
-    const result = await strategy.apply(context)
+  it.each([
+    ['drop', Offload.drop('*')],
+    ['truncate', Offload.truncate('*')],
+    ['summarize', Offload.summarize('*')],
+  ])('Offload.%s("*") acts on large messages and keeps small ones', async (_, builder) => {
+    const messages = [
+      text('user', 'task'),
+      text('assistant', LARGE),
+      text('user', 'small question'),
+      text('assistant', LARGE),
+      text('user', 'next'),
+    ]
+
+    const result = await builder.when({ threshold: 2500 }).apply(makeContext(messages))
 
     expect(result).toBe(true)
-    expect((assistantMsg.content[0] as TextBlock).text).toBe('[Dropped]')
-    expect((userMsg.content[0] as TextBlock).text).toBe('[Dropped]')
-    const toolBlock = userMsg.content[1] as ToolResultBlock
-    expect((toolBlock.content[0] as TextBlock).text).toBe('[Dropped]')
-  })
-
-  it('Offload.truncate("*") with threshold truncates all large content', async () => {
-    const largeText = 'x'.repeat(2500 * 4 + 100)
-    const assistantMsg = new Message({
-      role: 'assistant',
-      content: [new TextBlock(largeText)],
-    })
-    const userMsg = new Message({
-      role: 'user',
-      content: [
-        new TextBlock(largeText),
-        new ToolResultBlock({
-          toolUseId: 'tool-1',
-          status: 'success',
-          content: [new TextBlock(largeText)],
-        }),
-      ],
-    })
-    const strategy = Offload.truncate('*').when({ threshold: 2500 })
-    const context = makeContext([assistantMsg, userMsg])
-
-    const result = await strategy.apply(context)
-
-    expect(result).toBe(true)
-    expect((assistantMsg.content[0] as TextBlock).text).toContain('[Truncated:')
-    expect((userMsg.content[0] as TextBlock).text).toContain('[Truncated:')
-    const toolBlock = userMsg.content[1] as ToolResultBlock
-    expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
+    const texts = textsOf(messages).flat()
+    expect(texts).not.toContain(LARGE)
+    expect(texts).toContain('small question')
+    expect(texts).toContain('next')
   })
 
   it('Offload.truncate("*") with threshold skips small content', async () => {
-    const smallText = 'short'
-    const assistantMsg = new Message({
-      role: 'assistant',
-      content: [new TextBlock(smallText)],
-    })
+    const messages = [text('user', 'task'), text('assistant', 'short'), text('user', 'next')]
     const strategy = Offload.truncate('*').when({ threshold: 2500 })
-    const context = makeContext([assistantMsg])
 
-    const result = await strategy.apply(context)
+    const result = await strategy.apply(makeContext(messages))
 
     expect(result).toBe(false)
+  })
+
+  it('Offload.truncate("*") accepts a threshold at or below previewTokens', () => {
+    expect(() => Offload.truncate('*', { previewTokens: 1000 }).when({ threshold: 500 })).not.toThrow()
+  })
+})
+
+describe('Offload with media target', () => {
+  function withImage(): Message {
+    return new Message({
+      role: 'user',
+      content: [
+        new TextBlock('look at this'),
+        new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } }),
+        new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('x'.repeat(4000))] }),
+      ],
+    })
+  }
+
+  it('drops media blocks and leaves text and tool results alone', async () => {
+    const message = withImage()
+
+    const result = await Offload.drop('media')
+      .when({ threshold: 10 })
+      .apply(makeContext([message]))
+
+    expect(result).toBe(true)
+    expect(message.content[0]).toEqual(new TextBlock('look at this'))
+    expect((message.content[1] as TextBlock).text).toBe('[Dropped]')
+    expect(message.content[2]).toEqual(withImage().content[2])
+  })
+
+  it('preserveRecent counts only messages with media', async () => {
+    const older = withImage()
+    const newer = withImage()
+    const messages = [text('user', 'task'), older, text('assistant', 'a'), newer, text('assistant', 'b')]
+
+    await Offload.drop('media').when({ preserveRecent: 1 }).apply(makeContext(messages))
+
+    expect((older.content[1] as TextBlock).text).toBe('[Dropped]')
+    expect(newer.content[1]).toBeInstanceOf(ImageBlock)
   })
 })
 
@@ -1036,10 +1040,10 @@ describe('granularity', () => {
     it.each([
       ['*', { utilization: 0.5 }, 0.9, 'messages'],
       ['*', { preserveRecent: 1 }, 0, 'messages'],
-      ['*', { threshold: 200, utilization: 0.5 }, 0.9, [1, 2, 3, 4]],
+      ['*', { threshold: 200, utilization: 0.5 }, 0.9, 'large messages'],
       ['assistantText', { utilization: 0.5 }, 0.9, [1, 3]],
       ['assistantText', { utilization: 0.5 }, 0.1, 'nothing'],
-    ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'nothing' | number[]][])(
+    ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'large messages' | 'nothing' | number[]][])(
       'target=%j with %j at utilization %s acts on %j',
       async (target, conditions, utilization, outcome) => {
         const messages = history()
@@ -1051,9 +1055,10 @@ describe('granularity', () => {
           return
         }
         expect(acted).toBe(true)
-        if (outcome === 'messages') {
+        if (outcome === 'messages' || outcome === 'large messages') {
           expect(messages.length).toBeLessThan(history().length)
           expect(textsOf(messages).flat().join('\n')).toContain(MESSAGE_MARKERS[method])
+          if (outcome === 'large messages') expect(textsOf(messages).flat()).toContain('end')
           return
         }
         expect(messages).toHaveLength(history().length)
@@ -1084,7 +1089,7 @@ describe('whole-message conditions', () => {
   ] as const)('Offload.%s("*")', (method, builder) => {
     it.each([{}, { preserveRecent: 0 }] as OffloadConditions[])('rejects %j', (conditions) => {
       expect(() => builder().when(conditions)).toThrow(
-        `Offload.${method}("*") without threshold acts on whole messages; set utilization or preserveRecent`
+        `Offload.${method}("*") would act on every message; set utilization, threshold, or preserveRecent`
       )
     })
 

@@ -38,7 +38,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
     const threshold = this._threshold
     // A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
-    if (threshold && !threshold.isShare && threshold.value <= this._previewTokens) {
+    if (!this._actsOnMessages && threshold && !threshold.isShare && threshold.value <= this._previewTokens) {
       throw new Error(
         `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges`
       )
@@ -55,7 +55,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     if (messages.length <= 1) return false
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
-    const eligible = this._getEligibleMessages(context).filter((message) => !hasElisionMarker(message))
+    const eligible = (await this._getEligibleMessages(context)).filter((message) => !hasElisionMarker(message))
     const middle = await this._selectMiddle(eligible, context.agent)
     if (middle.length === 0) return false
 

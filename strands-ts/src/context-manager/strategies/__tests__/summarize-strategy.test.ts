@@ -297,7 +297,7 @@ describe('summarizer errors', () => {
         content: [new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array(4000) } })],
       }),
     ]
-    const strategy = Offload.summarize('*', { model: new MockMessageModel() }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({ threshold: 10 })
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
@@ -317,7 +317,7 @@ describe('summarizer errors', () => {
         content: [new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } })],
       }),
     ]
-    const strategy = Offload.summarize('*', { model: new MockMessageModel() }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model: new MockMessageModel() }).when({ threshold: 10 })
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 

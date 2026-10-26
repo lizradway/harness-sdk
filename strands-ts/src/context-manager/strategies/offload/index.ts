@@ -47,8 +47,8 @@ interface OffloadNamespace {
 /**
  * Builder for offload strategies — reduces content in the context window.
  *
- * Target `'*'` without `threshold` acts on whole messages; any other target, or a set `threshold`,
- * acts on each block. `utilization` only gates when the strategy fires.
+ * Target `'*'` acts on whole messages; any other target acts on each block. `threshold` measures whichever the
+ * target acts on, and `utilization` only gates when the strategy fires.
  *
  * @example
  * ```typescript
@@ -60,6 +60,8 @@ interface OffloadNamespace {
  * Offload.summarize("*").when({ utilization: "70%", preserveRecent: 4 })
  * // Per-block: drop each failed tool result over 500 tokens
  * Offload.drop("toolResultErrors").when({ threshold: 500 })
+ * // Messages: at 90% utilization, summarize messages over 2000 tokens, keeping the newest 4
+ * Offload.summarize("*").when({ utilization: "90%", threshold: 2000, preserveRecent: 4 })
  * ```
  */
 export const Offload: OffloadNamespace = {

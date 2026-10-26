@@ -13,6 +13,7 @@ import {
   ReasoningBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
@@ -29,12 +30,13 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
  * - `"toolResultErrors"` — all failed tool result blocks
  * - `"assistantText"` — text blocks in assistant messages
  * - `"userText"` — text blocks in user messages (excluding tool results)
+ * - `"media"` — image, document, video, and audio blocks outside tool results
  * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
- * - `"*"` — all content in the context window (tool results + text blocks)
+ * - `"*"` — whole messages
  *
  * @experimental
  */
-export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
+export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | 'media' | string[]
 
 /**
  * A share of a whole, written as a percent string such as `'70%'` or `'12.5%'`.
@@ -48,14 +50,15 @@ export type Percent = `${number}%`
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
  *   above 1 fires at that many conversation tokens, and throws if it exceeds the model's context window.
- * - `threshold` sets which blocks it acts on. A whole number selects blocks larger than that many tokens; `'5%'`
- *   selects blocks larger than 5% of the context window (10,000 tokens of a 200,000-token window).
+ * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
+ *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
  *   `'70%'` or `0.7` keeps the newest 70% of them.
  *
- * Granularity: target `'*'` without `threshold` acts on whole messages (drop removes them, truncate elides the
- * middle, summarize merges each contiguous run). Any other target, or a set `threshold`, acts on each block.
- * `utilization` only gates when the strategy fires, and `preserveRecent` only protects the newest matching messages.
+ * Granularity: target `'*'` acts on whole messages (drop removes them, truncate elides the middle, summarize merges
+ * each contiguous run), and `threshold` measures each message. Any other target acts on each block, and `threshold`
+ * measures each block. `utilization` only gates when the strategy fires, and `preserveRecent` only protects the newest
+ * matching messages.
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
  * strategy's threshold and gets skipped.
@@ -66,7 +69,7 @@ export interface OffloadConditions {
   /** Context usage at or above which the strategy fires, as conversation tokens or a share of the context window. */
   utilization?: number | Percent
 
-  /** Size above which an individual block is offloaded, as tokens or a share of the context window. */
+  /** Size above which a message (target `'*'`) or block is offloaded, as tokens or a share of the context window. */
   threshold?: number | Percent
 
   /** How many of the most recent matching messages to leave untouched, as a count or a share. */
@@ -231,6 +234,15 @@ export function toolMatchesTarget(
   return false
 }
 
+function isMediaBlock(block: ContentBlock): boolean {
+  return (
+    block instanceof ImageBlock ||
+    block instanceof DocumentBlock ||
+    block instanceof VideoBlock ||
+    block instanceof AudioBlock
+  )
+}
+
 export function targetMatchesMessage(target: OffloadTarget | undefined, message: Message): boolean {
   if (target === undefined || target === '*') return true
   if (target === 'assistantText')
@@ -248,6 +260,7 @@ export function messageMatchesTarget(
 ): boolean {
   if (targetMatchesMessage(target, message)) return true
   if (!target) return false
+  if (target === 'media') return message.content.some(isMediaBlock)
 
   // Tool result targets — must be a user message with a matching tool result
   if (message.role !== 'user') return false
@@ -449,8 +462,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    * @param name - Strategy name, `offload:<method>`
    * @param target - Content the strategy acts on
    * @param conditions - When and how the strategy fires; omitted only by internal strategies
-   * @throws Error when the target is empty, a condition value is invalid, or a whole-message strategy has neither
-   *   `utilization` nor `preserveRecent`
+   * @throws Error when the target is empty, a condition value is invalid, or a whole-message strategy has none of
+   *   `utilization`, `threshold`, or `preserveRecent`
    */
   constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
     validateTarget(target)
@@ -465,17 +478,22 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this._includeFilter = resolved.include
     this._excludeFilter = resolved.exclude
 
-    if (conditions && this._actsOnMessages && this._utilization === undefined && this._preserveRecent.value === 0) {
+    if (conditions && this._actsOnMessages && this._isUnconditional) {
       const method = name.slice(name.indexOf(':') + 1)
       throw new Error(
-        `Offload.${method}("*") without threshold acts on whole messages; set utilization or preserveRecent`
+        `Offload.${method}("*") would act on every message; set utilization, threshold, or preserveRecent`
       )
     }
   }
 
   /** Whether this strategy acts on whole messages rather than individual blocks. */
   protected get _actsOnMessages(): boolean {
-    return this._target === '*' && this._threshold === undefined
+    return this._target === '*'
+  }
+
+  /** Whether no condition narrows when or what the strategy acts on. */
+  private get _isUnconditional(): boolean {
+    return this._utilization === undefined && this._threshold === undefined && this._preserveRecent.value === 0
   }
 
   /** Whether the eager hook processes each message as it arrives. */
@@ -567,7 +585,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
-    const eligible = this._getEligibleMessages(context)
+    const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
     const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
@@ -601,7 +619,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       )
     }
     if (this._target === '*' || this._target === undefined) return true
-    return false
+    return this._target === 'media' && isMediaBlock(block)
   }
 
   /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens. */
@@ -631,15 +649,26 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Messages outside `preserveRecent`, excluding message 0 and pinned messages, in history order. */
-  protected _getEligibleMessages(context: ContextState): Message[] {
-    const { messages } = context
+  /**
+   * Messages outside `preserveRecent` and larger than `threshold`, excluding message 0 and pinned messages, in
+   * history order.
+   */
+  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
+    const { messages, agent } = context
     const candidates =
       this._preserveRecent.value > 0 ? this._oldestMatches(messages, buildToolNameMap(messages)) : messages
-    return candidates.filter((message) => {
+    const eligible = candidates.filter((message) => {
       const index = messages.indexOf(message)
       return index > 0 && !isPinned(messages, index)
     })
+    if (this._threshold === undefined) return eligible
+
+    const threshold = this._resolveThreshold(agent)
+    const larger: Message[] = []
+    for (const message of eligible) {
+      if ((await agent.model.countTokens([message])) > threshold) larger.push(message)
+    }
+    return larger
   }
 
   private _oldestMatches(messages: Message[], toolNameMap: Map<string, string>): Message[] {

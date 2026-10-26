@@ -54,7 +54,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
-    const runs = splitIntoRuns(indicesWithPairs(messages, this._getEligibleMessages(context)))
+    const runs = splitIntoRuns(indicesWithPairs(messages, await this._getEligibleMessages(context)))
     let acted = false
     for (const run of runs.reverse()) {
       if (await this._summarizeRun(messages, run, model, context.invocationContext)) acted = true
