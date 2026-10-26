@@ -995,6 +995,25 @@ class TestGranularity:
         assert "recent answer" in texts
 
     @pytest.mark.asyncio
+    async def test_truncate_wildcard_with_threshold_shortens_large_messages_in_place(self, mock_agent):
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(
+            side_effect=lambda msgs: len(msgs[0]["content"][0]["text"])
+        )
+        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        messages: Messages = [
+            _text("user", "pin"),
+            _text("assistant", "x" * 500),
+            _text("user", "old question"),
+            _text("assistant", "y" * 500),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        assert await strategy.apply(context) is True
+        assert len(messages) == 4
+        assert messages[1]["content"][0]["text"].startswith("[Truncated:")
+        assert messages[2]["content"][0]["text"] == "old question"
+        assert messages[3]["content"][0]["text"] == "y" * 500
+
+    @pytest.mark.asyncio
     async def test_block_target_with_utilization_stubs_blocks(self, mock_agent):
         strategy = Offload.drop("assistant_text").when(utilization=0.8)
         messages = self._conversation()

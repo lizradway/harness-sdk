@@ -21,6 +21,7 @@ from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
     OffloadTarget,
+    _build_tool_name_map,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -77,7 +78,12 @@ class TruncateStrategy(BaseOffloadStrategy):
         return _resolve_preview_tokens(self._truncate_config)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle."""
+        """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle.
+
+        With a ``threshold``, shortens each eligible message in place instead.
+        """
+        if self._threshold is not None:
+            return await self._shorten_each(context)
         messages = context.messages
         # Skipping earlier markers lets a pass with nothing new to elide return False instead of re-eliding them.
         eligible = [msg for msg in await self._get_eligible_messages(context) if not _has_elision_marker(msg)]
@@ -92,6 +98,19 @@ class TruncateStrategy(BaseOffloadStrategy):
         _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
         _repair_alternation(messages)
         return True
+
+    async def _shorten_each(self, context: ContextState) -> bool:
+        """Preview each block over ``preview_tokens`` in the eligible messages, leaving the newest message alone."""
+        messages = context.messages
+        tool_name_map = _build_tool_name_map(messages)
+        preview_tokens = _resolve_preview_tokens(self._truncate_config)
+        acted = False
+        for message in await self._get_eligible_messages(context):
+            if message is messages[-1]:
+                continue
+            if await self._transform_blocks(message, messages, tool_name_map, context.agent, threshold=preview_tokens):
+                acted = True
+        return acted
 
     async def _middle_of(self, eligible: list[Message], agent: Agent) -> list[Message]:
         preview_tokens = _resolve_preview_tokens(self._truncate_config)

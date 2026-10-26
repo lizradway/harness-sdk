@@ -38,8 +38,10 @@ class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and on what an offload strategy acts.
 
     A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
-    Target ``"*"`` acts on whole messages, and ``threshold`` measures each message. Any other
-    target acts on individual blocks, and ``threshold`` measures each block.
+    Target ``"*"`` acts on whole messages, and ``threshold`` measures each message. Drop removes
+    them, summarize merges each contiguous run, and truncate elides the middle or, with a
+    ``threshold``, shortens each one. Any other target acts on individual blocks, and
+    ``threshold`` measures each block.
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
@@ -588,9 +590,10 @@ class BaseOffloadStrategy(ABC):
         tool_name_map: dict[str, str],
         agent: Agent,
         invocation_context: InvocationContext | None = None,
+        threshold: int | None = None,
     ) -> bool:
-        """Process eligible blocks in a message."""
-        effective_threshold = self._resolve_threshold(agent)
+        """Process eligible blocks in a message larger than ``threshold``, or the resolved threshold if unset."""
+        effective_threshold = self._resolve_threshold(agent) if threshold is None else threshold
         acted = False
         content = message["content"]
         for block_index in range(len(content)):
