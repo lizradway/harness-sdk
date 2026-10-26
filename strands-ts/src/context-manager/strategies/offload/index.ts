@@ -64,6 +64,8 @@ interface OffloadNamespace {
  * Offload.drop("toolResults").when({})
  * // Per-block, gated: at 80% utilization, drop older tool results, keeping the newest 5
  * Offload.drop("toolResults").when({ utilization: "80%", preserveRecent: 5 })
+ * // Per-block, gated: at 80% utilization, drop older images, documents, video, and audio, keeping the newest
+ * Offload.drop("media").when({ utilization: "80%", preserveRecent: 1 })
  * // Messages: once the window is full, drop the oldest messages, keeping the newest 70%
  * Offload.drop("*").when({ utilization: "100%", preserveRecent: "70%" })
  * // Messages: at 90% utilization, summarize messages over 2000 tokens, keeping the newest 4

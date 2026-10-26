@@ -78,21 +78,21 @@ export interface OffloadConditions {
 
   /**
    * Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the
-   * context window. Unset, content of any size is offloaded.
+   * context window. Unset, there is no size check. Media the token count can't measure always passes.
    */
   threshold?: number | Percent
 
   /**
-   * Newest matching messages never touched: a count, or `'70%'` / `0.7` of the matches, rounded up so a share always
+   * Newest matching messages never touched: a count, or `'70%'` / `0.7` of the matches, rounded up so a share above 0
    * keeps at least one.
    */
   preserveRecent?: number | Percent
 }
 
 /**
- * Result of `Offload.drop/truncate/summarize`. Call `.when()` to get a strategy; pass `{}` to run on every new
- * message as it arrives, before the model sees it. A strategy keeps per-agent state, so give each agent its own: call
- * `.when()` once per agent.
+ * Result of `Offload.drop/truncate/summarize`. Call `.when()` to get a strategy. For targets other than `'*'` and
+ * `'media'`, pass `{}` to act on each message as it arrives, including the one the model answers next. A strategy keeps
+ * per-agent state, so give each agent its own: call `.when()` once per agent.
  *
  * @experimental
  */
@@ -708,7 +708,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      if (threshold !== undefined && tokens <= threshold) continue
+      // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
+      if (threshold !== undefined && tokens <= threshold && !(tokens === 0 && isMediaBlock(block))) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
       const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
@@ -735,11 +736,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const threshold = this._resolveThreshold(agent)
     if (threshold === undefined) return eligible
 
-    const larger: Message[] = []
-    for (const message of eligible) {
-      if ((await agent.model.countTokens([message])) > threshold) larger.push(message)
-    }
-    return larger
+    const sizes = await Promise.all(eligible.map((message) => agent.model.countTokens([message])))
+    return eligible.filter((_message, index) => sizes[index]! > threshold)
   }
 
   private _oldestMatches(messages: Message[], toolNameMap: Map<string, string>): Message[] {

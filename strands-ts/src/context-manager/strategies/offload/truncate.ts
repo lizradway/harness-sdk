@@ -61,7 +61,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 
   private _checkThresholdExceedsPreview(tokens: number, shown: string): void {
-    if (this._actsOnMessages || tokens > this._previewTokens) return
+    if (tokens > this._previewTokens) return
     throw new Error(
       `threshold (${shown}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise threshold or lower previewTokens`
     )

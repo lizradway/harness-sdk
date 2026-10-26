@@ -572,8 +572,10 @@ describe('Offload with * target and threshold (acts on messages larger than thre
     expect(result).toBe(false)
   })
 
-  it('Offload.truncate("*") accepts a threshold at or below previewTokens', () => {
-    expect(() => Offload.truncate('*', { previewTokens: 1000 }).when({ threshold: 500 })).not.toThrow()
+  it('Offload.truncate("*") rejects a threshold at or below previewTokens', () => {
+    expect(() => Offload.truncate('*', { previewTokens: 1000 }).when({ threshold: 500 })).toThrow(
+      'threshold (500) must be greater than previewTokens (1000) to ensure truncation converges'
+    )
   })
 })
 
@@ -613,7 +615,7 @@ describe('Offload with media target', () => {
     expect(newer.content[1]).toBeInstanceOf(ImageBlock)
   })
 
-  describe('without a threshold, under the model token heuristic that counts media as 0 tokens', () => {
+  describe('under the model token heuristic that counts media as 0 tokens', () => {
     function withHeuristicModel(messages: Message[]): ContextState {
       const agent = createMockAgent({
         messages,
@@ -622,20 +624,23 @@ describe('Offload with media target', () => {
       return { messages, agent, utilization: 0.5 }
     }
 
-    it('drops the media', async () => {
-      const message = withImage()
+    it.each([{ utilization: '50%' }, { utilization: '50%', threshold: 1000 }] as OffloadConditions[])(
+      'drops the media with %j',
+      async (conditions) => {
+        const message = withImage()
 
-      expect(
-        await Offload.drop('media')
-          .when({ utilization: '50%' })
-          .apply(withHeuristicModel([text('user', 'task'), message, text('assistant', 'b')]))
-      ).toBe(true)
-      expect(message.content).toEqual([
-        new TextBlock('look at this'),
-        new TextBlock('[Dropped: image, removed from context after it was viewed]'),
-        withImage().content[2],
-      ])
-    })
+        expect(
+          await Offload.drop('media')
+            .when(conditions)
+            .apply(withHeuristicModel([text('user', 'task'), message, text('assistant', 'b')]))
+        ).toBe(true)
+        expect(message.content).toEqual([
+          new TextBlock('look at this'),
+          new TextBlock('[Dropped: image, removed from context after it was viewed]'),
+          withImage().content[2],
+        ])
+      }
+    )
 
     it('offloads the media with a marker that leaves out the unmeasured size', async () => {
       const message = withImage()
