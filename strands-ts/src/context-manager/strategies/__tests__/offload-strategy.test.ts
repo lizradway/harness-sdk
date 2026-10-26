@@ -1067,17 +1067,18 @@ describe('condition resolution', () => {
     )
   })
 
-  it('rejects a utilization token count larger than the default context window on init', () => {
-    const strategy = Offload.drop('*').when({ utilization: 200_001 })
+  it('rejects a utilization token count on init when the model has no context window', () => {
+    const strategy = Offload.drop('*').when({ utilization: 50_000 })
     expect(() => strategy.init!(makeContext([], 0.5).agent)).toThrow(
-      "utilization (200001) is larger than the model's context window (200000 tokens)"
+      'utilization (50000) is a token count but the model has no contextWindowLimit'
     )
   })
 
   it.each([
     [100_000, 100_000],
     [100_000, '100%'],
-    [undefined, 200_000],
+    [undefined, '80%'],
+    [undefined, 0.8],
   ] as [number | undefined, number | Percent][])(
     'inits with a %s-token window and utilization %s',
     (contextWindowLimit, utilization) => {

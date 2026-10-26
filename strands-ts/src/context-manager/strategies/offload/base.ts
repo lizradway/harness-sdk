@@ -49,7 +49,8 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
- *   above 1 fires at that many conversation tokens, and throws if it exceeds the model's context window.
+ *   above 1 fires at that many conversation tokens, and throws if the model has no `contextWindowLimit` or the count
+ *   exceeds it.
  * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
  *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
@@ -71,7 +72,7 @@ export type Percent = `${number}%`
 export interface OffloadConditions {
   /**
    * Context usage at or above which the strategy fires: `'80%'` or `0.8` for a share of the context window, or a whole
-   * number above 1 for conversation tokens, at most the context window. `1` is 100%.
+   * number above 1 for conversation tokens, at most the model's `contextWindowLimit`. `1` is 100%.
    */
   utilization?: number | Percent
 
@@ -556,7 +557,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    *
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
-   * @throws Error when `utilization` is a token count larger than the model's context window
+   * @throws Error when `utilization` is a token count and the model has no `contextWindowLimit`, or the count is
+   *   larger than it
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
@@ -581,7 +583,12 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   private _checkUtilizationFits(agent: LocalAgent): void {
     const utilization = this._utilization
     if (!utilization || utilization.isShare) return
-    const limit = effectiveWindowLimit(agent)
+    const limit = agent.model.getConfig().contextWindowLimit
+    if (!limit) {
+      throw new Error(
+        `utilization (${utilization.value}) is a token count but the model has no contextWindowLimit; set contextWindowLimit on the model or use a "N%" share`
+      )
+    }
     if (utilization.value <= limit) return
     throw new Error(
       `utilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
