@@ -40,10 +40,11 @@ class OffloadConditions(TypedDict, total=False):
 
     Attributes:
         utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-            window; a whole number above 1 fires at that many conversation tokens, up to the
-            model's context window.
-        threshold: Which blocks the strategy acts on. A whole number selects blocks over
-            that many tokens; ``"5%"`` selects blocks over 5% of the context window.
+            window; a whole number above 1 fires at that many conversation tokens, and raises if it
+            exceeds the model's context window.
+        threshold: Which blocks the strategy acts on. A whole number selects blocks larger than
+            that many tokens; ``"5%"`` selects blocks larger than 5% of the context window (10,000
+            tokens of a 200,000-token window).
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
             many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
     """
@@ -661,10 +662,11 @@ class OffloadStrategyBuilder:
 
         Args:
             utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-                window; a whole number above 1 fires at that many conversation tokens, up to the
-                model's context window.
-            threshold: Which blocks the strategy acts on. A whole number selects blocks over
-                that many tokens; ``"5%"`` selects blocks over 5% of the context window.
+                window; a whole number above 1 fires at that many conversation tokens, and raises if it
+                exceeds the model's context window.
+            threshold: Which blocks the strategy acts on. A whole number selects blocks larger than
+                that many tokens; ``"5%"`` selects blocks larger than 5% of the context window (10,000
+                tokens of a 200,000-token window).
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
                 many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
 
