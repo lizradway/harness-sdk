@@ -47,20 +47,20 @@ class OffloadConditions(TypedDict, total=False):
     ``threshold`` measures each block.
 
     Attributes:
-        utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-            window; a whole number of 1,000 or more fires at that many conversation tokens, and raises if it
-            exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
+        utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
+            whole number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds
+            the model's ``context_window_limit``. Unset, the strategy runs before every model
             call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
         threshold: How large content must be to act on. A whole number selects content larger than
             that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
             tokens of a 200,000-token window). Media the token count can't measure always passes.
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
-            many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
+            many of the newest; ``"70%"`` keeps the newest 70% of them.
     """
 
-    utilization: float | str
+    utilization: int | str
     threshold: int | str
-    preserve_recent: int | float | str
+    preserve_recent: int | str
 
 
 @dataclass(frozen=True)
@@ -78,73 +78,56 @@ class _Measure:
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
 # Smaller whole numbers are almost always a percent written without "%", like utilization=80.
 _MIN_UTILIZATION_TOKENS = 1000
-_UTILIZATION_FORMS = (
-    f'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count of at least {_MIN_UTILIZATION_TOKENS}'
-)
-_THRESHOLD_FORMS = 'a whole token count above 0 or a "N%" string below "100%"'
-_PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
 
 
-def _invalid_condition(name: str, value: object, forms: str) -> ValueError:
-    return ValueError(f"{name}={value!r} is invalid: expected {forms}")
+@dataclass(frozen=True)
+class _ConditionRule:
+    """The values a condition accepts: a ``"N%"`` share and a whole-number count."""
+
+    percent_in_range: Callable[[float], bool]
+    min_count: int
+    forms: str
 
 
-def _percent_share(value: str) -> float | None:
-    match = _PERCENT_PATTERN.fullmatch(value)
-    return float(match.group(1)) / 100 if match else None
+_CONDITION_RULES = {
+    "utilization": _ConditionRule(
+        lambda percent: 0 < percent <= 100,
+        _MIN_UTILIZATION_TOKENS,
+        f'a "N%" string up to "100%" or a whole token count of at least {_MIN_UTILIZATION_TOKENS}',
+    ),
+    "threshold": _ConditionRule(
+        lambda percent: 0 < percent < 100, 1, 'a "N%" string below "100%" or a whole token count above 0'
+    ),
+    "preserve_recent": _ConditionRule(
+        lambda percent: 0 <= percent < 100, 0, 'a "N%" string below "100%" or a whole message count'
+    ),
+}
 
 
-def _parse_utilization(value: int | float | str) -> _Measure:
-    if isinstance(value, str):
-        share = _percent_share(value)
-        if share is None or not 0 < share <= 1:
-            raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
-        return _Measure(share, is_share=True)
-    if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
-        raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
-    if value <= 1:
-        return _Measure(float(value), is_share=True)
-    if isinstance(value, float):
-        raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
-    if value < _MIN_UTILIZATION_TOKENS:
-        hint = f'; for {value}% of the context window, write "{value}%"' if value <= 100 else ""
-        raise ValueError(
-            f"utilization={value!r} is invalid: a token count must be at least {_MIN_UTILIZATION_TOKENS}{hint}"
-        )
-    return _Measure(float(value), is_share=False)
+def _parse_condition(name: str, value: object) -> _Measure:
+    """Parse a condition value: a ``"N%"`` string is a share, and a whole number is a count."""
+    rule = _CONDITION_RULES[name]
+    match = _PERCENT_PATTERN.fullmatch(value) if isinstance(value, str) else None
+    if match and rule.percent_in_range(float(match.group(1))):
+        return _Measure(float(match.group(1)) / 100, is_share=True)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= rule.min_count:
+        return _Measure(float(value), is_share=False)
+    raise ValueError(f"{name}={value!r} is invalid: expected {rule.forms}{_percent_hint(value)}")
 
 
-def _parse_threshold(value: int | str) -> _Measure:
-    if isinstance(value, str):
-        share = _percent_share(value)
-        if share is None or not 0 < share < 1:
-            raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
-        return _Measure(share, is_share=True)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
-    return _Measure(float(value), is_share=False)
-
-
-def _parse_preserve_recent(value: int | float | str) -> _Measure:
-    if isinstance(value, str):
-        share = _percent_share(value)
-        if share is None or not 0 <= share < 1:
-            raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
-        return _Measure(share, is_share=True)
-    if isinstance(value, bool) or not math.isfinite(value) or value < 0:
-        raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
-    if isinstance(value, float):
-        if value >= 1:
-            raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
-        return _Measure(value, is_share=True)
-    return _Measure(float(value), is_share=False)
+def _percent_hint(value: object) -> str:
+    """Suggest the ``"N%"`` spelling for a rejected number that reads as a share or a percent."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 100:
+        return ""
+    percent = value * 100 if value <= 1 else value
+    return f'; for {percent:g}%, write "{percent:g}%"'
 
 
 def _build_conditions(
     *,
-    utilization: float | str | None = None,
+    utilization: int | str | None = None,
     threshold: int | str | None = None,
-    preserve_recent: int | float | str = 0,
+    preserve_recent: int | str = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
@@ -440,9 +423,9 @@ class BaseOffloadStrategy(ABC):
         conditions = conditions or {}
         utilization = conditions.get("utilization")
         threshold = conditions.get("threshold")
-        self._utilization = _parse_utilization(utilization) if utilization is not None else None
-        self._threshold = _parse_threshold(threshold) if threshold is not None else None
-        self._preserve_recent = _parse_preserve_recent(conditions.get("preserve_recent", 0))
+        self._utilization = _parse_condition("utilization", utilization) if utilization is not None else None
+        self._threshold = _parse_condition("threshold", threshold) if threshold is not None else None
+        self._preserve_recent = _parse_condition("preserve_recent", conditions.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
         if not conditions_given:
@@ -722,9 +705,9 @@ class OffloadStrategyBuilder:
     def when(
         self,
         *,
-        utilization: float | str | None = None,
+        utilization: int | str | None = None,
         threshold: int | str | None = None,
-        preserve_recent: int | float | str = 0,
+        preserve_recent: int | str = 0,
     ) -> ContextStrategy:
         """Return the strategy with these conditions.
 
@@ -732,15 +715,15 @@ class OffloadStrategyBuilder:
         arrives, including the one the model answers next.
 
         Args:
-            utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
-                window; a whole number of 1,000 or more fires at that many conversation tokens, and raises if it
-                exceeds the model's ``context_window_limit``. Unset, the strategy runs before every model
+            utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
+                whole number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds
+                the model's ``context_window_limit``. Unset, the strategy runs before every model
                 call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
             threshold: How large content must be to act on. A whole number selects content larger than
                 that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
                 tokens of a 200,000-token window). Media the token count can't measure always passes.
             preserve_recent: Matching messages the strategy never touches. A whole number keeps that
-                many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
+                many of the newest; ``"70%"`` keeps the newest 70% of them.
 
         Returns:
             The configured strategy.

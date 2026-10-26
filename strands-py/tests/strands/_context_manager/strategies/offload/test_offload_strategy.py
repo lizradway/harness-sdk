@@ -276,7 +276,7 @@ class TestOffloadBuilder:
         assert strategy._threshold == _Measure(2000, is_share=False)
 
     def test_when_with_utilization(self):
-        strategy = Offload.drop("*").when(utilization=0.85)
+        strategy = Offload.drop("*").when(utilization="85%")
         assert strategy._utilization == _Measure(0.85, is_share=True)
 
     def test_truncate_validates_threshold_gt_preview(self):
@@ -330,14 +330,12 @@ class TestConditionParsing:
     @pytest.mark.parametrize(
         ("name", "value", "expected"),
         [
-            ("utilization", 0.5, _Measure(0.5, is_share=True)),
             ("utilization", "70%", _Measure(0.7, is_share=True)),
             ("utilization", 50_000, _Measure(50_000, is_share=False)),
             ("utilization", 1000, _Measure(1000, is_share=False)),
             ("threshold", 2500, _Measure(2500, is_share=False)),
             ("threshold", "5%", _Measure(0.05, is_share=True)),
             ("preserve_recent", 4, _Measure(4, is_share=False)),
-            ("preserve_recent", 0.5, _Measure(0.5, is_share=True)),
             ("preserve_recent", "50%", _Measure(0.5, is_share=True)),
         ],
     )
@@ -349,6 +347,8 @@ class TestConditionParsing:
         ("name", "value"),
         [
             ("utilization", 0),
+            ("utilization", 0.5),
+            ("utilization", 1),
             ("utilization", 1.5),
             ("utilization", "101%"),
             ("utilization", "70"),
@@ -356,6 +356,7 @@ class TestConditionParsing:
             ("threshold", -1),
             ("threshold", 0.5),
             ("threshold", "100%"),
+            ("preserve_recent", 0.5),
             ("preserve_recent", 1.5),
             ("preserve_recent", "100%"),
         ],
@@ -365,19 +366,18 @@ class TestConditionParsing:
             Offload.drop("tool_results").when(**{name: value})
 
     @pytest.mark.parametrize(
-        ("value", "exp_message"),
+        ("name", "value", "exp_hint"),
         [
-            (
-                80,
-                "utilization=80 is invalid: a token count must be at least 1000; "
-                'for 80% of the context window, write "80%"$',
-            ),
-            (999, "utilization=999 is invalid: a token count must be at least 1000$"),
+            ("utilization", 80, '; for 80%, write "80%"$'),
+            ("utilization", 0.8, '; for 80%, write "80%"$'),
+            ("utilization", 1, '; for 100%, write "100%"$'),
+            ("utilization", 999, r"of at least 1000$"),
+            ("preserve_recent", 0.7, '; for 70%, write "70%"$'),
         ],
     )
-    def test_rejects_a_token_utilization_below_the_floor(self, value, exp_message):
-        with pytest.raises(ValueError, match=exp_message):
-            Offload.drop("tool_results").when(utilization=value)
+    def test_rejected_number_suggests_a_percent_when_it_reads_as_one(self, name, value, exp_hint):
+        with pytest.raises(ValueError, match=exp_hint):
+            Offload.drop("tool_results").when(**{name: value})
 
 
 class TestConditionResolution:
@@ -407,7 +407,7 @@ class TestConditionResolution:
 
     @pytest.mark.parametrize(
         ("window", "utilization"),
-        [(100_000, 100_000), (100_000, "100%"), (None, "80%"), (None, 0.8)],
+        [(100_000, 100_000), (100_000, "100%"), (None, "80%")],
     )
     def test_utilization_within_window_inits(self, mock_agent, window, utilization):
         mock_agent.model.context_window_limit = window
@@ -575,7 +575,7 @@ class TestGetOldestMatches:
             Message(role="assistant", content=[ContentBlock(text="msg4")]),
             Message(role="user", content=[ContentBlock(text="msg5")]),
         ]
-        # 0.7 ratio of 5 matching → ceil(5 * 0.7) = 4 preserved → 1 oldest returned
+        # 70% of 5 matching → ceil(5 * 0.7) = 4 preserved → 1 oldest returned
         tru_result = _get_oldest_matches(messages, "*", _Measure(0.7, is_share=True), {}, None, None)
         assert len(tru_result) == 1
         assert tru_result[0] is messages[0]
@@ -666,7 +666,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_removes_oldest_messages(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -681,7 +681,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_skips_when_below_utilization(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="content")]),
@@ -692,7 +692,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_inserts_dropped_marker(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -709,7 +709,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -726,7 +726,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_returns_false_with_single_message(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [Message(role="user", content=[ContentBlock(text="only")])]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
@@ -734,7 +734,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_returns_false_when_no_eligible_messages(self, mock_agent):
-        strategy = Offload.drop("assistant_text").when(utilization=0.8)
+        strategy = Offload.drop("assistant_text").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="user", content=[ContentBlock(text="only user messages")]),
@@ -745,7 +745,7 @@ class TestMessageLevelDrop:
 
     @pytest.mark.asyncio
     async def test_returns_false_when_splice_removes_nothing(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a")]),
@@ -836,7 +836,7 @@ class TestEagerHookRegistration:
         assert len(agent.hooks._registered_callbacks.get(MessageAddedEvent, [])) == 1
 
     def test_skips_hook_for_message_level_strategy(self):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         agent = unittest.mock.MagicMock()
         agent.hooks = HookRegistry()
         strategy.init(agent)
@@ -997,7 +997,7 @@ class TestGetEligibleMessages:
 
     @pytest.mark.asyncio
     async def test_preserve_recent_excludes_recent_matches(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8, preserve_recent=1)
+        strategy = Offload.drop("*").when(utilization="80%", preserve_recent=1)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old")]),
@@ -1009,7 +1009,7 @@ class TestGetEligibleMessages:
 
     @pytest.mark.asyncio
     async def test_no_preserve_recent_returns_all_candidates(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8)
+        strategy = Offload.drop("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="msg1")]),
@@ -1050,7 +1050,7 @@ class TestGranularity:
 
     @pytest.mark.asyncio
     async def test_wildcard_without_threshold_removes_messages(self, mock_agent):
-        strategy = Offload.drop("*").when(utilization=0.8, preserve_recent=1)
+        strategy = Offload.drop("*").when(utilization="80%", preserve_recent=1)
         messages = self._conversation()
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
@@ -1062,7 +1062,7 @@ class TestGranularity:
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(
             side_effect=lambda msgs: len(msgs[0]["content"][0]["text"])
         )
-        strategy = Offload.drop("*").when(utilization=0.8, threshold=100, preserve_recent=1)
+        strategy = Offload.drop("*").when(utilization="80%", threshold=100, preserve_recent=1)
         messages: Messages = [
             _text("user", "pin"),
             _text("assistant", "x" * 500),
@@ -1097,7 +1097,7 @@ class TestGranularity:
 
     @pytest.mark.asyncio
     async def test_block_target_with_utilization_stubs_blocks(self, mock_agent):
-        strategy = Offload.drop("assistant_text").when(utilization=0.8)
+        strategy = Offload.drop("assistant_text").when(utilization="80%")
         messages = self._conversation()
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
@@ -1106,7 +1106,7 @@ class TestGranularity:
 
     @pytest.mark.asyncio
     async def test_gated_block_strategy_leaves_the_last_message(self, mock_agent):
-        strategy = Offload.drop("tool_results").when(utilization=0.8)
+        strategy = Offload.drop("tool_results").when(utilization="80%")
         old_use, old_result = _make_tool_pair(tool_use_id="tu-old")
         live_use, live_result = _make_tool_pair(tool_use_id="tu-live")
         messages: Messages = [_text("user", "pin"), old_use, old_result, live_use, live_result]
@@ -1117,7 +1117,7 @@ class TestGranularity:
 
     @pytest.mark.asyncio
     async def test_gated_block_strategy_leaves_the_first_message(self, mock_agent):
-        strategy = Offload.drop("user_text").when(utilization=0.8)
+        strategy = Offload.drop("user_text").when(utilization="80%")
         messages = [*self._conversation(), _text("user", "live question")]
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
@@ -1131,7 +1131,7 @@ class TestGranularity:
 
     @pytest.mark.asyncio
     async def test_utilization_gates_block_strategy(self, mock_agent):
-        strategy = Offload.drop("assistant_text").when(utilization=0.8)
+        strategy = Offload.drop("assistant_text").when(utilization="80%")
         messages = self._conversation()
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         assert await strategy.apply(context) is False
@@ -1143,7 +1143,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_removes_middle_messages_and_inserts_elided_marker(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="head")]),
@@ -1165,7 +1165,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_preserves_alternation_after_truncation(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -1184,7 +1184,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_marker_uses_singular_for_one_message(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8, preserve_recent=2)
+        strategy = Offload.truncate("*").when(utilization="80%", preserve_recent=2)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -1199,7 +1199,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_marker_uses_plural_for_multiple_messages(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -1226,7 +1226,7 @@ class TestTruncateMiddleOut:
     async def test_keeps_head_and_tail_within_preview_budget(self, mock_agent):
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
         # head budget 600 keeps 6 messages; tail budget 400 keeps 4
-        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization=0.8)
+        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization="80%")
         messages: Messages = [_text("user", "pin")] + [
             _text("assistant" if index % 2 else "user", f"m{index}") for index in range(1, 21)
         ]
@@ -1244,7 +1244,7 @@ class TestTruncateMiddleOut:
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(
             side_effect=lambda msgs: 100 * sum(len(msg["content"]) for msg in msgs)
         )
-        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization=0.8)
+        strategy = Offload.truncate("*", {"preview_tokens": 1000}).when(utilization="80%")
         messages: Messages = [_text("user", "pin")] + [
             _text("assistant" if index % 2 else "user", f"m{index}") for index in range(1, 21)
         ]
@@ -1284,7 +1284,7 @@ class TestOverflowBypass:
 
     @pytest.mark.asyncio
     async def test_message_level_strategy_skips_below_utilization(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -1297,7 +1297,7 @@ class TestOverflowBypass:
 
     @pytest.mark.asyncio
     async def test_message_level_strategy_fires_on_overflow(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -1363,7 +1363,7 @@ class TestPinnedMessageProtection:
 
     @pytest.mark.asyncio
     async def test_message_level_skips_pinned_messages(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(
@@ -1471,10 +1471,10 @@ class TestRepeatedReductionKeepsMessageZeroVerbatim:
     @pytest.mark.parametrize(
         "strategy",
         [
-            Offload.drop("*").when(utilization=0.7, preserve_recent=3),
-            Offload.drop("*").when(utilization=0.7),
-            Offload.truncate("*").when(utilization=0.7, preserve_recent=3),
-            Offload.truncate("*").when(utilization=0.7),
+            Offload.drop("*").when(utilization="70%", preserve_recent=3),
+            Offload.drop("*").when(utilization="70%"),
+            Offload.truncate("*").when(utilization="70%", preserve_recent=3),
+            Offload.truncate("*").when(utilization="70%"),
             EmergencyTruncateStrategy(),
         ],
         ids=["drop", "drop-all", "truncate", "truncate-all", "emergency"],

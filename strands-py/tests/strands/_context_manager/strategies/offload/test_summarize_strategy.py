@@ -242,7 +242,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_summarizes_oldest_batch(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.8)
+        strategy = Offload.summarize("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -258,7 +258,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_inserts_summary_and_removes_originals(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.8)
+        strategy = Offload.summarize("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -285,7 +285,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_summarizes_each_run_around_pinned_message(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+        strategy = Offload.summarize("*").when(utilization="80%", preserve_recent=1)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="before1")]),
@@ -313,7 +313,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_a_failed_run_is_left_intact_and_the_others_still_summarize(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+        strategy = Offload.summarize("*").when(utilization="80%", preserve_recent=1)
         messages: Messages = [
             Message(role="user" if index % 2 == 0 else "assistant", content=[ContentBlock(text=f"m{index}")])
             for index in range(8)
@@ -335,7 +335,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.8)
+        strategy = Offload.summarize("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -354,7 +354,7 @@ class TestSummarizeStrategyMessageLevel:
     async def test_no_model_returns_false(self):
         agent = unittest.mock.MagicMock()
         agent.aux_model = None
-        strategy = Offload.summarize("*").when(utilization=0.8)
+        strategy = Offload.summarize("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old")]),
@@ -366,7 +366,7 @@ class TestSummarizeStrategyMessageLevel:
     @pytest.mark.asyncio
     async def test_summary_returns_none_falls_back_to_false(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(utilization=0.8)
+        strategy = Offload.summarize("*").when(utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -384,7 +384,7 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
 
     @pytest.mark.asyncio
     async def test_summaries_stay_out_of_pinned_message_zero(self, mock_agent):
-        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        strategy = Offload.summarize("*").when(utilization="70%", preserve_recent=4)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}})
         ]
@@ -414,7 +414,7 @@ class TestSummarizationWithToolCalls:
             return summary_stream(messages, *args, **kwargs)
 
         mock_agent.model.stream = recording_stream
-        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=2)
+        strategy = Offload.summarize("*").when(utilization="70%", preserve_recent=2)
         tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
         tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
         messages: Messages = [
