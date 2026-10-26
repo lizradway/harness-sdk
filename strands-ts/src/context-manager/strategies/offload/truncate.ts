@@ -42,7 +42,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     // A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
     if (!this._actsOnMessages && threshold && !threshold.isShare && threshold.value <= this._previewTokens) {
       throw new Error(
-        `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges`
+        `threshold (${threshold.value}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise threshold or lower previewTokens`
       )
     }
   }
@@ -116,7 +116,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(formatOffloaded(tokens, stashRefs))
+    return new TextBlock(formatOffloaded(block, tokens, stashRefs))
   }
 
   /** The eligible messages between the head and tail kept within the preview token budget. */

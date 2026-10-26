@@ -417,7 +417,7 @@ describe('Offload message-level with role alternation', () => {
     ['assistantText', 'assistant'],
     ['userText', 'user'],
   ] as const)(
-    'drop("%s") with utilization replaces each %s text block but the newest, keeping every message',
+    'drop("%s") with utilization replaces each %s text block between the first and last message, keeping every message',
     async (target, role) => {
       const messages = conversation(4)
       const strategy = Offload.drop(target).when({ utilization: 0.5 })
@@ -426,7 +426,7 @@ describe('Offload message-level with role alternation', () => {
 
       expect(messages).toHaveLength(8)
       for (const [index, message] of messages.entries()) {
-        const dropped = message.role === role && index < messages.length - 1
+        const dropped = message.role === role && index > 0 && index < messages.length - 1
         const expected = dropped ? '[Dropped]' : expect.not.stringContaining('[Dropped]')
         expect((message.content[0] as TextBlock).text).toEqual(expected)
       }
@@ -630,7 +630,9 @@ describe('Offload with media target', () => {
           .when({})
           .apply(withHeuristicModel([message]))
       ).toBe(true)
-      expect((message.content[1] as TextBlock).text).toBe('[Offloaded]')
+      expect((message.content[1] as TextBlock).text).toBe(
+        '[Offloaded: image, removed from context after it was viewed]'
+      )
     })
   })
 })
@@ -1029,6 +1031,7 @@ describe('parseCondition', () => {
     ['utilization', '101%', '"101%"'],
     ['utilization', '70', '"70"'],
     ['threshold', -1, '-1'],
+    ['threshold', 0, '0'],
     ['threshold', 0.5, '0.5'],
     ['preserveRecent', 1.5, '1.5'],
     ['preserveRecent', '100%', '"100%"'],
@@ -1038,6 +1041,12 @@ describe('parseCondition', () => {
 })
 
 describe('condition resolution', () => {
+  it('rejects an unknown condition name', () => {
+    expect(() => Offload.drop('toolResults').when({ utilisation: 0.5 } as OffloadConditions)).toThrow(
+      'unknown condition "utilisation": expected utilization, threshold, or preserveRecent'
+    )
+  })
+
   it.each([
     [{ utilization: '70%' }, undefined, 0.7, true],
     [{ utilization: 0.7 }, undefined, 0.69, false],
@@ -1058,10 +1067,17 @@ describe('condition resolution', () => {
     )
   })
 
+  it('rejects a utilization token count larger than the default context window on init', () => {
+    const strategy = Offload.drop('*').when({ utilization: 200_001 })
+    expect(() => strategy.init!(makeContext([], 0.5).agent)).toThrow(
+      "utilization (200001) is larger than the model's context window (200000 tokens)"
+    )
+  })
+
   it.each([
     [100_000, 100_000],
     [100_000, '100%'],
-    [undefined, 500_000],
+    [undefined, 200_000],
   ] as [number | undefined, number | Percent][])(
     'inits with a %s-token window and utilization %s',
     (contextWindowLimit, utilization) => {
@@ -1145,6 +1161,15 @@ describe('granularity', () => {
 
       expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
       expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(BIG)
+    })
+
+    it('leaves the first message alone when gated by utilization', async () => {
+      const messages = [text('user', BIG), ...history().slice(1)]
+
+      expect(await BUILDERS[method]('userText').when({ utilization: 0.5 }).apply(makeContext(messages, 0.9))).toBe(true)
+
+      expect((messages[0]!.content[0] as TextBlock).text).toBe(BIG)
+      expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
     })
   })
 })

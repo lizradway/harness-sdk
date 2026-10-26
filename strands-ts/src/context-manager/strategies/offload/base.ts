@@ -31,7 +31,7 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
  * - `"assistantText"` — text blocks in assistant messages
  * - `"userText"` — text blocks in user messages (excluding tool results)
  * - `"media"` — image, document, video, and audio blocks outside tool results
- * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
+ * - `string[]` — tool results from specific tools (e.g. `['bash']` or `['tool::bash']`); prefix with `!` to exclude
  * - `"*"` — whole messages
  *
  * @experimental
@@ -55,6 +55,9 @@ export type Percent = `${number}%`
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
  *   `'70%'` or `0.7` keeps the newest 70% of them.
  *
+ * With no `utilization`, the strategy runs before every model call, or on each message as it arrives when the target
+ * isn't `'*'` and `preserveRecent` is unset.
+ *
  * Granularity: target `'*'` acts on whole messages, and `threshold` measures each message. Drop removes them,
  * summarize merges each contiguous run, and truncate elides the middle or, with a `threshold`, shortens each one. Any
  * other target acts on each block, and `threshold` measures each block. `utilization` only gates when the strategy
@@ -66,13 +69,22 @@ export type Percent = `${number}%`
  * @experimental
  */
 export interface OffloadConditions {
-  /** Context usage at or above which the strategy fires, as conversation tokens or a share of the context window. */
+  /**
+   * Context usage at or above which the strategy fires: `'80%'` or `0.8` for a share of the context window, or a whole
+   * number above 1 for conversation tokens, at most the context window. `1` is 100%.
+   */
   utilization?: number | Percent
 
-  /** Size above which a message (target `'*'`) or block is offloaded, as tokens or a share of the context window. */
+  /**
+   * Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the
+   * context window. Unset, content of any size is offloaded.
+   */
   threshold?: number | Percent
 
-  /** How many of the most recent matching messages to leave untouched, as a count or a share. */
+  /**
+   * Newest matching messages never touched: a count, or `'70%'` / `0.7` of the matches, rounded up so a share always
+   * keeps at least one.
+   */
   preserveRecent?: number | Percent
 }
 
@@ -129,8 +141,8 @@ const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
   },
   threshold: {
     percentInRange: (percent) => percent > 0 && percent <= 100,
-    parseNumber: (value) => (Number.isInteger(value) ? { value, isShare: false } : undefined),
-    expected: 'a whole token count or a "N%" string up to "100%"',
+    parseNumber: (value) => (Number.isInteger(value) && value >= 1 ? { value, isShare: false } : undefined),
+    expected: 'a whole token count above 0 or a "N%" string up to "100%"',
   },
   preserveRecent: {
     percentInRange: (percent) => percent >= 0 && percent < 100,
@@ -173,6 +185,14 @@ function parseNumber(raw: unknown, rule: ConditionRule): ParsedCondition | undef
   return rule.parseNumber(raw)
 }
 
+function validateConditionNames(conditions: OffloadConditions | undefined): void {
+  for (const name of Object.keys(conditions ?? {})) {
+    if (!(name in CONDITION_RULES)) {
+      throw new Error(`unknown condition "${name}": expected utilization, threshold, or preserveRecent`)
+    }
+  }
+}
+
 function formatConditionValue(raw: unknown): string {
   return typeof raw === 'string' ? `"${raw}"` : String(raw)
 }
@@ -198,19 +218,24 @@ export function validateTarget(target: OffloadTarget | undefined): void {
 // --- Shared helpers ---
 
 /**
- * Builds a toolUseId → toolName map from all assistant messages in the conversation.
- * Called once per apply() to avoid O(messages × toolResults) scanning.
- */
-/**
- * Format an `[Offloaded]` marker, leaving out a size the token count could not measure.
+ * Format an `[Offloaded]` marker naming the media kind, leaving out a size the token count could not measure.
  *
  * @internal
  */
-export function formatOffloaded(tokens: number, stashRefs: string[]): string {
+export function formatOffloaded(block: ContentBlock, tokens: number, stashRefs: string[]): string {
+  const refs = formatStashRefs(stashRefs)
+  if (isMediaBlock(block)) {
+    const size = tokens ? `, ~${tokens} tokens` : ''
+    return `[Offloaded: ${mediaKind(block)}${size}, removed from context after it was viewed]${refs}`
+  }
   const size = tokens ? `: ~${tokens} tokens` : ''
-  return `[Offloaded${size}]${formatStashRefs(stashRefs)}`
+  return `[Offloaded${size}]${refs}`
 }
 
+/**
+ * Builds a toolUseId → toolName map from all assistant messages in the conversation.
+ * Called once per apply() to avoid O(messages × toolResults) scanning.
+ */
 export function buildToolNameMap(messages: Message[]): Map<string, string> {
   const map = new Map<string, string>()
   for (const message of messages) {
@@ -256,6 +281,15 @@ export function isMediaBlock(block: ContentBlock): block is ImageBlock | Documen
     block instanceof VideoBlock ||
     block instanceof AudioBlock
   )
+}
+
+/**
+ * The media kind of a block, such as `'image'`, for markers.
+ *
+ * @internal
+ */
+export function mediaKind(block: ImageBlock | DocumentBlock | VideoBlock | AudioBlock): string {
+  return block.type.replace(/Block$/, '')
 }
 
 export function targetMatchesMessage(target: OffloadTarget | undefined, message: Message): boolean {
@@ -482,6 +516,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    */
   constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
     validateTarget(target)
+    validateConditionNames(conditions)
 
     this.name = name
     this._target = target
@@ -546,8 +581,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   private _checkUtilizationFits(agent: LocalAgent): void {
     const utilization = this._utilization
     if (!utilization || utilization.isShare) return
-    const limit = agent.model.getConfig().contextWindowLimit
-    if (!limit || utilization.value <= limit) return
+    const limit = effectiveWindowLimit(agent)
+    if (utilization.value <= limit) return
     throw new Error(
       `utilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
     )
@@ -575,11 +610,11 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const toolNameMap = buildToolNameMap(messages)
     const threshold = this._resolveThreshold(agent)
     const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : [...messages]
-    // Without the eager hook, the last message is one the model has not yet responded to.
-    if (!this._runsEagerly && eligible.at(-1) === messages.at(-1)) eligible.pop()
     let acted = false
 
     for (const message of eligible) {
+      // Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
+      if (!this._runsEagerly && (message === messages[0] || message === messages.at(-1))) continue
       const index = messages.indexOf(message)
       if (isPinned(messages, index)) continue
       if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) {

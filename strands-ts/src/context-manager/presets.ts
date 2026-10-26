@@ -18,10 +18,10 @@ import { Offload } from './strategies/offload/index.js'
  * Preset names are the stable contract. The strategies they resolve to may change
  * between releases.
  *
- * - `'proactiveSummarization'` — batch summarize oldest messages at 70% utilization
+ * - `'proactiveSummarization'` — batch summarize the oldest 30% of messages at 70% utilization
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — drop the oldest messages when the context window is full
- * - `'staleToolCleanup'` — drop tool results older than 5 messages
+ * - `'staleToolCleanup'` — drop tool results outside the newest 5 tool-result messages
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',

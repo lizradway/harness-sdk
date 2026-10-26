@@ -303,7 +303,9 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+      expect.objectContaining({
+        text: expect.stringMatching(/^\[Offloaded: video, ~\d+ tokens, removed from context after it was viewed\]/),
+      }),
     ])
     expect(summarizeContent).not.toHaveBeenCalled()
   })
@@ -323,7 +325,9 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+      expect.objectContaining({
+        text: expect.stringMatching(/^\[Offloaded: image, ~\d+ tokens, removed from context after it was viewed\]/),
+      }),
     ])
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<images unsupported>'))
     warnSpy.mockRestore()

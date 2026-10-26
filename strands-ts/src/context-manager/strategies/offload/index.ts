@@ -23,7 +23,7 @@ function builder(
   when: (conditions: OffloadConditions) => ContextStrategy
 ): OffloadStrategyBuilder {
   validateTarget(target)
-  return { when }
+  return { when: (conditions) => when(conditions ?? {}) }
 }
 
 /**
@@ -60,6 +60,12 @@ interface OffloadNamespace {
  * Offload.summarize("*").when({ utilization: "70%", preserveRecent: 4 })
  * // Per-block: drop each failed tool result over 500 tokens
  * Offload.drop("toolResultErrors").when({ threshold: 500 })
+ * // Per-block, eager: with no conditions, acts on each message as it arrives
+ * Offload.drop("toolResults").when({})
+ * // Per-block, gated: at 80% utilization, drop older tool results, keeping the newest 5
+ * Offload.drop("toolResults").when({ utilization: "80%", preserveRecent: 5 })
+ * // Messages: once the window is full, drop the oldest messages, keeping the newest 70%
+ * Offload.drop("*").when({ utilization: "100%", preserveRecent: "70%" })
  * // Messages: at 90% utilization, summarize messages over 2000 tokens, keeping the newest 4
  * Offload.summarize("*").when({ utilization: "90%", threshold: 2000, preserveRecent: 4 })
  * ```

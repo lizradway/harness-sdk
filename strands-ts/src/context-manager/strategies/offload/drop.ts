@@ -9,7 +9,7 @@ import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import { formatStashRefs } from '../../stash.js'
-import { BaseOffloadStrategy, isMediaBlock } from './base.js'
+import { BaseOffloadStrategy, isMediaBlock, mediaKind } from './base.js'
 import type { OffloadConditions, OffloadTarget } from './base.js'
 
 export const DROPPED_MARKER = '[Dropped]'
@@ -44,8 +44,7 @@ export class DropStrategy extends BaseOffloadStrategy {
     if (isMediaBlock(block)) {
       logger.debug(`trackingId=<${message.trackingId}> | dropped media block from context window`)
       // A bare marker reads to the model as media that never arrived, so it doubts what it saw.
-      const kind = block.type.replace(/Block$/, '')
-      return new TextBlock(`[Dropped: ${kind}, removed from context after it was viewed]${refs}`)
+      return new TextBlock(`[Dropped: ${mediaKind(block)}, removed from context after it was viewed]${refs}`)
     }
     logger.debug(`trackingId=<${message.trackingId}> | dropped block from context window`)
     return new TextBlock(marker)

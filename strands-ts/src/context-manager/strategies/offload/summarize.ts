@@ -134,7 +134,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(formatOffloaded(tokens, stashRefs))
+    return new TextBlock(formatOffloaded(block, tokens, stashRefs))
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
