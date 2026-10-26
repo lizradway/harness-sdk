@@ -244,7 +244,12 @@ export function toolMatchesTarget(
   return false
 }
 
-function isMediaBlock(block: ContentBlock): boolean {
+/**
+ * Whether a block is an image, document, video, or audio block.
+ *
+ * @internal
+ */
+export function isMediaBlock(block: ContentBlock): block is ImageBlock | DocumentBlock | VideoBlock | AudioBlock {
   return (
     block instanceof ImageBlock ||
     block instanceof DocumentBlock ||
