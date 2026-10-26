@@ -21,6 +21,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _collect_removable_with_pair,
+    _format_offloaded,
     _insert_marker,
     _repair_alternation,
 )
@@ -153,7 +154,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 return ContentBlock(text=marker)
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+        return ContentBlock(text=_format_offloaded(tokens, refs))
 
     async def _try_summarize(
         self,

@@ -894,6 +894,32 @@ class TestTransformBlocks:
         assert "[Offloaded: ~" in message["content"][0]["text"]
 
     @pytest.mark.asyncio
+    async def test_media_without_threshold_acts_on_media_counted_as_zero_tokens(self, mock_agent):
+        # The heuristic token count measures media as 0 tokens.
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=0)
+        strategy = Offload.drop("media").when()
+        image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
+        message = Message(role="user", content=[ContentBlock(text="what color?"), image_block])
+        assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
+        assert message["content"] == [ContentBlock(text="what color?"), ContentBlock(text="[Dropped]")]
+
+    @pytest.mark.asyncio
+    async def test_offloaded_marker_leaves_out_an_unmeasured_size(self, mock_agent):
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=0)
+        strategy = Offload.truncate("media").when()
+        image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
+        message = Message(role="user", content=[image_block])
+        assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
+        assert message["content"][0]["text"] == "[Offloaded]"
+
+    @pytest.mark.asyncio
+    async def test_without_threshold_skips_empty_text_blocks(self, mock_agent):
+        strategy = Offload.drop("assistant_text").when()
+        message = Message(role="assistant", content=[ContentBlock(text=""), ContentBlock(text="  \n")])
+        assert await strategy._transform_blocks(message, [message], {}, mock_agent) is False
+        assert message["content"] == [ContentBlock(text=""), ContentBlock(text="  \n")]
+
+    @pytest.mark.asyncio
     async def test_skips_reasoning_content_block(self, mock_agent):
         strategy = Offload.drop("*").when(threshold=100)
         reasoning_block = ContentBlock(reasoningContent={"reasoningText": {"text": "thinking..."}})
@@ -1161,19 +1187,20 @@ class TestTruncateMiddleOut:
 
 
 class TestTruncateBlockThreshold:
-    """Tests for truncate's default block threshold and for skipping its own previews."""
+    """Tests for truncate without a threshold and for skipping its own previews."""
 
     @pytest.mark.asyncio
-    async def test_defaults_to_preview_tokens_and_skips_truncated_blocks(self, mock_agent):
+    async def test_leaves_blocks_within_the_preview_and_skips_truncated_blocks(self, mock_agent):
         strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when()
         assistant_msg, user_msg = _make_tool_pair()
         messages: Messages = [_text("user", "pin"), assistant_msg, user_msg, _text("assistant", "done")]
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        tool_result_content = messages[2]["content"][0]["toolResult"]["content"]
 
-        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+        tool_result_content[0] = {"text": "x" * 400}
         assert await strategy.apply(context) is False
 
-        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
+        tool_result_content[0] = {"text": "x" * 10000}
         assert await strategy.apply(context) is True
         tru_preview = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
         assert tru_preview.startswith("[Truncated:")

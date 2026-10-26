@@ -22,6 +22,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_tool_name_map,
+    _format_offloaded,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -73,9 +74,6 @@ class TruncateStrategy(BaseOffloadStrategy):
                 f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges"
             )
-
-    def _default_threshold(self) -> int:
-        return _resolve_preview_tokens(self._truncate_config)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle.
@@ -154,7 +152,7 @@ class TruncateStrategy(BaseOffloadStrategy):
                 result = ContentBlock(text=result["text"] + f"\n\n[Stashed]{refs}")
             return result
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+        return ContentBlock(text=_format_offloaded(tokens, refs))
 
 
 async def _count_within_budget(messages: list[Message], budget: int, agent: Agent) -> int:

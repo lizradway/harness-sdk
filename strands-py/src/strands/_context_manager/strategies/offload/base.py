@@ -153,6 +153,12 @@ def _window_limit(agent: Agent) -> int:
     return agent.model.context_window_limit or DEFAULT_CONTEXT_WINDOW_LIMIT
 
 
+def _format_offloaded(tokens: int, refs: str) -> str:
+    """Format an ``[Offloaded]`` marker, leaving out a size the token count could not measure."""
+    size = f": ~{tokens} tokens" if tokens else ""
+    return f"[Offloaded{size}]{refs}"
+
+
 def _build_tool_name_map(messages: Messages) -> dict[str, str]:
     """Build a toolUseId -> toolName map from all assistant messages."""
     name_map: dict[str, str] = {}
@@ -445,13 +451,10 @@ class BaseOffloadStrategy(ABC):
         """Whether the eager hook processes each message as it arrives."""
         return self._utilization is None and not self._preserves_recent and not self._acts_on_messages
 
-    def _default_threshold(self) -> int:
-        """Block size, in tokens, at or under which blocks are left alone when no threshold is set."""
-        return 0
-
-    def _resolve_threshold(self, agent: Agent) -> int:
+    def _resolve_threshold(self, agent: Agent) -> int | None:
+        """Resolve ``threshold`` to tokens, or None when unset so no size check applies."""
         if self._threshold is None:
-            return self._default_threshold()
+            return None
         if not self._threshold.is_share:
             return int(self._threshold.value)
         return math.ceil(self._threshold.of(_window_limit(agent)))
@@ -572,7 +575,7 @@ class BaseOffloadStrategy(ABC):
         if "reasoningContent" in block or "cachePoint" in block:
             return False
         if is_text_block(block):
-            return _target_matches_message(self._target, message)
+            return bool(block["text"].strip()) and _target_matches_message(self._target, message)
         if is_tool_result_block(block):
             if self._stash and tool_name_map.get(block["toolResult"]["toolUseId"]) == RETRIEVAL_TOOL_NAME:
                 return False
@@ -602,7 +605,7 @@ class BaseOffloadStrategy(ABC):
                 continue
 
             tokens = await agent.model.count_tokens([Message(role=message["role"], content=[block])])
-            if tokens <= effective_threshold:
+            if effective_threshold is not None and tokens <= effective_threshold:
                 continue
 
             stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
@@ -638,10 +641,9 @@ class BaseOffloadStrategy(ABC):
         )
         index_map = {id(msg): i for i, msg in enumerate(messages)}
         eligible = [msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])]
-        if self._threshold is None:
-            return eligible
-
         threshold = self._resolve_threshold(context.agent)
+        if threshold is None:
+            return eligible
         return [msg for msg in eligible if await context.agent.model.count_tokens([msg]) > threshold]
 
     @abstractmethod
