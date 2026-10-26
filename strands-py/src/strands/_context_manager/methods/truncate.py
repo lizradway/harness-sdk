@@ -46,7 +46,10 @@ def _resolve_head_share(config: TruncateConfig | None) -> float:
 
 
 def _is_truncated(block: ContentBlock) -> bool:
-    """Whether the block already holds a truncation preview."""
+    """Whether the block already holds a truncation preview.
+
+    Matches on the text prefix, so content that genuinely starts with it is also treated as truncated.
+    """
     if "toolResult" in block:
         texts = [item["text"] for item in block["toolResult"]["content"] if "text" in item]
         return bool(texts) and texts[0].startswith(TRUNCATED_PREFIX)
