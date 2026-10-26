@@ -31,8 +31,8 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
  * - `"assistantText"` — text blocks in assistant messages
  * - `"userText"` — text blocks in user messages (excluding tool results)
  * - `"media"` — image, document, video, and audio blocks outside tool results
- * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) or, each prefixed with `!`,
- *   tools to exclude
+ * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) and, prefixed with `!`, tools
+ *   to exclude. A list of only exclusions acts on every other tool.
  * - `"*"` — whole messages
  *
  * @experimental
@@ -217,7 +217,7 @@ function effectiveWindowLimit(agent: LocalAgent): number {
  * Throws if an offload target matches nothing.
  *
  * @param target - The offload target
- * @throws Error when the target is an empty array or mixes included and excluded tools
+ * @throws Error when the target is an empty array or excludes every tool it includes
  * @internal
  */
 export function validateTarget(target: OffloadTarget | undefined): void {
@@ -225,10 +225,8 @@ export function validateTarget(target: OffloadTarget | undefined): void {
   if (target.length === 0) {
     throw new Error('Empty array target matches nothing — provide at least one target')
   }
-  if (new Set(target.map((entry) => entry.startsWith('!'))).size > 1) {
-    throw new Error(
-      `Tool target ${JSON.stringify(target)} mixes included and excluded tools; list only tools to include or only tools to exclude`
-    )
+  if (resolveToolFilter(target).include?.size === 0) {
+    throw new Error(`Tool target ${JSON.stringify(target)} excludes every tool it includes, so it matches nothing`)
   }
 }
 
@@ -475,8 +473,8 @@ export function repairAlternation(messages: Message[]): void {
 
 /**
  * Parses a string[] target into include/exclude filter sets.
- * Entries must be prefixed with `tool::` (e.g. `'tool::bash'`).
- * An additional `!` prefix excludes (e.g. `'!tool::bash'`).
+ * Entries may be prefixed with `tool::` (e.g. `'tool::bash'`).
+ * An additional `!` prefix excludes (e.g. `'!tool::bash'`); a list with includes keeps the includes minus the excludes.
  */
 export function resolveToolFilter(target: OffloadTarget | undefined): { include?: Set<string>; exclude?: Set<string> } {
   if (!Array.isArray(target)) return {}
@@ -494,11 +492,12 @@ export function resolveToolFilter(target: OffloadTarget | undefined): { include?
     }
   }
 
+  if (includes.length > 0) {
+    const excluded = new Set(excludes)
+    return { include: new Set(includes.filter((name) => !excluded.has(name))) }
+  }
   if (excludes.length > 0) {
     return { exclude: new Set(excludes) }
-  }
-  if (includes.length > 0) {
-    return { include: new Set(includes) }
   }
 
   return {}
@@ -524,7 +523,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
    * @param name - Strategy name, `offload:<method>`
    * @param target - Content the strategy acts on
    * @param conditions - When and how the strategy fires; omitted only by internal strategies
-   * @throws Error when the target is empty or mixes included and excluded tools, a condition value is invalid, a
+   * @throws Error when the target is empty or excludes every tool it includes, a condition value is invalid, a
    *   whole-message strategy has none of `utilization`, `threshold`, or `preserveRecent`, or a `'media'` strategy has
    *   neither `utilization` nor `preserveRecent`
    */

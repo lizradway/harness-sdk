@@ -6,6 +6,7 @@ import {
   collectRemovableWithPair,
   insertMarker,
   parseCondition,
+  resolveToolFilter,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
 import type { OffloadConditions, OffloadTarget, Percent } from '../offload/base.js'
@@ -1252,9 +1253,15 @@ describe('media conditions', () => {
 })
 
 describe('tool list targets', () => {
-  it('rejects a list that mixes included and excluded tools', () => {
-    expect(() => Offload.drop(['tool::bash', '!tool::python'])).toThrow(
-      'Tool target ["tool::bash","!tool::python"] mixes included and excluded tools'
+  it('subtracts excluded tools from included ones in a mixed list', () => {
+    expect(resolveToolFilter(['tool::bash', 'python', '!tool::python', '!grep'])).toStrictEqual({
+      include: new Set(['bash']),
+    })
+  })
+
+  it('rejects a list that excludes every tool it includes', () => {
+    expect(() => Offload.drop(['tool::bash', '!bash'])).toThrow(
+      'Tool target ["tool::bash","!bash"] excludes every tool it includes, so it matches nothing'
     )
   })
 })
