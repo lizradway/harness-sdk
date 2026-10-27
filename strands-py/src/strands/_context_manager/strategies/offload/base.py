@@ -112,14 +112,18 @@ def _parse_condition(name: str, value: object) -> _Measure:
         return _Measure(float(match.group(1)) / 100, is_share=True)
     if isinstance(value, int) and not isinstance(value, bool) and value >= rule.min_count:
         return _Measure(float(value), is_share=False)
-    raise ValueError(f"{name}={value!r} is invalid: expected {rule.forms}{_percent_hint(value)}")
+    raise ValueError(f"{name}={value!r} is invalid: expected {rule.forms}{_value_hint(value, rule)}")
 
 
-def _percent_hint(value: object) -> str:
-    """Suggest the ``"N%"`` spelling for a rejected number that reads as a share or a percent."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 100:
+def _value_hint(value: object, rule: _ConditionRule) -> str:
+    """Suggest the spelling a rejected number probably meant: a count for ``4.0``, ``"N%"`` for ``0.85``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return ""
+    if isinstance(value, float) and value > 1 and value.is_integer() and value >= rule.min_count:
+        return f"; for a count, write {int(value)}"
     percent = value * 100 if value <= 1 else value
+    if not 0 < value <= 100 or not rule.percent_in_range(percent):
+        return ""
     return f'; for {percent:g}%, write "{percent:g}%"'
 
 

@@ -373,9 +373,13 @@ class TestConditionParsing:
             ("utilization", 1, '; for 100%, write "100%"$'),
             ("utilization", 999, r"of at least 1000$"),
             ("preserve_recent", 0.7, '; for 70%, write "70%"$'),
+            ("preserve_recent", 4.0, "; for a count, write 4$"),
+            ("utilization", 1500.0, "; for a count, write 1500$"),
+            ("preserve_recent", 1.0, "a whole message count$"),
+            ("threshold", 1.0, "a whole token count above 0$"),
         ],
     )
-    def test_rejected_number_suggests_a_percent_when_it_reads_as_one(self, name, value, exp_hint):
+    def test_rejected_number_suggests_the_spelling_it_reads_as(self, name, value, exp_hint):
         with pytest.raises(ValueError, match=exp_hint):
             Offload.drop("tool_results").when(**{name: value})
 
