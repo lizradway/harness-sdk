@@ -236,6 +236,9 @@ async function classifierCustomExample() {
       new HumanInTheLoop({
         classifier: {
           systemPrompt: 'Only flag destructive operations.',
+          model: new BedrockModel({
+            modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+          }),
         },
       }),
     ],

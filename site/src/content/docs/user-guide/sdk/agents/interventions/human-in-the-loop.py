@@ -218,6 +218,7 @@ def classifier_custom_example():
             HumanInTheLoop(
                 classifier=LLMClassifierConfig(
                     system_prompt="Only flag destructive operations.",
+                    model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
                 ),
             ),
         ],
