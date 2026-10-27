@@ -51,7 +51,7 @@ class S3VectorSearchStrategy:
     A derived index over the bucket: ``S3Storage`` calls :meth:`index` on every write (one embedder
     call plus a ``PutVectors``), :meth:`remove` on every delete, and :meth:`search` on search. Only
     works with ``S3Storage``; each storage backend pairs with its own native vector index, and only
-    the :class:`~strands.storage.embeddings.Embedder` is shared.
+    the :class:`~strands.storage.search.Embedder` is shared.
 
     The vector bucket and index must already exist, with a dimension matching the embedder (1024 for
     the default, Titan Text Embeddings V2). Clients default to the storage's session, else its region. Vectors are keyed

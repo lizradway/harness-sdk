@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.config import Config
 
-from strands.storage.embeddings import Embedder
 from strands.storage.embeddings.bedrock import DEFAULT_EMBEDDER_MODEL_ID, BedrockEmbedder
+from strands.storage.search import Embedder
 from strands.types.exceptions import StorageError
 
 

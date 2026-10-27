@@ -6,8 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands.storage import S3Storage
-from strands.storage.embeddings import Embedder
-from strands.storage.search import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+from strands.storage.search import Embedder, S3VectorSearchStrategy, S3VectorSearchStrategyConfig
 
 
 class FakeEmbedder(Embedder):
