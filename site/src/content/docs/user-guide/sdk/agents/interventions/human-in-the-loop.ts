@@ -1,5 +1,11 @@
 // @ts-nocheck
-import { Agent, tool, InterruptResponseContent } from '@strands-agents/sdk'
+import {
+  Agent,
+  BedrockModel,
+  LLMDecisionModel,
+  tool,
+  InterruptResponseContent,
+} from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
@@ -199,6 +205,28 @@ async function classifierExample() {
   // --8<-- [end:classifier]
 }
 
+async function classifierDecisionModelExample() {
+  // --8<-- [start:classifier_decision_model]
+  // Classify on a smaller model than the one the agent runs on
+  const classifierModel = new BedrockModel({
+    modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  })
+
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [
+      new HumanInTheLoop({
+        allowedTools: ['read_file'],
+        classifier: new LLMDecisionModel({ model: classifierModel }),
+      }),
+    ],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // delete_files: decision model evaluates -> risky -> prompts human
+  // --8<-- [end:classifier_decision_model]
+}
+
 async function classifierCustomExample() {
   // --8<-- [start:classifier_custom]
   // Custom system prompt and model
@@ -238,6 +266,7 @@ void allowedToolsExample
 void trustModeExample
 void customEvaluateExample
 void classifierExample
+void classifierDecisionModelExample
 void classifierCustomExample
 
 declare function askUserViaSlack(prompt: string): Promise<string>
