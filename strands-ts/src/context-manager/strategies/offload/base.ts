@@ -118,39 +118,29 @@ export interface ParsedCondition {
   isShare: boolean
 }
 
-interface ConditionRule {
-  /** Whether a `'N%'` value's N is in range. */
-  percentInRange(percent: number): boolean
-
-  /** The smallest accepted whole-number count. */
-  minCount: number
-
-  /** Accepted values, for error messages. */
-  expected: string
-}
-
 const PERCENT_PATTERN = /^\d+(\.\d+)?%$/
 
 /** Smaller whole numbers are almost always a percent written without "%", like `utilization: 80`. */
 const MIN_UTILIZATION_TOKENS = 1000
 
-const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
+/** Per condition: the accepted range for a `'N%'` value's N, the smallest whole count, and the accepted forms. */
+const CONDITION_RULES = {
   utilization: {
-    percentInRange: (percent) => percent > 0 && percent <= 100,
+    percentInRange: (percent: number): boolean => percent > 0 && percent <= 100,
     minCount: MIN_UTILIZATION_TOKENS,
     expected: `a "N%" string up to "100%" or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
   },
   threshold: {
-    percentInRange: (percent) => percent > 0 && percent < 100,
+    percentInRange: (percent: number): boolean => percent > 0 && percent < 100,
     minCount: 1,
     expected: 'a "N%" string below "100%" or a whole token count above 0',
   },
   preserveRecent: {
-    percentInRange: (percent) => percent >= 0 && percent < 100,
+    percentInRange: (percent: number): boolean => percent >= 0 && percent < 100,
     minCount: 0,
     expected: 'a "N%" string below "100%" or a whole message count',
   },
-}
+} satisfies Record<ConditionName, object>
 
 /**
  * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
