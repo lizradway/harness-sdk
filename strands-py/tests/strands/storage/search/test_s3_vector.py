@@ -237,6 +237,40 @@ class TestDefaults:
         embedder_class.assert_called_once_with(region_name=None)
 
     @pytest.mark.asyncio
+    async def test_default_embedder_uses_the_storage_session(self, session):
+        storage_session = MagicMock()
+        strategy = make_strategy(session, None)
+
+        with patch("strands.storage.embeddings.bedrock.BedrockEmbedder") as embedder_class:
+            embedder_class.return_value = FakeEmbedder()
+            await strategy.search(S3Storage("bucket", boto_session=storage_session), "a")
+
+        embedder_class.assert_called_once_with(boto_session=storage_session)
+
+    @pytest.mark.asyncio
+    async def test_creates_the_client_on_the_storage_session(self, embedder, client):
+        storage_session = MagicMock()
+        storage_session.client.return_value = client
+        strategy = S3VectorSearchStrategy(
+            S3VectorSearchStrategyConfig(vector_bucket_name="vectors", index_name="notes", embedder=embedder)
+        )
+
+        with patch("boto3.Session") as session_class:
+            await strategy.search(S3Storage("bucket", boto_session=storage_session), "a")
+
+        session_class.assert_not_called()
+        storage_session.client.assert_called_once()
+        assert storage_session.client.call_args.args == ("s3vectors",)
+
+    @pytest.mark.asyncio
+    async def test_configured_session_takes_priority_over_the_storage_session(self, strategy, session):
+        storage_session = MagicMock()
+        await strategy.search(S3Storage("bucket", boto_session=storage_session), "a")
+
+        session.client.assert_called_once()
+        storage_session.client.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_creates_the_client_once_in_the_storage_region(self, embedder, storage):
         strategy = S3VectorSearchStrategy(
             S3VectorSearchStrategyConfig(vector_bucket_name="vectors", index_name="notes", embedder=embedder)

@@ -27,12 +27,13 @@ class S3VectorSearchStrategyConfig:
         index_name: Name of an existing vector index in that bucket. Not created automatically, and
             its dimension must match the embedder.
         embedder: Produces the embedding vectors. Defaults to a ``BedrockEmbedder`` (Titan Text
-            Embeddings V2) in the storage's region, created on first use.
+            Embeddings V2) on the storage's ``boto_session``, or in the storage's region when it has
+            none, created on first use.
         max_results: Maximum number of results to return. The limit applies before results are
             filtered to this storage's prefix (and to a ``namespace()`` view's prefix), so a search
             over a narrow prefix of a shared index can return fewer results.
-        boto_session: Pre-configured boto3 session for the S3 Vectors client. Defaults to a session
-            in the storage's region.
+        boto_session: Pre-configured boto3 session for the S3 Vectors client. Defaults to the
+            storage's ``boto_session``, or a session in the storage's region when it has none.
         boto_client_config: Botocore Config object for the S3 Vectors client.
     """
 
@@ -53,7 +54,7 @@ class S3VectorSearchStrategy:
     the :class:`~strands.storage.embeddings.Embedder` is shared.
 
     The vector bucket and index must already exist, with a dimension matching the embedder (1024 for
-    the default, Titan Text Embeddings V2). Clients default to the storage's region. Vectors are keyed
+    the default, Titan Text Embeddings V2). Clients default to the storage's session, else its region. Vectors are keyed
     by the full object key, so storages sharing a bucket under different prefixes can share one index.
     Empty and non-UTF-8 values are stored but not indexed, and clear any earlier vector for that key.
     Attach each instance to a single storage.
@@ -164,11 +165,14 @@ class S3VectorSearchStrategy:
         if self._embedder is None:
             from ..embeddings.bedrock import BedrockEmbedder
 
-            self._embedder = BedrockEmbedder(region_name=storage.region_name)
+            if storage.boto_session is not None:
+                self._embedder = BedrockEmbedder(boto_session=storage.boto_session)
+            else:
+                self._embedder = BedrockEmbedder(region_name=storage.region_name)
         return self._embedder
 
     def _get_client(self, storage: S3Storage) -> Any:
-        """Create the S3 Vectors client once on first use, in the storage's region unless a session was given."""
+        """Create the S3 Vectors client once on first use, on the configured or storage's session."""
         if self._client is not None:
             return self._client
 
@@ -181,7 +185,7 @@ class S3VectorSearchStrategy:
         elif not getattr(config, "user_agent_extra", None):
             config = config.merge(Config(user_agent_extra="strands-agents"))
 
-        session = self._config.boto_session or boto3.Session(region_name=storage.region_name)
+        session = self._config.boto_session or storage.boto_session or boto3.Session(region_name=storage.region_name)
         self._client = session.client("s3vectors", config=config)
         return self._client
 

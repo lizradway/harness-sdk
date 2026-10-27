@@ -87,6 +87,11 @@ class S3Storage:
         return None
 
     @property
+    def boto_session(self) -> Any:
+        """The configured ``boto_session``, or ``None`` when none was given."""
+        return self._boto_session
+
+    @property
     def prefix(self) -> str:
         """The normalized key prefix (ending in ``/``), or ``""`` when none was configured."""
         return self._prefix

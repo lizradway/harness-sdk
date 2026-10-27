@@ -362,6 +362,11 @@ class TestS3StorageProperties:
     def test_region_name_is_none_when_unset(self):
         assert S3Storage("b").region_name is None
 
+    def test_boto_session_is_the_configured_session(self):
+        session = MagicMock()
+        assert S3Storage("b", boto_session=session).boto_session is session
+        assert S3Storage("b").boto_session is None
+
     @pytest.mark.parametrize(
         ("prefix", "expected"),
         [("", ""), ("agents", "agents/"), ("/agents//data", "agents/data/")],
