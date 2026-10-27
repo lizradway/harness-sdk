@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands.storage import S3Storage
-from strands.storage.search import Embedder, S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+from strands.storage.search import Embedder, S3VectorSearchStrategy
 
 
 class FakeEmbedder(Embedder):
@@ -44,10 +44,9 @@ def embedder():
 
 
 def make_strategy(session, embedder, **overrides):
-    config = S3VectorSearchStrategyConfig(
+    return S3VectorSearchStrategy(
         vector_bucket_name="vectors", index_name="notes", embedder=embedder, boto_session=session, **overrides
     )
-    return S3VectorSearchStrategy(config)
 
 
 @pytest.fixture
@@ -250,9 +249,7 @@ class TestDefaults:
     async def test_creates_the_client_on_the_storage_session(self, embedder, client):
         storage_session = MagicMock()
         storage_session.client.return_value = client
-        strategy = S3VectorSearchStrategy(
-            S3VectorSearchStrategyConfig(vector_bucket_name="vectors", index_name="notes", embedder=embedder)
-        )
+        strategy = S3VectorSearchStrategy(vector_bucket_name="vectors", index_name="notes", embedder=embedder)
 
         with patch("boto3.Session") as session_class:
             await strategy.search(S3Storage("bucket", boto_session=storage_session), "a")
@@ -271,9 +268,7 @@ class TestDefaults:
 
     @pytest.mark.asyncio
     async def test_creates_the_client_once_in_the_storage_region(self, embedder, storage):
-        strategy = S3VectorSearchStrategy(
-            S3VectorSearchStrategyConfig(vector_bucket_name="vectors", index_name="notes", embedder=embedder)
-        )
+        strategy = S3VectorSearchStrategy(vector_bucket_name="vectors", index_name="notes", embedder=embedder)
 
         with patch("boto3.Session") as session_class:
             await strategy.search(storage, "a")

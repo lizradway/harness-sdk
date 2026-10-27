@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..storage import StorageSearchResult
@@ -17,34 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class S3VectorSearchStrategyConfig:
-    """Configuration for :class:`S3VectorSearchStrategy`.
-
-    Attributes:
-        vector_bucket_name: Name of an existing S3 Vectors bucket. Not created automatically. Do not
-            share one index across storages on different buckets: results are filtered by prefix only.
-        index_name: Name of an existing vector index in that bucket. Not created automatically, and
-            its dimension must match the embedder.
-        embedder: Produces the embedding vectors. Defaults to a ``BedrockEmbedder`` (Titan Text
-            Embeddings V2) on the storage's ``boto_session``, or in the storage's region when it has
-            none, created on first use.
-        max_results: Maximum number of results to return. The limit applies before results are
-            filtered to this storage's prefix (and to a ``namespace()`` view's prefix), so a search
-            over a narrow prefix of a shared index can return fewer results.
-        boto_session: Pre-configured boto3 session for the S3 Vectors client. Defaults to the
-            storage's ``boto_session``, or a session in the storage's region when it has none.
-        boto_client_config: Botocore Config object for the S3 Vectors client.
-    """
-
-    vector_bucket_name: str
-    index_name: str
-    embedder: Embedder | None = None
-    max_results: int = 10
-    boto_session: Any = None
-    boto_client_config: Any = None
-
-
 class S3VectorSearchStrategy:
     """Vector search for :class:`~strands.storage.S3Storage`, backed by Amazon S3 Vectors.
 
@@ -54,34 +25,57 @@ class S3VectorSearchStrategy:
     the :class:`~strands.storage.search.Embedder` is shared.
 
     The vector bucket and index must already exist, with a dimension matching the embedder (1024 for
-    the default, Titan Text Embeddings V2). Clients default to the storage's session, else its region. Vectors are keyed
-    by the full object key, so storages sharing a bucket under different prefixes can share one index.
+    the default, Titan Text Embeddings V2). Clients default to the storage's session, else its region.
+    Vectors are keyed by the full object key, so storages sharing a bucket under different prefixes can
+    share one index.
     Empty and non-UTF-8 values are stored but not indexed, and clear any earlier vector for that key.
     Attach each instance to a single storage.
 
     Example:
         ```python
         from strands.storage import S3Storage
-        from strands.storage.search import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+        from strands.storage.search import S3VectorSearchStrategy
 
         storage = S3Storage(
             "my-bucket",
-            search_strategy=S3VectorSearchStrategy(
-                S3VectorSearchStrategyConfig(vector_bucket_name="my-vectors", index_name="notes")
-            ),
+            search_strategy=S3VectorSearchStrategy(vector_bucket_name="my-vectors", index_name="notes"),
         )
         ```
     """
 
-    def __init__(self, config: S3VectorSearchStrategyConfig) -> None:
+    def __init__(
+        self,
+        *,
+        vector_bucket_name: str,
+        index_name: str,
+        embedder: Embedder | None = None,
+        max_results: int = 10,
+        boto_session: Any = None,
+        boto_client_config: Any = None,
+    ) -> None:
         """Initialize the S3 Vectors search strategy.
 
         Args:
-            config: Vector bucket and index, plus optional embedder and client settings. See
-                :class:`S3VectorSearchStrategyConfig`.
+            vector_bucket_name: Name of an existing S3 Vectors bucket. Not created automatically. Do not
+                share one index across storages on different buckets: results are filtered by prefix only.
+            index_name: Name of an existing vector index in that bucket. Not created automatically, and
+                its dimension must match the embedder.
+            embedder: Produces the embedding vectors. Defaults to a ``BedrockEmbedder`` (Titan Text
+                Embeddings V2) on the storage's ``boto_session``, or in the storage's region when it has
+                none, created on first use.
+            max_results: Maximum number of results to return. The limit applies before results are
+                filtered to this storage's prefix (and to a ``namespace()`` view's prefix), so a search
+                over a narrow prefix of a shared index can return fewer results.
+            boto_session: Pre-configured boto3 session for the S3 Vectors client. Defaults to the
+                storage's ``boto_session``, or a session in the storage's region when it has none.
+            boto_client_config: Botocore Config object for the S3 Vectors client.
         """
-        self._config = config
-        self._embedder: Embedder | None = config.embedder
+        self._vector_bucket_name = vector_bucket_name
+        self._index_name = index_name
+        self._embedder: Embedder | None = embedder
+        self._max_results = max_results
+        self._boto_session = boto_session
+        self._boto_client_config = boto_client_config
         self._client: Any = None
 
     async def index(self, storage: S3Storage, key: str, data: bytes, **kwargs: Any) -> None:
@@ -104,8 +98,8 @@ class S3VectorSearchStrategy:
         vector = await self._get_embedder(storage).embed(text)
         await asyncio.to_thread(
             self._get_client(storage).put_vectors,
-            vectorBucketName=self._config.vector_bucket_name,
-            indexName=self._config.index_name,
+            vectorBucketName=self._vector_bucket_name,
+            indexName=self._index_name,
             vectors=[{"key": storage.prefix + key, "data": {"float32": vector}}],
         )
 
@@ -120,8 +114,8 @@ class S3VectorSearchStrategy:
         """
         await asyncio.to_thread(
             self._get_client(storage).delete_vectors,
-            vectorBucketName=self._config.vector_bucket_name,
-            indexName=self._config.index_name,
+            vectorBucketName=self._vector_bucket_name,
+            indexName=self._index_name,
             keys=[storage.prefix + key],
         )
 
@@ -139,10 +133,10 @@ class S3VectorSearchStrategy:
         query_vector = await self._get_embedder(storage).embed(query)
         response = await asyncio.to_thread(
             self._get_client(storage).query_vectors,
-            vectorBucketName=self._config.vector_bucket_name,
-            indexName=self._config.index_name,
+            vectorBucketName=self._vector_bucket_name,
+            indexName=self._index_name,
             queryVector={"float32": query_vector},
-            topK=self._config.max_results,
+            topK=self._max_results,
             returnDistance=True,
         )
         prefix = storage.prefix
@@ -179,13 +173,13 @@ class S3VectorSearchStrategy:
         import boto3
         from botocore.config import Config
 
-        config = self._config.boto_client_config
+        config = self._boto_client_config
         if config is None:
             config = Config(user_agent_extra="strands-agents")
         elif not getattr(config, "user_agent_extra", None):
             config = config.merge(Config(user_agent_extra="strands-agents"))
 
-        session = self._config.boto_session or storage.boto_session or boto3.Session(region_name=storage.region_name)
+        session = self._boto_session or storage.boto_session or boto3.Session(region_name=storage.region_name)
         self._client = session.client("s3vectors", config=config)
         return self._client
 

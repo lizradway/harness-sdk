@@ -13,7 +13,7 @@ import pytest
 
 from strands.storage import S3Storage
 from strands.storage.embeddings.bedrock import BedrockEmbedder
-from strands.storage.search import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+from strands.storage.search import S3VectorSearchStrategy
 from tests_integ._aws import resolve_region
 
 REGION = resolve_region()
@@ -78,12 +78,10 @@ def make_storage(boto_session, buckets, prefix=""):
         prefix=prefix,
         boto_session=boto_session,
         search_strategy=S3VectorSearchStrategy(
-            S3VectorSearchStrategyConfig(
-                vector_bucket_name=vector_bucket,
-                index_name="default",
-                embedder=BedrockEmbedder(boto_session=boto_session),
-                boto_session=boto_session,
-            )
+            vector_bucket_name=vector_bucket,
+            index_name="default",
+            embedder=BedrockEmbedder(boto_session=boto_session),
+            boto_session=boto_session,
         ),
     )
 

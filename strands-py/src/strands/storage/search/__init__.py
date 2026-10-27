@@ -9,7 +9,7 @@ from ..embeddings.embedder import Embedder
 from ..storage import StorageSearchResult
 from .bm25 import Bm25SearchStrategy, Bm25SearchStrategyConfig
 from .keyword import KeywordSearchStrategy
-from .s3_vector import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+from .s3_vector import S3VectorSearchStrategy
 from .types import SearchStrategy
 
 __all__ = [
@@ -18,7 +18,6 @@ __all__ = [
     "Embedder",
     "KeywordSearchStrategy",
     "S3VectorSearchStrategy",
-    "S3VectorSearchStrategyConfig",
     "SearchStrategy",
     "StorageSearchResult",
 ]

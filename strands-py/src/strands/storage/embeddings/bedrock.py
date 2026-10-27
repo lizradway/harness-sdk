@@ -25,16 +25,14 @@ class BedrockEmbedder(Embedder):
         ```python
         from strands.storage import S3Storage
         from strands.storage.embeddings.bedrock import BedrockEmbedder
-        from strands.storage.search import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+        from strands.storage.search import S3VectorSearchStrategy
 
         storage = S3Storage(
             "my-bucket",
             search_strategy=S3VectorSearchStrategy(
-                S3VectorSearchStrategyConfig(
-                    vector_bucket_name="my-vectors",
-                    index_name="notes",
-                    embedder=BedrockEmbedder(model_id="amazon.titan-embed-text-v2:0", region_name="us-west-2"),
-                )
+                vector_bucket_name="my-vectors",
+                index_name="notes",
+                embedder=BedrockEmbedder(model_id="amazon.titan-embed-text-v2:0", region_name="us-west-2"),
             ),
         )
         ```

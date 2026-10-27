@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from strands.storage import S3Storage
-from strands.storage.search import S3VectorSearchStrategy, S3VectorSearchStrategyConfig
+from strands.storage.search import S3VectorSearchStrategy
 from strands.storage.storage import _NAMESPACED, StorageSearchResult
 from strands.types.exceptions import StorageError
 
@@ -283,7 +283,7 @@ class TestS3Storage:
 class TestS3StorageVectorSearch:
     @pytest.fixture
     def vector_strategy(self):
-        strategy = S3VectorSearchStrategy(S3VectorSearchStrategyConfig(vector_bucket_name="v", index_name="i"))
+        strategy = S3VectorSearchStrategy(vector_bucket_name="v", index_name="i")
         strategy.index = AsyncMock()
         strategy.remove = AsyncMock()
         strategy.search = AsyncMock(return_value=[])
