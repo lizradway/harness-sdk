@@ -121,7 +121,7 @@ the classifier entirely (fast path for known-safe tools).
 </Tab>
 </Tabs>
 
-To classify with a decision model instead, pass it as the classifier. A decision model answers closed questions about some state; here it answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval and shows its reason in the prompt. Give the decision model its own model; it doesn't use the agent's [auxiliary model](../../model-providers/index.mdx#auxiliary-model).
+To classify with a decision model instead, pass it as the classifier. A decision model answers closed questions about some state; here it answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval and shows its reason in the prompt.
 
 <Tabs>
 <Tab label="Python">
