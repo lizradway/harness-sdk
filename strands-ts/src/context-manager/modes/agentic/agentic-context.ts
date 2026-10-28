@@ -19,11 +19,7 @@ import {
 import type { InvokeModelContext } from '../../../middleware/stages.js'
 import type { MiddlewareInputHandler } from '../../../middleware/types.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
-
-/** Whether a message carries a text turn: the text itself, or the placeholder left where it was offloaded. */
-function hasTextContent(message: Message): boolean {
-  return message.content.some((block) => block.type === 'textBlock' || block.type === 'offloadedBlock')
-}
+import { isTextContent } from '../../strategies/offload/base.js'
 
 /** Default number of recent messages to preserve verbatim during summarization or truncation. */
 const DEFAULT_KEEP_RECENT_MESSAGES = 10
@@ -274,7 +270,7 @@ export const pinContextTool = tool({
         candidateIndices.push(i)
         // Stop after we hit a user text message (the turn boundary)
         const msg = messages[i]!
-        if (msg.role === 'user' && hasTextContent(msg)) break
+        if (msg.role === 'user' && msg.content.some(isTextContent)) break
         i--
       }
     } else if (typeof select === 'number') {
@@ -290,8 +286,8 @@ export const pinContextTool = tool({
     const targetIndices = filter
       ? candidateIndices.filter((i) => {
           const msg = messages[i]!
-          if (filter === 'user') return msg.role === 'user' && hasTextContent(msg)
-          if (filter === 'assistant') return msg.role === 'assistant' && hasTextContent(msg)
+          if (filter === 'user') return msg.role === 'user' && msg.content.some(isTextContent)
+          if (filter === 'assistant') return msg.role === 'assistant' && msg.content.some(isTextContent)
           if (filter === 'tools')
             return msg.content.some((b) => b.type === 'toolUseBlock' || b.type === 'toolResultBlock')
           return true

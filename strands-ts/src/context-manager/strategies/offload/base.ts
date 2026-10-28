@@ -117,8 +117,12 @@ export function toolMatchesTarget(
   return false
 }
 
-/** Whether a block is a text turn's content: the text itself, or the placeholder left where it was offloaded. */
-function isTextContent(block: ContentBlock): boolean {
+/**
+ * Whether a block is a text turn's content: the text itself, or the placeholder left where it was offloaded.
+ *
+ * @internal
+ */
+export function isTextContent(block: ContentBlock): boolean {
   return block instanceof TextBlock || block instanceof OffloadedBlock
 }
 
@@ -410,20 +414,30 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
+    return this._removeMessages(messages, eligible, (count) => this._makeRemovalMarker(count))
+  }
+
+  /**
+   * Removes messages with their tool pairs, leaves the marker `markerFor` returns at the gap, and
+   * restores alternation. Returns whether anything was removed.
+   */
+  protected async _removeMessages(
+    messages: Message[],
+    toRemove: Message[],
+    markerFor: (removedCount: number) => string | null
+  ): Promise<boolean> {
+    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
     if (removed.length === 0) return false
 
-    const marker = this._makeRemovalMarker(removed.length)
-    if (marker) {
-      insertMarker(messages, lowestIndex, marker, await this._stashRemoved(removed))
-    }
+    const marker = markerFor(removed.length)
+    if (marker !== null) insertMarker(messages, lowestIndex, marker, await this._stashRemoved(removed))
 
     repairAlternation(messages)
     return true
   }
 
   /** Stores removed messages for retrieval; a failed write leaves the marker without a reference. */
-  protected async _stashRemoved(removed: Message[]): Promise<string | undefined> {
+  private async _stashRemoved(removed: Message[]): Promise<string | undefined> {
     if (!this._stash) return undefined
     try {
       return await this._stash.storeRemoved(removed)
@@ -600,12 +614,7 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const toRemove = removable.slice(0, removeCount)
 
-    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
-    if (removed.length === 0) return false
-
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed.length), await this._stashRemoved(removed))
-    repairAlternation(messages)
-    return true
+    return this._removeMessages(messages, toRemove, (count) => this._makeRemovalMarker(count))
   }
 
   protected override _makeRemovalMarker(count: number): string {

@@ -23,10 +23,7 @@ import {
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
-  insertMarker,
   offloadPlaceholder,
-  spliceWithPairs,
-  repairAlternation,
   type OffloadConditions,
   type OffloadTarget,
 } from './base.js'
@@ -80,11 +77,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     if (!summary) return false
 
     const totalTokens = await model.countTokens(safe)
-    const { removed, lowestIndex } = spliceWithPairs(messages, safe)
     const marker = formatSummarized(`${safe.length} messages`, totalTokens, summary)
-    insertMarker(messages, lowestIndex, marker, await this._stashRemoved(removed))
+    if (!(await this._removeMessages(messages, safe, () => marker))) return false
 
-    repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
     return true
   }

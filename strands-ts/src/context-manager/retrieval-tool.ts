@@ -8,7 +8,7 @@
 
 import { z } from 'zod'
 import { tool } from '../tools/tool-factory.js'
-import { isSearchableContent, searchContent } from '../vended-plugins/context-offloader/search.js'
+import { searchContent } from '../vended-plugins/context-offloader/search.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import { CitationsBlock } from '../types/citations.js'
 import {
@@ -102,7 +102,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       }
 
       const text = joinText(entries.map(entryText))
-      if (!text || !isSearchableContent('text/plain')) {
+      if (!text) {
         return `Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.`
       }
 
@@ -158,7 +158,6 @@ function entriesFrom(results: ReadonlyArray<{ data: unknown } | null>): StashEnt
 
 /** Deserializes a stash entry with the same readers that load it from a session. */
 function stashEntryFromData(data: unknown): StashEntry | null {
-  if (typeof data === 'string') return new TextBlock(data)
   if (Array.isArray(data)) return data.map((message) => Message.fromMessageData(message as MessageData))
   if (data === null || typeof data !== 'object') return null
   try {
