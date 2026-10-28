@@ -16,7 +16,7 @@ Asking about every call wears people down until they approve without reading. Th
 about the calls that matter: a model rates each tool call, safe calls run, and risky
 ones pause the agent until a person approves or rejects them.
 
-## Approve risky tool calls
+## Ask before risky tool calls
 
 To have a person approve risky calls, add the handler with the classifier, terminal
 prompts, and trust turned on. This agent cleans up log files. Listing a directory is
@@ -86,10 +86,15 @@ classifier's reason, and the agent waits for the answer:
 - Anything else rejects the call. The agent learns it was rejected, so it can tell the
   user or try something else.
 
-The classifier fails closed: if its model call errors, the tool call waits for
-approval. It runs on the agent's model, or on the
-[auxiliary model](../model-providers/index.md#auxiliary-model) when you set one.
-Without the classifier, every tool call prompts.
+The default classifier is an LLM acting as a judge. It runs on the agent's model, or
+on the [auxiliary model](../model-providers/index.md#auxiliary-model) when you set
+one, and it fails closed: if its model call errors, the tool call waits for approval.
+You can swap in a decision model instead, a small model built to answer closed
+questions fast, such as Jev or
+[Strands Decider](https://github.com/strands-labs/strands-decider), or bring your own
+decision model or classifier function.
+[Human in the loop](./interventions/human-in-the-loop.md#risk-classifier) shows each
+option. Without a classifier, every tool call prompts.
 
 ## Next steps
 
