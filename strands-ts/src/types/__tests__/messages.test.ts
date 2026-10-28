@@ -189,6 +189,15 @@ describe('OffloadedBlock', () => {
     expect(block.toText()).toBe('[Dropped] [ref: tu-1]')
   })
 
+  test('renders and serializes without a reference when the original was not stashed', () => {
+    const block = new OffloadedBlock({ preview: '[Dropped]' })
+
+    expect(block).toEqual({ type: 'offloadedBlock', preview: '[Dropped]' })
+    expect(block.toText()).toBe('[Dropped]')
+    expect(block.toJSON()).toEqual({ offloaded: { preview: '[Dropped]' } })
+    expect(OffloadedBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
   test('round-trips through message data at top level and inside a tool result', () => {
     const message = new Message({
       role: 'user',

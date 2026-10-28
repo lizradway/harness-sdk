@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { summarizeContent } from '../../methods/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
@@ -109,7 +109,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = messages[0]!.content[0] as ToolResultBlock
-      expect((block.content[0] as TextBlock).text).toContain('[Summarized:')
+      expect((block.content[0] as OffloadedBlock).preview).toContain('[Summarized:')
     })
 
     it('summarizes with agent.auxModel when the strategy has no model', async () => {
@@ -142,8 +142,8 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply(context)
 
       expect(result).toBe(true)
-      const block = message.content[0] as TextBlock
-      expect(block.text).toContain('[Summarized:')
+      const block = message.content[0] as OffloadedBlock
+      expect(block.preview).toContain('[Summarized:')
     })
 
     it('summarizes user text blocks', async () => {
@@ -159,8 +159,8 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply(context)
 
       expect(result).toBe(true)
-      const block = message.content[0] as TextBlock
-      expect(block.text).toContain('[Summarized:')
+      const block = message.content[0] as OffloadedBlock
+      expect(block.preview).toContain('[Summarized:')
     })
 
     it('skips when utilization is below threshold', async () => {
@@ -222,7 +222,9 @@ describe('Offload.summarize', () => {
         new ToolResultBlock({
           toolUseId: 'tool-123',
           status: 'success',
-          content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
+          content: [
+            new OffloadedBlock({ preview: '[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output' }),
+          ],
         }),
       ])
       expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
@@ -284,7 +286,9 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toBe(largeText)
-    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain('[Summarized:')
+    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock).preview).toContain(
+      '[Summarized:'
+    )
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<rejected>'))
     warnSpy.mockRestore()
   })
@@ -303,7 +307,7 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+      expect.objectContaining({ preview: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
     ])
     expect(summarizeContent).not.toHaveBeenCalled()
   })
@@ -323,7 +327,7 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+      expect.objectContaining({ preview: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
     ])
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<images unsupported>'))
     warnSpy.mockRestore()
@@ -352,7 +356,7 @@ describe('repeated summarization', () => {
     expect(messages[0]!.metadata).toEqual(task().metadata)
     const summaries = messages
       .flatMap((message) => message.content)
-      .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
+      .filter((block) => block instanceof OffloadedBlock && block.preview.startsWith('[Summarized:'))
     expect(summaries).toHaveLength(1)
   })
 })

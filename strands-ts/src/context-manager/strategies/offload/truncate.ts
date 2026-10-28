@@ -5,7 +5,7 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy } from '../../types.js'
@@ -52,31 +52,22 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     stashRef: string | undefined
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
-      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
-      if (truncated !== block && stashRef !== undefined) {
-        return markStashed(truncated, stashRef)
-      }
-      return truncated
+      if (!truncated) return block
+      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
+      return new ToolResultBlock({
+        toolUseId: block.toolUseId,
+        status: block.status,
+        content: [offloadPlaceholder(truncated.preview, stashRef), ...truncated.opaque],
+      })
     }
     if (block instanceof TextBlock) {
-      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
       const truncated = truncateTextBlock(block, this._truncateConfig)
-      if (stashRef === undefined) return truncated
-      return new OffloadedBlock({ ref: stashRef, preview: `${truncated.text}\n\n[Stashed]` })
+      if (truncated === block) return block
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
+      return offloadPlaceholder(truncated.text, stashRef)
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
     return offloadPlaceholder(`[Offloaded: ~${tokens} tokens]`, stashRef)
   }
-}
-
-/** Turns the preview text item of a truncated tool result into the {@link OffloadedBlock} that references the original. */
-function markStashed(block: ToolResultBlock, stashRef: string): ToolResultBlock {
-  const index = block.content.findIndex((item) => item instanceof TextBlock)
-  if (index === -1) return block
-
-  const content = [...block.content]
-  const preview = (content[index] as TextBlock).text
-  content[index] = new OffloadedBlock({ ref: stashRef, preview: `${preview}\n\n[Stashed]` })
-  return new ToolResultBlock({ toolUseId: block.toolUseId, status: block.status, content })
 }

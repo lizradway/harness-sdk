@@ -64,11 +64,16 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
 }
 
 /**
- * Creates a replacement ToolResultBlock with textual content truncated.
- * Text and JSON blocks are serialized into a preview. Opaque blocks (images, video, documents)
- * are preserved untouched — their payloads cannot be meaningfully previewed as text.
+ * Splits a tool result into a preview of its textual content and the items kept as they are.
+ * Text and JSON blocks are serialized into the preview. Opaque blocks (images, video, documents)
+ * are kept untouched — their payloads cannot be meaningfully previewed as text.
+ *
+ * @returns The preview and the kept items, or `null` when nothing would be truncated.
  */
-export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): ToolResultBlock {
+export function truncateToolResultBlock(
+  block: ToolResultBlock,
+  config?: TruncateConfig
+): { preview: string; opaque: ToolResultContent[] } | null {
   const textual: string[] = []
   const opaque: ToolResultContent[] = []
 
@@ -83,21 +88,13 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   }
 
   if (textual.length === 0) {
-    return block
+    return null
   }
 
   const fullText = textual.join('\n')
   const preview = buildPreview(fullText, textual.length, config)
 
-  if (preview === fullText) {
-    return block
-  }
-
-  return new ToolResultBlock({
-    toolUseId: block.toolUseId,
-    status: block.status,
-    content: [new TextBlock(preview), ...opaque],
-  })
+  return preview === fullText ? null : { preview, opaque }
 }
 
 /**

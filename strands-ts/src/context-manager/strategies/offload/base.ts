@@ -546,13 +546,13 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 }
 
 /**
- * The block that stands in for offloaded content: an {@link OffloadedBlock} when the original is
- * retrievable from the stash, otherwise plain text.
+ * The block that stands in for offloaded content. It carries the stash reference when the
+ * original is retrievable.
  *
  * @internal
  */
-export function offloadPlaceholder(preview: string, stashRef: string | undefined): TextBlock | OffloadedBlock {
-  return stashRef === undefined ? new TextBlock(preview) : new OffloadedBlock({ ref: stashRef, preview })
+export function offloadPlaceholder(preview: string, stashRef: string | undefined): OffloadedBlock {
+  return new OffloadedBlock(stashRef === undefined ? { preview } : { preview, ref: stashRef })
 }
 
 // --- Emergency truncation strategy ---

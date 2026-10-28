@@ -142,8 +142,8 @@ describe('Offload strategies with stash', () => {
       const placeholder = block.content[0] as OffloadedBlock
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
       expect(placeholder.ref).toBe('tool-123')
-      expect(placeholder.preview).toMatch(/^\[Truncated: .*\n\n\[Stashed\]$/s)
-      expect(placeholder.toText()).toContain('[Stashed] [ref: tool-123]')
+      expect(placeholder.preview).toMatch(/^\[Truncated: /)
+      expect(placeholder.toText()).toBe(`${placeholder.preview} [ref: tool-123]`)
     })
 
     it('does not offload a tool result that already holds an OffloadedBlock', async () => {
@@ -161,7 +161,7 @@ describe('Offload strategies with stash', () => {
       expect((messages[0]!.content[0] as ToolResultBlock).content).toBe(once)
     })
 
-    it('does not stash when no stash is configured', async () => {
+    it('leaves a placeholder without a reference when no stash is configured', async () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       const strategy = Offload.truncate('toolResults')
@@ -169,9 +169,10 @@ describe('Offload strategies with stash', () => {
 
       await strategy.apply(context)
 
-      const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).not.toContain('[Stashed]')
+      const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock
+      expect(placeholder).toBeInstanceOf(OffloadedBlock)
+      expect(placeholder.ref).toBeUndefined()
+      expect(placeholder.toText()).toBe(placeholder.preview)
     })
   })
 
@@ -238,7 +239,7 @@ describe('Offload strategies with stash', () => {
       )
     })
 
-    it('leaves a text marker when there is no stash', async () => {
+    it('leaves a marker without a reference when there is no stash', async () => {
       const messages = [
         makeToolResultMessage('a', 't0'),
         new Message({ role: 'assistant', content: [new TextBlock('mid')] }),
@@ -250,7 +251,10 @@ describe('Offload strategies with stash', () => {
         .when({ utilization: 0.5 })
         .apply(makeContext(messages, undefined, 0.9))
 
-      expect(messages.at(-1)!.content).toEqual([new TextBlock('final'), new TextBlock('[Dropped: 2 messages]')])
+      expect(messages.at(-1)!.content).toEqual([
+        new TextBlock('final'),
+        new OffloadedBlock({ preview: '[Dropped: 2 messages]' }),
+      ])
     })
   })
 

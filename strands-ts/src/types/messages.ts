@@ -255,20 +255,20 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
  */
 export interface OffloadedBlockData {
   /**
-   * Stash reference under which the original content is retrievable.
-   */
-  ref: string
-
-  /**
    * Text that stands in for the original in the context window.
    */
   preview: string
+
+  /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  ref?: string
 }
 
 /**
- * Placeholder left by the context manager where it offloaded content to the stash.
+ * Placeholder left by the context manager where it offloaded content.
  *
- * Stored as `{ offloaded: { ref, preview } }`, so it is never mistaken for a {@link TextBlock}.
+ * Stored as `{ offloaded: { preview, ref } }`, so it is never mistaken for a {@link TextBlock}.
  * Models receive it as the text returned by {@link OffloadedBlock.toText}.
  */
 export class OffloadedBlock implements JSONSerializable<{ offloaded: OffloadedBlockData }> {
@@ -278,27 +278,29 @@ export class OffloadedBlock implements JSONSerializable<{ offloaded: OffloadedBl
   readonly type = 'offloadedBlock' as const
 
   /**
-   * Stash reference under which the original content is retrievable.
-   */
-  readonly ref: string
-
-  /**
    * Text that stands in for the original in the context window.
    */
   readonly preview: string
 
+  /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  readonly ref?: string
+
   constructor(data: OffloadedBlockData) {
-    this.ref = data.ref
     this.preview = data.preview
+    if (data.ref !== undefined) {
+      this.ref = data.ref
+    }
   }
 
   /**
-   * The text a model receives for this block: the preview followed by its reference token.
+   * The text a model receives for this block: the preview, followed by its reference token when it has one.
    *
    * @returns The rendered placeholder text
    */
   toText(): string {
-    return `${this.preview} [ref: ${this.ref}]`
+    return this.ref === undefined ? this.preview : `${this.preview} [ref: ${this.ref}]`
   }
 
   /**
@@ -306,7 +308,7 @@ export class OffloadedBlock implements JSONSerializable<{ offloaded: OffloadedBl
    * Called automatically by JSON.stringify().
    */
   toJSON(): { offloaded: OffloadedBlockData } {
-    return { offloaded: { ref: this.ref, preview: this.preview } }
+    return { offloaded: { preview: this.preview, ...(this.ref !== undefined && { ref: this.ref }) } }
   }
 
   /**

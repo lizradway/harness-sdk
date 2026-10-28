@@ -9,7 +9,7 @@ import {
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
 import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
-import type { Role } from '../../../types/messages.js'
+import type { ContentBlock, Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
@@ -83,8 +83,8 @@ describe('Offload.truncate', () => {
     const content = messages[0]!.content[0]
     expect(content).toBeInstanceOf(ToolResultBlock)
     const block = content as ToolResultBlock
-    expect(block.content[0]).toBeInstanceOf(TextBlock)
-    expect((block.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect(block.content[0]).toBeInstanceOf(OffloadedBlock)
+    expect((block.content[0] as OffloadedBlock).preview).toContain('[Truncated:')
   })
 
   it('does not truncate results below threshold', async () => {
@@ -164,8 +164,8 @@ describe('Offload.truncate', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toContain('[Truncated:')
+    const block = message.content[0] as OffloadedBlock
+    expect(block.preview).toContain('[Truncated:')
   })
 
   it('truncates user text blocks with userText target', async () => {
@@ -180,8 +180,8 @@ describe('Offload.truncate', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toContain('[Truncated:')
+    const block = message.content[0] as OffloadedBlock
+    expect(block.preview).toContain('[Truncated:')
   })
 
   it('does not truncate user messages with assistantText target', async () => {
@@ -207,7 +207,7 @@ describe('Offload.truncate', () => {
     await strategy.apply(context)
 
     const block = messages[0]!.content[0] as ToolResultBlock
-    const previewText = (block.content[0] as TextBlock).text
+    const previewText = (block.content[0] as OffloadedBlock).preview
     expect(previewText).toContain('[...')
     expect(previewText).toContain('chars elided')
   })
@@ -221,7 +221,7 @@ describe('Offload.truncate', () => {
     await withDefaultLocale('en-IN', () => strategy.apply(context))
 
     const block = messages[0]!.content[0] as ToolResultBlock
-    const previewText = (block.content[0] as TextBlock).text
+    const previewText = (block.content[0] as OffloadedBlock).preview
     expect(previewText).toContain('~250,000 tokens]')
     expect(previewText).toContain('[... 999,600 chars elided ...]')
   })
@@ -278,7 +278,7 @@ describe('Offload builder', () => {
 
     expect(result).toBe(true)
     const block = messages[0]!.content[0] as ToolResultBlock
-    expect((block.content[0] as TextBlock).text).toBe('[Dropped]')
+    expect((block.content[0] as OffloadedBlock).preview).toBe('[Dropped]')
   })
 
   it('Offload.drop() drops assistant text blocks', async () => {
@@ -292,8 +292,8 @@ describe('Offload builder', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toBe('[Dropped]')
+    const block = message.content[0] as OffloadedBlock
+    expect(block.preview).toBe('[Dropped]')
   })
 
   it('Offload.drop() drops user text blocks', async () => {
@@ -307,8 +307,8 @@ describe('Offload builder', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toBe('[Dropped]')
+    const block = message.content[0] as OffloadedBlock
+    expect(block.preview).toBe('[Dropped]')
   })
 
   it('Offload.truncate with string[] target matches tool by name from assistant message', async () => {
@@ -334,7 +334,7 @@ describe('Offload builder', () => {
 
     expect(result).toBe(true)
     const block = userMsg.content[0] as ToolResultBlock
-    expect((block.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect((block.content[0] as OffloadedBlock).preview).toContain('[Truncated:')
   })
 
   it('Offload.truncate with string[] target skips non-matching tools', async () => {
@@ -551,10 +551,10 @@ describe('Offload with * target (fires on everything)', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    expect((assistantMsg.content[0] as TextBlock).text).toBe('[Dropped]')
-    expect((userMsg.content[0] as TextBlock).text).toBe('[Dropped]')
+    expect((assistantMsg.content[0] as OffloadedBlock).preview).toBe('[Dropped]')
+    expect((userMsg.content[0] as OffloadedBlock).preview).toBe('[Dropped]')
     const toolBlock = userMsg.content[1] as ToolResultBlock
-    expect((toolBlock.content[0] as TextBlock).text).toBe('[Dropped]')
+    expect((toolBlock.content[0] as OffloadedBlock).preview).toBe('[Dropped]')
   })
 
   it('Offload.truncate("*") truncates all large content', async () => {
@@ -580,10 +580,10 @@ describe('Offload with * target (fires on everything)', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    expect((assistantMsg.content[0] as TextBlock).text).toContain('[Truncated:')
-    expect((userMsg.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect((assistantMsg.content[0] as OffloadedBlock).preview).toContain('[Truncated:')
+    expect((userMsg.content[0] as OffloadedBlock).preview).toContain('[Truncated:')
     const toolBlock = userMsg.content[1] as ToolResultBlock
-    expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect((toolBlock.content[0] as OffloadedBlock).preview).toContain('[Truncated:')
   })
 
   it('Offload.truncate("*") with threshold skips small content', async () => {
@@ -618,9 +618,7 @@ describe('Message-level drop vs truncate markers', () => {
 
     await strategy.apply(context)
 
-    const allText = messages.flatMap((m) =>
-      m.content.filter((b) => b instanceof TextBlock).map((b) => (b as TextBlock).text)
-    )
+    const allText = messages.flatMap((m) => m.content.map(previewOf))
     const markerText = allText.find((t) => t.includes('[Dropped:'))
     expect(markerText).toBeDefined()
     expect(markerText).toMatch(/\[Dropped: \d+ messages?\]/)
@@ -642,9 +640,7 @@ describe('Message-level drop vs truncate markers', () => {
 
     await strategy.apply(context)
 
-    const allText = messages.flatMap((m) =>
-      m.content.filter((b) => b instanceof TextBlock).map((b) => (b as TextBlock).text)
-    )
+    const allText = messages.flatMap((m) => m.content.map(previewOf))
     const markerText = allText.find((t) => t.includes('elided'))
     expect(markerText).toBeDefined()
     expect(markerText).toMatch(/\[\.\.\. \d+ messages? elided \.\.\.\]/)
@@ -846,7 +842,7 @@ describe('insertMarker', () => {
     const messages = [text('user', 'task'), text('user', 'u1')]
     insertMarker(messages, 1, 'marker')
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
-    expect(messages[1]!.content).toEqual([new TextBlock('marker')])
+    expect(messages[1]!.content).toEqual([new OffloadedBlock({ preview: 'marker' })])
   })
 
   it('appends to the assistant message before the gap', () => {
@@ -859,7 +855,7 @@ describe('insertMarker', () => {
     const messages = [text('user', 'task'), original, text('user', 'u1')]
     insertMarker(messages, 2, 'marker')
     expect(messages).toHaveLength(3)
-    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new OffloadedBlock({ preview: 'marker' })])
     expect(messages[1]!.trackingId).toBe('msg-1')
     expect(messages[1]!.metadata).toEqual({ custom: { k: 'v' } })
     expect(original.content).toEqual([new TextBlock('a1')])
@@ -869,7 +865,7 @@ describe('insertMarker', () => {
     const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
     insertMarker(messages, 1, 'marker')
     expect(messages).toHaveLength(3)
-    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new OffloadedBlock({ preview: 'marker' })])
   })
 
   it('inserts an OffloadedBlock when the removed messages have a stash reference', () => {
@@ -887,9 +883,14 @@ describe('insertMarker', () => {
   ])('clamps index %i into the history after message 0', (index, expected) => {
     const messages = [text('user', 'task'), text('user', 'u1')]
     insertMarker(messages, index, 'marker')
-    expect(messages.map((message) => (message.content[0] as TextBlock).text)).toEqual(expected)
+    expect(messages.map((message) => previewOf(message.content[0]!))).toEqual(expected)
   })
 })
+
+/** The text a block shows in the context window: a placeholder's preview, or the text itself. */
+function previewOf(block: ContentBlock): string {
+  return block instanceof OffloadedBlock ? block.preview : (block as TextBlock).text
+}
 
 describe('EmergencyTruncateStrategy', () => {
   it('leaves a marker on the assistant message after the cut', async () => {
@@ -901,9 +902,7 @@ describe('EmergencyTruncateStrategy', () => {
       text('user', 'u3'),
     ]
     expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
-    expect(
-      messages.map((message) => [message.role, message.content.map((block) => (block as TextBlock).text)])
-    ).toEqual([
+    expect(messages.map((message) => [message.role, message.content.map(previewOf)])).toEqual([
       ['user', ['pin']],
       ['assistant', ['a2', '[... 2 messages elided ...]']],
       ['user', ['u3']],
