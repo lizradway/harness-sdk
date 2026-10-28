@@ -7,8 +7,12 @@ import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import {
+  heuristicCountTokens,
+  makeContext,
+  makeToolResultMessage,
+} from '../../../__fixtures__/context-manager-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
-import type { ContextState } from '../../types.js'
 
 vi.mock('../../methods/summarize.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>
@@ -17,51 +21,6 @@ vi.mock('../../methods/summarize.js', async (importOriginal) => {
     summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
   }
 })
-
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
-function makeContext(messages: Message[], utilization = 0.5, model?: unknown): ContextState {
-  const resolvedModel = model
-    ? { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs), ...(model as object) }
-    : undefined
-  const mockData = resolvedModel ? { messages, extra: { model: resolvedModel } as Partial<Agent> } : { messages }
-  const agent = createMockAgent(mockData)
-  return {
-    messages,
-    agent,
-    utilization,
-  }
-}
 
 describe('Offload.summarize', () => {
   it('creates a strategy with correct name', () => {
@@ -79,7 +38,7 @@ describe('Offload.summarize', () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const strategy = Offload.summarize('toolResults')
-      const context = makeContext(messages)
+      const context = makeContext(messages, { model: null })
 
       const result = await strategy.apply(context)
 
@@ -91,7 +50,7 @@ describe('Offload.summarize', () => {
       const messages = [makeToolResultMessage(smallText)]
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('toolResults').when({ threshold: 2500 })
-      const context = makeContext(messages, 0.9, mockModel)
+      const context = makeContext(messages, { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -103,7 +62,7 @@ describe('Offload.summarize', () => {
       const messages = [makeToolResultMessage(largeText)]
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('toolResults')
-      const context = makeContext(messages, 0.9, mockModel)
+      const context = makeContext(messages, { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -137,7 +96,7 @@ describe('Offload.summarize', () => {
       })
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('assistantText')
-      const context = makeContext([message], 0.9, mockModel)
+      const context = makeContext([message], { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -154,7 +113,7 @@ describe('Offload.summarize', () => {
       })
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('userText')
-      const context = makeContext([message], 0.9, mockModel)
+      const context = makeContext([message], { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -168,7 +127,7 @@ describe('Offload.summarize', () => {
       const messages = [makeToolResultMessage(largeText)]
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
-      const context = makeContext(messages, 0.5, mockModel)
+      const context = makeContext(messages, { utilization: 0.5, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -183,7 +142,7 @@ describe('Offload.summarize', () => {
       const messages = [firstMessage, toolResultMessage, latest]
       const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
       const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
-      const context = makeContext(messages, 0.9, mockModel)
+      const context = makeContext(messages, { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -193,7 +152,7 @@ describe('Offload.summarize', () => {
     it('returns false on empty messages', async () => {
       const mockModel = { stream: vi.fn() }
       const strategy = Offload.summarize('toolResults')
-      const context = makeContext([], 0.9, mockModel)
+      const context = makeContext([], { utilization: 0.9, model: mockModel })
 
       const result = await strategy.apply(context)
 
@@ -215,7 +174,10 @@ describe('Offload.summarize', () => {
       const invocationContext = new InvocationContextImpl({ turns: 1 })
       invocationContext.usage.turnsTaken = 5
 
-      const result = await strategy.apply({ ...makeContext(messages, 0.9, { stream: vi.fn() }), invocationContext })
+      const result = await strategy.apply({
+        ...makeContext(messages, { utilization: 0.9, model: { stream: vi.fn() } }),
+        invocationContext,
+      })
 
       expect(result).toBe(true)
       expect(messages[0]!.content).toEqual([
@@ -251,7 +213,7 @@ describe('Offload.summarize', () => {
       ]
       const strategy = Offload.summarize('*', { model: summarizer }).when({ utilization: 0.7, preserveRecent: 2 })
 
-      const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+      const result = await strategy.apply(makeContext(messages, { utilization: 0.9, model: { stream: vi.fn() } }))
 
       expect(result).toBe(true)
       expect(streamSpy).toHaveBeenCalledTimes(1)
@@ -282,7 +244,7 @@ describe('summarizer errors', () => {
     const messages = [makeToolResultMessage(largeText, 'call_1'), makeToolResultMessage(largeText, 'call_2')]
     const strategy = Offload.summarize('toolResults')
 
-    const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    const result = await strategy.apply(makeContext(messages, { utilization: 0.9, model: { stream: vi.fn() } }))
 
     expect(result).toBe(true)
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toBe(largeText)
@@ -303,7 +265,7 @@ describe('summarizer errors', () => {
     ]
     const strategy = Offload.summarize('*', { model: new MockMessageModel() }).when({ threshold: 10 })
 
-    const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    const result = await strategy.apply(makeContext(messages, { utilization: 0.9, model: { stream: vi.fn() } }))
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
@@ -323,7 +285,7 @@ describe('summarizer errors', () => {
     ]
     const strategy = Offload.summarize('*', { model: new MockMessageModel() }).when({ threshold: 10 })
 
-    const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    const result = await strategy.apply(makeContext(messages, { utilization: 0.9, model: { stream: vi.fn() } }))
 
     expect(result).toBe(true)
     expect(messages[0]!.content).toEqual([
@@ -350,7 +312,7 @@ describe('repeated summarization', () => {
         }),
         makeToolResultMessage('x', `t${index}`)
       )
-      await strategy.apply(makeContext(messages, 0.9, mockModel))
+      await strategy.apply(makeContext(messages, { utilization: 0.9, model: mockModel }))
     }
     expect(messages[0]!.content).toEqual(task().content)
     expect(messages[0]!.metadata).toEqual(task().metadata)

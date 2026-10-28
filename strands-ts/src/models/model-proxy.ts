@@ -68,13 +68,7 @@ export function renderForModel(messages: Message[]): Message[] {
 
 function renderMessage(message: Message): Message {
   const content = message.content.map(renderBlock)
-  if (content.every((block, index) => block === message.content[index])) return message
-  return new Message({
-    role: message.role,
-    content,
-    trackingId: message.trackingId,
-    ...(message.metadata !== undefined && { metadata: message.metadata }),
-  })
+  return content.every((block, index) => block === message.content[index]) ? message : message.withContent(content)
 }
 
 function renderBlock(block: ContentBlock): ContentBlock {
@@ -82,13 +76,9 @@ function renderBlock(block: ContentBlock): ContentBlock {
   if (!(block instanceof ToolResultBlock) || !block.content.some((item) => item instanceof OffloadedBlock)) {
     return block
   }
-  const content = block.content.map((item): ToolResultContent =>
-    item instanceof OffloadedBlock ? new TextBlock(item.toText()) : item
+  return block.withContent(
+    block.content.map((item): ToolResultContent =>
+      item instanceof OffloadedBlock ? new TextBlock(item.toText()) : item
+    )
   )
-  return new ToolResultBlock({
-    toolUseId: block.toolUseId,
-    status: block.status,
-    content,
-    ...(block.error !== undefined && { error: block.error }),
-  })
 }

@@ -19,6 +19,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
+import { formatElided } from '../../methods/truncate.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
 /**
@@ -246,12 +247,7 @@ export function insertMarker(messages: Message[], index: number, text: string, s
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
     if (neighbor > 0 && carrier?.role === 'assistant') {
-      messages[neighbor] = new Message({
-        role: 'assistant',
-        content: [...carrier.content, block],
-        trackingId: carrier.trackingId,
-        ...(carrier.metadata ? { metadata: carrier.metadata } : {}),
-      })
+      messages[neighbor] = carrier.withContent([...carrier.content, block])
       return
     }
   }
@@ -263,6 +259,7 @@ export function insertMarker(messages: Message[], index: number, text: string, s
  * that Anthropic/Bedrock APIs require. Called after message-level operations that
  * may leave gaps. Constructs new Message objects for merges to avoid mutating
  * objects that may be referenced elsewhere (session storage, event payloads).
+ * A merge keeps the earlier message's tracking id and metadata, and is pinned if either was.
  */
 export function repairAlternation(messages: Message[]): void {
   let writeIndex = 0
@@ -270,13 +267,11 @@ export function repairAlternation(messages: Message[]): void {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
       const prev = messages[writeIndex - 1]!
-      const pinned = prev.metadata?.custom?.pinned === true || current.metadata?.custom?.pinned === true
-      messages[writeIndex - 1] = new Message({
-        role: prev.role,
-        content: [...prev.content, ...current.content],
-        trackingId: prev.trackingId,
-        ...(pinned ? { metadata: { custom: { pinned: true } } } : {}),
-      })
+      let merged = prev.withContent([...prev.content, ...current.content])
+      if (current.metadata?.custom?.pinned === true && prev.metadata?.custom?.pinned !== true) {
+        merged = merged.withMetadata({ ...prev.metadata, custom: { ...prev.metadata?.custom, pinned: true } })
+      }
+      messages[writeIndex - 1] = merged
     } else {
       messages[writeIndex] = current
       writeIndex++
@@ -618,7 +613,7 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
   }
 
   protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+    return formatElided(count)
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

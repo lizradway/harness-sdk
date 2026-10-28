@@ -5,60 +5,14 @@ import {
   buildToolNameMap,
   collectRemovableWithPair,
   insertMarker,
+  repairAlternation,
   targetMatchesMessage,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
 import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock, Role } from '../../../types/messages.js'
-import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
-import type { Agent } from '../../../agent/agent.js'
-import type { ContextState } from '../../types.js'
+import { makeContext, makeToolResultMessage } from '../../../__fixtures__/context-manager-helpers.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
-
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
-function makeContext(messages: Message[], utilization = 0.5, overflow?: boolean): ContextState {
-  const agent = createMockAgent({
-    messages,
-    extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } } as Partial<Agent>,
-  })
-  return {
-    messages,
-    agent,
-    utilization,
-    ...(overflow ? { overflow: true } : {}),
-  }
-}
 
 describe('Offload.truncate', () => {
   it('creates a strategy with correct name', () => {
@@ -402,7 +356,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -423,7 +377,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.drop('userText').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -444,7 +398,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -471,7 +425,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -501,7 +455,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
     ]
     const strategy = Offload.drop('userText').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     const result = await strategy.apply(context)
 
@@ -520,7 +474,7 @@ describe('Offload message-level with role alternation', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
     ]
     const strategy = Offload.drop('assistantText').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -614,7 +568,7 @@ describe('Message-level drop vs truncate markers', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -636,7 +590,7 @@ describe('Message-level drop vs truncate markers', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
     ]
     const strategy = Offload.truncate('*').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -662,7 +616,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -689,7 +643,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
 
@@ -720,7 +674,7 @@ describe('pinned message protection', () => {
       new Message({ role: 'user', content: [new TextBlock('q10')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
-    const context = makeContext(messages, 0.9)
+    const context = makeContext(messages, { utilization: 0.9 })
 
     await strategy.apply(context)
     await strategy.apply(context)
@@ -745,7 +699,7 @@ describe('overflow bypass', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.85 })
-    const context = makeContext(messages, 0.5, true)
+    const context = makeContext(messages, { utilization: 0.5, overflow: true })
 
     const acted = await strategy.apply(context)
     expect(acted).toBe(true)
@@ -760,7 +714,7 @@ describe('overflow bypass', () => {
       new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.85 })
-    const context = makeContext(messages, 0.5)
+    const context = makeContext(messages, { utilization: 0.5 })
 
     const acted = await strategy.apply(context)
     expect(acted).toBe(false)
@@ -892,6 +846,42 @@ function previewOf(block: ContentBlock): string {
   return block instanceof OffloadedBlock ? block.preview : (block as TextBlock).text
 }
 
+describe('repairAlternation', () => {
+  const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 }
+
+  it('merges same-role neighbours keeping the earlier message id and metadata', () => {
+    const messages = [
+      text('user', 'q'),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('a1')],
+        trackingId: 'first',
+        metadata: { usage, custom: { source: 'a' } },
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')], trackingId: 'second' }),
+    ]
+
+    repairAlternation(messages)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]!.trackingId).toBe('first')
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('a2')])
+    expect(messages[1]!.metadata).toEqual({ usage, custom: { source: 'a' } })
+  })
+
+  it('pins the merged message when only the later one was pinned, keeping the rest of the metadata', () => {
+    const messages = [
+      text('user', 'q'),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')], metadata: { usage, custom: { source: 'a' } } }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')], metadata: { custom: { pinned: true } } }),
+    ]
+
+    repairAlternation(messages)
+
+    expect(messages[1]!.metadata).toEqual({ usage, custom: { source: 'a', pinned: true } })
+  })
+})
+
 describe('EmergencyTruncateStrategy', () => {
   it('leaves a marker on the assistant message after the cut', async () => {
     const messages = [
@@ -901,7 +891,9 @@ describe('EmergencyTruncateStrategy', () => {
       text('assistant', 'a2'),
       text('user', 'u3'),
     ]
-    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
+    expect(
+      await new EmergencyTruncateStrategy().apply(makeContext(messages, { utilization: 1.1, overflow: true }))
+    ).toBe(true)
     expect(messages.map((message) => [message.role, message.content.map(previewOf)])).toEqual([
       ['user', ['pin']],
       ['assistant', ['a2', '[... 2 messages elided ...]']],
@@ -940,7 +932,7 @@ describe('repeated message-level reduction', () => {
       for (let index = 0; index < 30; index++) {
         const added = turn(index, textOnly)
         messages.push(...added)
-        await strategy.apply(makeContext(messages, 1.1, true))
+        await strategy.apply(makeContext(messages, { utilization: 1.1, overflow: true }))
         expect(messages.at(-1)).toBe(added.at(-1))
       }
       expect(messages[0]!.content).toEqual(task().content)

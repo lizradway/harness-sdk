@@ -154,6 +154,31 @@ export class Message implements JSONSerializable<MessageData> {
   clone(): Message {
     return Message.fromMessageData(deepCopy(this.toJSON()) as unknown as MessageData)
   }
+
+  /**
+   * A copy of this message with other content, keeping its role, tracking id, and metadata.
+   *
+   * @param content - The content of the copy
+   * @returns The copy
+   */
+  withContent(content: ContentBlock[]): Message {
+    return new Message({
+      role: this.role,
+      content,
+      trackingId: this.trackingId,
+      ...(this.metadata !== undefined && { metadata: this.metadata }),
+    })
+  }
+
+  /**
+   * A copy of this message with other metadata, keeping its role, content, and tracking id.
+   *
+   * @param metadata - The metadata of the copy
+   * @returns The copy
+   */
+  withMetadata(metadata: MessageMetadata): Message {
+    return new Message({ role: this.role, content: this.content, trackingId: this.trackingId, metadata })
+  }
 }
 
 /**
@@ -496,6 +521,21 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
     if (data.error !== undefined) {
       this.error = data.error
     }
+  }
+
+  /**
+   * A copy of this result with other content, keeping its tool use id, status, and error.
+   *
+   * @param content - The content of the copy
+   * @returns The copy
+   */
+  withContent(content: ToolResultContent[]): ToolResultBlock {
+    return new ToolResultBlock({
+      toolUseId: this.toolUseId,
+      status: this.status,
+      content,
+      ...(this.error !== undefined && { error: this.error }),
+    })
   }
 
   /**

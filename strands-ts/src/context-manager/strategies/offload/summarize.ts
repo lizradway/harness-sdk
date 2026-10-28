@@ -105,11 +105,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [offloadPlaceholder(formatSummarized('tool result', tokens, summary), stashRef)],
-      })
+      return block.withContent([offloadPlaceholder(formatSummarized('tool result', tokens, summary), stashRef)])
     }
 
     if (block instanceof TextBlock) {

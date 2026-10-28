@@ -9,63 +9,15 @@ import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
+import { makeContext, makeToolResultMessage } from '../../__fixtures__/context-manager-helpers.js'
 import type { Tool } from '../../tools/tool.js'
-import type { ContextState } from '../types.js'
 
 function invokeRetrievalTool(retrievalTool: Tool, input: unknown): Promise<unknown> {
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
 }
 
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
 async function stashAll(stash: Stash, messages: Message[]): Promise<void> {
   for (const message of messages) await stash.storeMessage(message)
-}
-
-function makeContext(messages: Message[], stash?: Stash, utilization = 0.5): ContextState {
-  const agent = createMockAgent({
-    messages,
-    extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } } as never,
-  })
-  const base: ContextState = {
-    messages,
-    agent,
-    utilization,
-  }
-  if (stash) {
-    return { ...base, stash }
-  }
-  return base
 }
 
 describe('ContextManager tool registration', () => {
@@ -120,7 +72,7 @@ describe('Offload strategies with stash', () => {
       // Merges a2 into a1: the big block is now a1_1, while it was stored on arrival as a2_0.
       repairAlternation(messages)
 
-      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, stash))
+      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { stash }))
 
       const placeholder = messages[1]!.content[1] as OffloadedBlock
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
@@ -136,7 +88,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -156,7 +108,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
@@ -173,7 +125,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage('x'.repeat(20000))]
       await stashAll(stash, messages)
       const strategy = Offload.truncate('toolResults', { previewTokens: 10 })
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
       await strategy.apply(context)
       const once = (messages[0]!.content[0] as ToolResultBlock).content
 
@@ -205,7 +157,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -224,7 +176,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
@@ -243,7 +195,7 @@ describe('Offload strategies with stash', () => {
       await stashAll(stash, messages)
       const strategy = Offload.drop('*').when({ utilization: 0.5 })
 
-      const acted = await strategy.apply(makeContext(messages, stash, 0.9))
+      const acted = await strategy.apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       expect(acted).toBe(true)
       const marker = new OffloadedBlock({ ref: 'removed-m1', preview: '[Dropped: 2 messages]' })
@@ -271,7 +223,7 @@ describe('Offload strategies with stash', () => {
 
       await Offload.drop('*')
         .when({ utilization: 0.5 })
-        .apply(makeContext(messages, undefined, 0.9))
+        .apply(makeContext(messages, { utilization: 0.9 }))
 
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
@@ -298,7 +250,7 @@ describe('Offload strategies with stash', () => {
       ]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -333,7 +285,7 @@ describe('Offload strategies with stash', () => {
       ]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
@@ -459,7 +411,7 @@ describe('Offload strategies with stash', () => {
         }),
       ]
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 

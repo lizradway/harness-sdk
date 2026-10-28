@@ -9,7 +9,12 @@ import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy } from '../../types.js'
-import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
+import {
+  formatElided,
+  truncateToolResultBlock,
+  truncateTextBlock,
+  type TruncateConfig,
+} from '../../methods/truncate.js'
 import { BaseOffloadStrategy, offloadPlaceholder, type OffloadConditions, type OffloadTarget } from './base.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
@@ -41,7 +46,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 
   protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+    return formatElided(count)
   }
 
   protected async _replaceBlock(
@@ -55,11 +60,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
       if (!truncated) return block
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [offloadPlaceholder(truncated.preview, stashRef), ...truncated.opaque],
-      })
+      return block.withContent([offloadPlaceholder(truncated.preview, stashRef), ...truncated.opaque])
     }
     if (block instanceof TextBlock) {
       const truncated = truncateTextBlock(block, this._truncateConfig)

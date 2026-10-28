@@ -36,11 +36,7 @@ export class DropStrategy extends BaseOffloadStrategy {
 
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [marker],
-      })
+      return block.withContent([marker])
     }
     logger.debug(`trackingId=<${message.trackingId}> | dropped block from context window`)
     return marker

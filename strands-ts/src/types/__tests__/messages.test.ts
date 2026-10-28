@@ -228,6 +228,43 @@ describe('OffloadedBlock', () => {
   })
 })
 
+describe('copies with other content', () => {
+  test('Message.withContent keeps role, tracking id, and metadata', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    const copy = message.withContent([new TextBlock('b')])
+
+    expect(copy).toEqual(new Message({ role: 'user', content: [new TextBlock('b')], trackingId: 'm1', metadata }))
+    expect(message.content).toEqual([new TextBlock('a')])
+  })
+
+  test('Message.withMetadata keeps role, content, and tracking id', () => {
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1' })
+
+    const copy = message.withMetadata({ custom: { pinned: true } })
+
+    expect(copy).toEqual(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('a')],
+        trackingId: 'm1',
+        metadata: { custom: { pinned: true } },
+      })
+    )
+    expect(message.metadata).toBeUndefined()
+  })
+
+  test('ToolResultBlock.withContent keeps tool use id, status, and error', () => {
+    const error = new Error('boom')
+    const block = new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('a')], error })
+
+    expect(block.withContent([new TextBlock('b')])).toEqual(
+      new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('b')], error })
+    )
+  })
+})
+
 describe('ToolUseBlock', () => {
   test('creates tool use block', () => {
     const block = new ToolUseBlock({
