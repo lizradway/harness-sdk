@@ -165,13 +165,11 @@ export class Stash {
    * Offload placeholders are never stored: their keys belong to the originals they replaced.
    *
    * @param message - The message whose content should be persisted
-   * @param skipToolUseIds - ToolUseIds to skip (e.g. retrieval tool results)
    */
-  async storeMessage(message: Message, skipToolUseIds?: ReadonlySet<string>): Promise<void> {
+  async storeMessage(message: Message): Promise<void> {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
-        if (skipToolUseIds?.has(block.toolUseId)) continue
         if (block.content.some((item) => item instanceof OffloadedBlock)) continue
         await this._storeToolResult(block)
       } else if (

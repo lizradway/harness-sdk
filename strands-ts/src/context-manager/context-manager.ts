@@ -18,7 +18,7 @@ import type { ContextManagerConfig, ContextStrategy, ContextState } from './type
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
-import { createRetrievalTool, retrievalToolUseIds } from './retrieval-tool.js'
+import { createRetrievalTool } from './retrieval-tool.js'
 
 const AUTO_TRUNCATE_THRESHOLD = 1_500
 const AGENTIC_TRUNCATE_THRESHOLD = 8_000
@@ -135,14 +135,11 @@ export class ContextManager implements Plugin {
 
     if (this._stash) {
       const stash = this._stash
-
-      const seededSkip = retrievalToolUseIds(agent.messages)
       for (const message of agent.messages) {
-        await stash.storeMessage(message, seededSkip)
+        await stash.storeMessage(message)
       }
-
       agent.addHook(MessageAddedEvent, async (event) => {
-        await stash.storeMessage(event.message, retrievalToolUseIds(event.agent.messages))
+        await stash.storeMessage(event.message)
       })
     }
 

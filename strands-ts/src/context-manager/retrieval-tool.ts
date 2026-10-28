@@ -19,7 +19,6 @@ import {
   TextBlock,
   ToolResultBlock,
   toolResultContentFromData,
-  ToolUseBlock,
 } from '../types/messages.js'
 import type {
   ContentBlock,
@@ -112,22 +111,6 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       )
     },
   })
-}
-
-/**
- * The toolUseIds of every retrieval tool call in the history. Their results are copies of
- * stashed content, so the stash skips them.
- *
- * @internal
- */
-export function retrievalToolUseIds(messages: readonly Message[]): Set<string> {
-  const ids = new Set<string>()
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof ToolUseBlock && block.name === RETRIEVAL_TOOL_NAME) ids.add(block.toolUseId)
-    }
-  }
-  return ids
 }
 
 /**
