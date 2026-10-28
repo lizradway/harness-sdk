@@ -82,35 +82,37 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
     inputSchema: retrievalInputSchema,
     callback: async (input) => {
       const entries = await resolveReference(stash, input.reference)
-      if (entries.length === 0) {
-        return `Error: reference not found: ${input.reference}`
-      }
-
-      if (!input.pattern && !input.line_range) {
-        const only = entries.length === 1 ? entries[0] : undefined
-        if (only instanceof ImageBlock || only instanceof DocumentBlock || only instanceof VideoBlock) {
-          return only as unknown as JSONValue
-        }
-        const data = only === undefined ? entries.map(entryToData) : entryToData(only)
-        const serialized = JSON.stringify(data)
-        if (serialized.length <= maxChars) return data
-        return `${serialized.slice(0, maxChars)}\n\n[truncated]`
-      }
-
-      const text = joinText(entries.map(entryText))
-      if (!text) {
-        return `Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.`
-      }
-
-      const contextLines = input.context_lines ?? 5
-
-      return searchContent(
-        text,
-        { pattern: input.pattern, line_range: input.line_range, context_lines: contextLines },
-        maxChars
-      )
+      if (entries.length === 0) return `Error: reference not found: ${input.reference}`
+      if (!input.pattern && !input.line_range) return fullContent(entries, maxChars)
+      return searchEntries(entries, input, maxChars)
     },
   })
+}
+
+/** The stored content itself: a single media block as is, otherwise its JSON form cut to `maxChars`. */
+function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
+  const only = entries.length === 1 ? entries[0] : undefined
+  if (only instanceof ImageBlock || only instanceof DocumentBlock || only instanceof VideoBlock) {
+    return only as unknown as JSONValue
+  }
+  const data = only === undefined ? entries.map(entryToData) : entryToData(only)
+  const serialized = JSON.stringify(data)
+  return serialized.length <= maxChars ? data : `${serialized.slice(0, maxChars)}\n\n[truncated]`
+}
+
+/** The lines of the entries' text that match `pattern` or fall in `line_range`. */
+function searchEntries(
+  entries: StashEntry[],
+  input: z.infer<typeof retrievalInputSchema>,
+  maxChars: number
+): ReturnType<typeof searchContent> {
+  const text = joinText(entries.map(entryText))
+  if (!text) return 'Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.'
+  return searchContent(
+    text,
+    { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? 5 },
+    maxChars
+  )
 }
 
 /**

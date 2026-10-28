@@ -189,7 +189,7 @@ export type Role = 'user' | 'assistant'
 
 /**
  * A block of content within a message.
- * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, or media (audio, image, video, document).
+ * Content blocks can contain text, tool usage requests, tool results, reasoning content, cache points, guard content, media (audio, image, video, document), or a placeholder for offloaded content.
  *
  * This is a discriminated union where the object key determines the content format.
  *

@@ -9,7 +9,11 @@ import type { ToolResultContent } from '../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 
-/** The marker left where `count` messages were removed from the context window. */
+/**
+ * The marker left where `count` messages were removed from the context window.
+ *
+ * @internal
+ */
 export function formatElided(count: number): string {
   return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
 }
