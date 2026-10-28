@@ -137,7 +137,7 @@ describe('ContextManager', () => {
       expect(await cm.stash!.list()).toStrictEqual([])
     })
 
-    it('does not overwrite a stashed original with a seeded legacy text preview', async () => {
+    it('does not overwrite a stashed original with a seeded preview', async () => {
       const storage = new InMemoryStorage()
       const view = storage.namespace('team')
       await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
@@ -147,7 +147,7 @@ describe('ContextManager', () => {
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
-            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]')],
+            content: [new OffloadedBlock({ ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview' })],
           }),
         ],
       })

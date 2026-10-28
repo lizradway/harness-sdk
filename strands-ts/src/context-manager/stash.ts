@@ -64,25 +64,6 @@ export function parseStashKey(key: string): StashKey | null {
   return { id: key.slice(0, separator), index: Number(index) }
 }
 
-const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
-
-/**
- * Whether a plain text block is a legacy offload placeholder: its text ends with a ` [ref: …]` or
- * ` [refs: …]` token. Sessions saved before {@link OffloadedBlock} existed carry these.
- * Accepts live blocks and their serialized JSON form.
- *
- * @internal
- */
-export function isOffloadPlaceholder(block: unknown): boolean {
-  if (typeof block !== 'object' || block === null || !('text' in block)) return false
-  return typeof block.text === 'string' && STASH_REFS_SUFFIX.test(block.text)
-}
-
-/** Whether a block is an offload placeholder of either form: an {@link OffloadedBlock} or a legacy text marker. */
-function isPlaceholder(block: unknown): boolean {
-  return block instanceof OffloadedBlock || isOffloadPlaceholder(block)
-}
-
 /**
  * Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent.
  *
@@ -179,11 +160,14 @@ export class Stash {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
         if (skipToolUseIds?.has(block.toolUseId)) continue
-        if (block.content.some(isPlaceholder)) continue
+        if (block.content.some((item) => item instanceof OffloadedBlock)) continue
         await this._storeToolResult(block)
-      } else if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
-        continue
-      } else if (isPlaceholder(block)) {
+      } else if (
+        block instanceof ToolUseBlock ||
+        block instanceof CachePointBlock ||
+        block instanceof ReasoningBlock ||
+        block instanceof OffloadedBlock
+      ) {
         continue
       } else {
         try {

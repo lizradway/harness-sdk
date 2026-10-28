@@ -30,7 +30,7 @@ import type {
 } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
-import { isOffloadPlaceholder, parseStashKey, type Stash } from './stash.js'
+import { parseStashKey, type Stash } from './stash.js'
 
 /** What a stash entry holds: one stored block, or the messages removed together. */
 type StashEntry = ToolResultContent | ContentBlock | Message[]
@@ -85,9 +85,6 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       const entries = await resolveReference(stash, input.reference)
       if (entries.length === 0) {
         return `Error: reference not found: ${input.reference}`
-      }
-      if (entries.some((entry) => entry instanceof TextBlock && isOffloadPlaceholder(entry))) {
-        return `Error: original content for reference ${input.reference} is no longer available`
       }
 
       if (!input.pattern && !input.line_range) {
