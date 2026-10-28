@@ -16,11 +16,11 @@ Asking about every call wears people down until they approve without reading. Th
 about the calls that matter: a model rates each tool call, safe calls run, and risky
 ones pause the agent until a person approves or rejects them.
 
-## Pause risky tool calls
+## Approve risky tool calls
 
-To have a person approve risky calls, add the handler with its classifier turned on.
-This agent cleans up log files. Listing a directory is safe, so it runs. Deleting files
-can't be undone, so the agent stops and asks first:
+To have a person approve risky calls, add the handler with the classifier, terminal
+prompts, and trust turned on. This agent cleans up log files. Listing a directory is
+safe, so it runs. Deleting files can't be undone, so the agent asks first:
 
 <Tabs>
 <Tab label="Python">
@@ -44,23 +44,10 @@ def delete_files(paths: list[str]) -> str:
 
 agent = Agent(
     tools=[list_files, delete_files],
-    interventions=[HumanInTheLoop(classifier=True)],
-    callback_handler=None,
+    interventions=[HumanInTheLoop(classifier=True, ask="stdio", enable_trust=True)],
 )
 
-result = agent("Delete the rotated logs in /var/log/app")
-
-# The agent stops before each tool call the classifier rates risky
-while result.stop_reason == "interrupt":
-    responses = []
-    for interrupt in result.interrupts:
-        answer = input(f"{interrupt.reason} (y/n): ")
-        responses.append(
-            {"interruptResponse": {"interruptId": interrupt.id, "response": answer}}
-        )
-    result = agent(responses)
-
-print(result)
+agent("Delete the rotated logs in /var/log/app")
 ```
 
 </Tab>
@@ -75,60 +62,42 @@ print(result)
 </Tab>
 </Tabs>
 
-Typical output, after answering `y`:
+Typical output:
 
 ```
-Approve "delete_files" — Deleting files is irreversible; logs may be needed.?
-  Input: {"paths": ["/var/log/app/app.log.1", "/var/log/app/app.log.2"]} (y/n): y
-Done! I've deleted the 2 rotated log files:
-- `/var/log/app/app.log.1`
-- `/var/log/app/app.log.2`
-
-The current log file `/var/log/app/app.log` has been left intact.
+Let me start by listing the files in that directory to identify the rotated logs.
+Tool #1: list_files
+The rotated logs are `app.log.1` and `app.log.2`. Let me delete them now.
+Tool #2: delete_files
+Approve "delete_files" — Deleting files is irreversible and destructive.?
+  Input: {"paths": ["/var/log/app/app.log.1", "/var/log/app/app.log.2"]} (y/n/t): y
+Done! The 2 rotated log files have been removed, while the current active log file
+(`app.log`) was left untouched.
 ```
 
 Before each tool call, the classifier sends the tool name and input to a model and asks
-whether the call needs approval. A call it rates risky doesn't run. Instead, the agent
-returns with stop reason `interrupt` and one interrupt per paused call. Each
-interrupt's reason is the approval prompt: the tool, why the classifier flagged it,
-and the input.
+whether the call needs approval. `list_files` runs without a prompt. For
+`delete_files`, the handler prints the approval prompt in the terminal, with the
+classifier's reason, and the agent waits for the answer:
 
-Resume by invoking the agent with one interrupt response per interrupt. `y`, `yes`, or
-<Syntax py="True" ts="true" /> approves the call. Any other response cancels it, and
-the agent learns the call was rejected so it can tell the user or try something else.
-Keep resuming until the stop reason is no longer `interrupt`, because the agent can
-make more risky calls after you approve one.
+- `y` or `yes` approves this call.
+- `t` or `trust` approves this call and every later call to the same tool, for as long
+  as the agent exists.
+- Anything else rejects the call. The agent learns it was rejected, so it can tell the
+  user or try something else.
 
 The classifier fails closed: if its model call errors, the tool call waits for
 approval. It runs on the agent's model, or on the
 [auxiliary model](../model-providers/index.md#auxiliary-model) when you set one.
-Without the classifier, every tool call pauses.
-
-In a web service, the request that pauses the agent and the request that resumes it
-are usually different. Use a [session manager](./session-management.md) to restore the
-agent between them.
-
-## Prompt at the terminal
-
-For a CLI, let the handler ask the question itself. Set
-<Syntax py='ask="stdio"' ts="ask: 'stdio'" /> alongside the classifier and the handler
-prompts in the terminal and waits for the answer. The agent never stops with an
-interrupt, so the resume loop goes away.
-
-## Skip the classifier for known-safe tools
-
-Each classified call costs a model request. When you already know a tool is safe, list
-it in <Syntax py="allowed_tools" ts="allowedTools" /> and it runs without a
-classifier call or a prompt. With
-<Syntax py='allowed_tools=["list_files"]' ts="allowedTools: ['list_files']" />, only
-calls to `delete_files` reach the classifier.
+Without the classifier, every tool call prompts.
 
 ## Next steps
 
-- [Human in the loop](./interventions/human-in-the-loop.md): classify with a decision
-  model or your own function, change the classifier's prompt or model, collect
-  answers in a custom UI, let a person trust a tool for the rest of a session, and
-  define what counts as approval.
+- [Human in the loop](./interventions/human-in-the-loop.md): pause the agent and
+  resume it from a web service instead of prompting at the terminal, collect answers
+  in a custom UI, let known-safe tools skip review, classify with a decision model or
+  your own function, change the classifier's prompt or model, and define what counts
+  as approval.
 - [Interrupts](../interrupts.md): pause the agent from your own hooks and tools.
 - [Interventions](./interventions/index.md): write your own handler to deny, guide,
   or transform tool calls.

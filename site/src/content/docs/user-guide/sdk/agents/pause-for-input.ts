@@ -1,5 +1,4 @@
-import { createInterface } from 'node:readline/promises'
-import { Agent, InterruptResponseContent, tool } from '@strands-agents/sdk'
+import { Agent, tool } from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
@@ -21,27 +20,12 @@ async function classifierExample() {
 
   const agent = new Agent({
     tools: [listFiles, deleteFiles],
-    interventions: [new HumanInTheLoop({ classifier: true })],
-    printer: false,
+    interventions: [
+      new HumanInTheLoop({ classifier: true, ask: 'stdio', enableTrust: true }),
+    ],
   })
 
-  const terminal = createInterface({ input: process.stdin, output: process.stdout })
-  let result = await agent.invoke('Delete the rotated logs in /var/log/app')
-
-  // The agent stops before each tool call the classifier rates risky
-  while (result.stopReason === 'interrupt') {
-    const responses: InterruptResponseContent[] = []
-    for (const interrupt of result.interrupts ?? []) {
-      const answer = await terminal.question(`${String(interrupt.reason)} (y/n): `)
-      responses.push(
-        new InterruptResponseContent({ interruptId: interrupt.id, response: answer })
-      )
-    }
-    result = await agent.invoke(responses)
-  }
-  terminal.close()
-
-  console.log(result.toString())
+  await agent.invoke('Delete the rotated logs in /var/log/app')
   // --8<-- [end:classifier]
 }
 
