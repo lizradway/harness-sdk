@@ -5,6 +5,7 @@
 
 import type {
   Message,
+  OffloadedBlock,
   ToolResultBlock,
   TextBlock,
   ToolUseBlock,
@@ -34,6 +35,7 @@ export type NoJSON<T> = Omit<T, 'toJSON'>
  */
 export type PlainContentBlock =
   | NoJSON<TextBlock>
+  | NoJSON<OffloadedBlock>
   | NoJSON<ToolUseBlock>
   | NoJSON<ToolResultBlock>
   | NoJSON<ReasoningBlock>

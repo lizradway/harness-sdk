@@ -6,6 +6,7 @@ import { logger } from '../../../logging/logger.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
 import {
   Message,
+  OffloadedBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -430,9 +431,12 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
+    if (block instanceof OffloadedBlock) return false
     if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
+      // A result already offloaded keeps its opaque items at shifted positions; a second pass would mislabel them.
+      if (block.content.some((item) => item instanceof OffloadedBlock)) return false
       return (
         this._target === undefined ||
         toolMatchesTarget(block, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
@@ -459,8 +463,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
+      const stashRef = this._stash?.refFor(block, message, blockIndex)
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -515,15 +519,28 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return eligible
   }
 
-  /** Transform a block. Return the replacement, or null to skip. */
+  /**
+   * Transform a block. Return the replacement, or null to skip.
+   * `stashRef` is the reference the original is retrievable under, or `undefined` when there is no stash.
+   */
   protected abstract _replaceBlock(
     block: ContentBlock,
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
+}
+
+/**
+ * The block that stands in for offloaded content: an {@link OffloadedBlock} when the original is
+ * retrievable from the stash, otherwise plain text.
+ *
+ * @internal
+ */
+export function offloadPlaceholder(preview: string, stashRef: string | undefined): TextBlock | OffloadedBlock {
+  return stashRef === undefined ? new TextBlock(preview) : new OffloadedBlock({ ref: stashRef, preview })
 }
 
 // --- Emergency truncation strategy ---

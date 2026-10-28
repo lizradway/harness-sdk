@@ -187,9 +187,11 @@ export type ContentBlockData =
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
   | { citations: CitationsBlockData }
+  | { offloaded: OffloadedBlockData }
 
 export type ContentBlock =
   | TextBlock
+  | OffloadedBlock
   | ToolUseBlock
   | ToolResultBlock
   | ReasoningBlock
@@ -245,6 +247,76 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   static fromJSON(data: TextBlockData): TextBlock {
     return new TextBlock(data.text)
+  }
+}
+
+/**
+ * Data for an offloaded block.
+ */
+export interface OffloadedBlockData {
+  /**
+   * Stash reference under which the original content is retrievable.
+   */
+  ref: string
+
+  /**
+   * Text that stands in for the original in the context window.
+   */
+  preview: string
+}
+
+/**
+ * Placeholder left by the context manager where it offloaded content to the stash.
+ *
+ * Stored as `{ offloaded: { ref, preview } }`, so it is never mistaken for a {@link TextBlock}.
+ * Models receive it as the text returned by {@link OffloadedBlock.toText}.
+ */
+export class OffloadedBlock implements JSONSerializable<{ offloaded: OffloadedBlockData }> {
+  /**
+   * Discriminator for offloaded content.
+   */
+  readonly type = 'offloadedBlock' as const
+
+  /**
+   * Stash reference under which the original content is retrievable.
+   */
+  readonly ref: string
+
+  /**
+   * Text that stands in for the original in the context window.
+   */
+  readonly preview: string
+
+  constructor(data: OffloadedBlockData) {
+    this.ref = data.ref
+    this.preview = data.preview
+  }
+
+  /**
+   * The text a model receives for this block: the preview followed by its reference token.
+   *
+   * @returns The rendered placeholder text
+   */
+  toText(): string {
+    return `${this.preview} [ref: ${this.ref}]`
+  }
+
+  /**
+   * Serializes the OffloadedBlock to its wrapped data format.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { offloaded: OffloadedBlockData } {
+    return { offloaded: { ref: this.ref, preview: this.preview } }
+  }
+
+  /**
+   * Creates an OffloadedBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped OffloadedBlockData to deserialize
+   * @returns OffloadedBlock instance
+   */
+  static fromJSON(data: { offloaded: OffloadedBlockData }): OffloadedBlock {
+    return new OffloadedBlock(data.offloaded)
   }
 }
 
@@ -353,8 +425,9 @@ export type ToolResultContentData =
   | { image: ImageBlockData }
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
+  | { offloaded: OffloadedBlockData }
 
-export type ToolResultContent = TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock
+export type ToolResultContent = TextBlock | OffloadedBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock
 
 /**
  * Data for a tool result block.
@@ -467,6 +540,7 @@ export function toolResultContentFromData(data: ToolResultContentData): ToolResu
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
   if ('document' in data) return DocumentBlock.fromJSON(data as { document: DocumentBlockData })
+  if ('offloaded' in data) return OffloadedBlock.fromJSON(data)
   throw new Error('Unknown ToolResultContentData type')
 }
 
@@ -1013,6 +1087,8 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return DocumentBlock.fromJSON(data)
   } else if ('citations' in data) {
     return CitationsBlock.fromJSON(data)
+  } else if ('offloaded' in data) {
+    return OffloadedBlock.fromJSON(data)
   } else {
     throw new Error('Unknown ContentBlockData type')
   }

@@ -3,7 +3,7 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
@@ -117,7 +117,27 @@ describe('ContextManager', () => {
   })
 
   describe('seeded messages', () => {
-    it('does not overwrite a stashed original with a seeded preview', async () => {
+    it('does not stash a seeded OffloadedBlock under the original key', async () => {
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new OffloadedBlock({ ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed]' }),
+            ],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ stash: { storage: new InMemoryStorage() } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.stash!.list()).toStrictEqual([])
+    })
+
+    it('does not overwrite a stashed original with a seeded legacy text preview', async () => {
       const storage = new InMemoryStorage()
       const view = storage.namespace('team')
       await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))

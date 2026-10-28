@@ -62,25 +62,29 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       '  { reference: "1_toolu_abc_0" }',
     inputSchema: retrievalInputSchema,
     callback: async (input) => {
-      const result = await stash.retrieve(input.reference)
-      if (!result) {
+      const entries = await resolveReference(stash, input.reference)
+      if (entries.length === 0) {
         return `Error: reference not found: ${input.reference}`
       }
-      if (isOffloadPlaceholder(result.data)) {
+      if (entries.some(isOffloadPlaceholder)) {
         return `Error: original content for reference ${input.reference} is no longer available`
       }
 
       if (!input.pattern && !input.line_range) {
-        if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
-          const media = restoreMedia(result.data as Record<string, unknown>)
+        const data = entries.length === 1 ? entries[0]! : entries
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const media = restoreMedia(data as Record<string, unknown>)
           if (media) return media as unknown as JSONValue
         }
-        const serialized = JSON.stringify(result.data)
-        if (serialized.length <= maxChars) return result.data as JSONValue
+        const serialized = JSON.stringify(data)
+        if (serialized.length <= maxChars) return data as JSONValue
         return `${serialized.slice(0, maxChars)}\n\n[truncated]`
       }
 
-      const text = extractText(result.data)
+      const text = entries
+        .map(extractText)
+        .filter((part): part is string => part !== null)
+        .join('\n')
       if (!text || !isSearchableContent('text/plain')) {
         return `Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.`
       }
@@ -109,6 +113,23 @@ export function trackRetrievalToolUseIds(message: Message, skipSet: Set<string>)
       skipSet.add(block.toolUseId)
     }
   }
+}
+
+/**
+ * Resolves a reference to its stored entries. An exact key resolves to one entry; a tool result's
+ * `toolUseId` resolves to every item stored under `<toolUseId>_<i>`, in index order.
+ */
+async function resolveReference(stash: Stash, reference: string): Promise<unknown[]> {
+  const exact = await stash.retrieve(reference)
+  if (exact) return [exact.data]
+
+  const prefix = `${reference}_`
+  const indexOf = (key: string): number => Number(key.slice(prefix.length))
+  const keys = (await stash.list())
+    .filter((key) => key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length)))
+    .sort((left, right) => indexOf(left) - indexOf(right))
+  const results = await Promise.all(keys.map((key) => stash.retrieve(key)))
+  return results.flatMap((result) => (result ? [result.data] : []))
 }
 
 function restoreMedia(data: Record<string, unknown>): ImageBlock | DocumentBlock | VideoBlock | null {

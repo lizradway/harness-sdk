@@ -68,6 +68,42 @@ describe('retrieval tool', () => {
     expect(result).toContain('Error: reference not found')
   })
 
+  describe('a tool result referenced by its toolUseId', () => {
+    async function makeStashWithItems(): Promise<Stash> {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('tool-1', 2, encodeJSON({ text: 'third ERROR' }))
+      await stash.store('tool-1', 0, encodeJSON({ text: 'first' }))
+      await stash.store('tool-1', 1, encodeJSON({ json: { count: 2 } }))
+      await stash.store('tool-10', 0, encodeJSON({ text: 'another tool' }))
+      return stash
+    }
+
+    it('returns every stored item in index order', async () => {
+      const retrievalTool = createRetrievalTool(await makeStashWithItems())
+
+      const result = await invoke(retrievalTool, { reference: 'tool-1' })
+
+      expect(result).toEqual([{ text: 'first' }, { json: { count: 2 } }, { text: 'third ERROR' }])
+    })
+
+    it('searches across the items text', async () => {
+      const retrievalTool = createRetrievalTool(await makeStashWithItems())
+
+      const result = (await invoke(retrievalTool, { reference: 'tool-1', pattern: 'ERROR' })) as string
+
+      expect(result).toContain('third ERROR')
+      expect(result).not.toContain('another tool')
+    })
+
+    it('returns the single item itself when the result holds one', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('tool-1', 0, encodeJSON({ text: 'only' }))
+      const retrievalTool = createRetrievalTool(stash)
+
+      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual({ text: 'only' })
+    })
+  })
+
   it.each([{}, { pattern: 'row-4321' }])('returns error for an offload placeholder with input %j', async (extra) => {
     const { stash, refPromise } = makeStashWithTextBlock(
       '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tool-1_0]'

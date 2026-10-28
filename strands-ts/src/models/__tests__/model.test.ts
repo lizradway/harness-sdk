@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   Message,
+  OffloadedBlock,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
@@ -1029,6 +1030,24 @@ describe('countTokens', () => {
     const result = await provider.countTokens(messages)
 
     expect(result).toBe(3)
+  })
+
+  it('estimates an offloaded block by the text the model receives, at top level and inside a tool result', async () => {
+    const provider = new TestModelProvider()
+    const placeholder = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+    const asText = new TextBlock(placeholder.toText())
+    const inToolResult = (content: TextBlock | OffloadedBlock): Message =>
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [content] })],
+      })
+
+    expect(await provider.countTokens([new Message({ role: 'user', content: [placeholder] })])).toBe(
+      await provider.countTokens([new Message({ role: 'user', content: [asText] })])
+    )
+    expect(await provider.countTokens([inToolResult(placeholder)])).toBe(
+      await provider.countTokens([inToolResult(asText)])
+    )
   })
 
   it('estimates toolUse block tokens (name + JSON input)', async () => {

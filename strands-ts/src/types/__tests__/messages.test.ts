@@ -1,6 +1,7 @@
 import { describe, expect, test, it } from 'vitest'
 import {
   Message,
+  OffloadedBlock,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
@@ -177,6 +178,44 @@ describe('TextBlock', () => {
       type: 'textBlock',
       text: 'hello',
     })
+  })
+})
+
+describe('OffloadedBlock', () => {
+  test('creates offloaded block and renders its model text', () => {
+    const block = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+
+    expect(block).toEqual({ type: 'offloadedBlock', ref: 'tu-1', preview: '[Dropped]' })
+    expect(block.toText()).toBe('[Dropped] [ref: tu-1]')
+  })
+
+  test('round-trips through message data at top level and inside a tool result', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new OffloadedBlock({ ref: 'msg-1_0', preview: '[Dropped]' }),
+        new ToolResultBlock({
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1\n\n[Stashed]' })],
+        }),
+      ],
+      trackingId: 'msg-1',
+    })
+
+    const data = JSON.parse(JSON.stringify(message)) as MessageData
+
+    expect(data.content).toEqual([
+      { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } },
+      {
+        toolResult: {
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [{ offloaded: { ref: 'tu-1', preview: 'row-1\n\n[Stashed]' } }],
+        },
+      },
+    ])
+    expect(Message.fromMessageData(data)).toEqual(message)
   })
 })
 

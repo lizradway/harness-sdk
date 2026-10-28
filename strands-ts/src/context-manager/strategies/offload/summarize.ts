@@ -20,11 +20,11 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
   insertMarker,
+  offloadPlaceholder,
   spliceWithPairs,
   repairAlternation,
   type OffloadConditions,
@@ -93,7 +93,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
@@ -112,7 +112,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [new TextBlock(`${formatSummarized('tool result', tokens, summary)}${formatStashRefs(stashRefs)}`)],
+        content: [offloadPlaceholder(formatSummarized('tool result', tokens, summary), stashRef)],
       })
     }
 
@@ -121,19 +121,19 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return new TextBlock(`${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`)
+      return offloadPlaceholder(formatSummarized('text block', tokens, summary), stashRef)
     }
 
     if (block instanceof ImageBlock || block instanceof DocumentBlock) {
       const summary = await this._trySummarize([block], model, message, invocationContext)
       if (summary) {
         logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
-        return new TextBlock(`${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`)
+        return offloadPlaceholder(formatSummarized('media block', tokens, summary), stashRef)
       }
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return offloadPlaceholder(`[Offloaded: ~${tokens} tokens]`, stashRef)
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */

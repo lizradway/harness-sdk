@@ -9,7 +9,14 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
-import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock } from '../types/messages.js'
+import {
+  Message,
+  OffloadedBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  ReasoningBlock,
+} from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
@@ -28,7 +35,8 @@ function decode(bytes: Uint8Array): unknown {
 const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
 
 /**
- * Whether a block's text ends with a {@link formatStashRefs} token, marking it as an offload replacement.
+ * Whether a plain text block is a legacy offload placeholder: its text ends with a ` [ref: …]` or
+ * ` [refs: …]` token. Sessions saved before {@link OffloadedBlock} existed carry these.
  * Accepts live blocks and their serialized JSON form.
  *
  * @internal
@@ -38,11 +46,9 @@ export function isOffloadPlaceholder(block: unknown): boolean {
   return typeof block.text === 'string' && STASH_REFS_SUFFIX.test(block.text)
 }
 
-/** Format stash refs for display in placeholders. Returns '' when refs is empty. */
-export function formatStashRefs(refs: string[]): string {
-  if (refs.length === 0) return ''
-  if (refs.length === 1) return ` [ref: ${refs[0]!}]`
-  return ` [refs: ${refs.join(', ')}]`
+/** Whether a block is an offload placeholder of either form: an {@link OffloadedBlock} or a legacy text marker. */
+function isPlaceholder(block: unknown): boolean {
+  return block instanceof OffloadedBlock || isOffloadPlaceholder(block)
 }
 
 /**
@@ -86,7 +92,7 @@ export class Stash {
    * Store a serialized block and return a deterministic reference key.
    *
    * Keys are deterministic (`<id>_<blockIndex>`) so they can be recomputed
-   * via {@link refsFor} after a process restart or snapshot restore.
+   * from a block's position after a process restart or snapshot restore.
    *
    * @param id - Identifier component for the key (e.g. toolUseId)
    * @param blockIndex - Index of the block within the tool result
@@ -100,22 +106,20 @@ export class Stash {
   }
 
   /**
-   * Compute the deterministic reference keys for a content block.
+   * The reference an {@link OffloadedBlock} carries for a content block.
    *
-   * For a {@link ToolResultBlock}, returns one key per inner content item
-   * (`<toolUseId>_<i>`). For any other block, returns a single key
+   * A {@link ToolResultBlock} is referenced by its `toolUseId`; the retrieval tool resolves it to
+   * every stored item (`<toolUseId>_<i>`). Any other block is referenced by its own key
    * (`<trackingId>_<blockIndex>`).
    *
    * @param block - The content block
    * @param message - The message containing the block
    * @param blockIndex - Index of the block within the message
-   * @returns Array of reference keys
+   * @returns The reference key
    */
-  refsFor(block: ContentBlock, message: Message, blockIndex: number): string[] {
-    if (block instanceof ToolResultBlock) {
-      return Array.from({ length: block.content.length }, (_, index) => `${block.toolUseId}_${index}`)
-    }
-    return [`${message.trackingId}_${blockIndex}`]
+  refFor(block: ContentBlock, message: Message, blockIndex: number): string {
+    if (block instanceof ToolResultBlock) return block.toolUseId
+    return `${message.trackingId}_${blockIndex}`
   }
 
   /**
@@ -131,11 +135,11 @@ export class Stash {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
         if (skipToolUseIds?.has(block.toolUseId)) continue
-        if (block.content.some(isOffloadPlaceholder)) continue
+        if (block.content.some(isPlaceholder)) continue
         await this._storeToolResult(block)
       } else if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
         continue
-      } else if (isOffloadPlaceholder(block)) {
+      } else if (isPlaceholder(block)) {
         continue
       } else {
         try {

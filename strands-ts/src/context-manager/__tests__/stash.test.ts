@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { Stash, formatStashRefs, isOffloadPlaceholder } from '../stash.js'
+import { Stash, isOffloadPlaceholder } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
 describe('Stash', () => {
@@ -138,10 +138,49 @@ describe('Stash', () => {
   })
 
   describe('offload placeholders', () => {
-    it.each([[['tu-1_0']], [['tu-1_0', 'tu-1_1']]])('detects formatted refs %j', (refs) => {
-      expect(isOffloadPlaceholder({ text: `[Dropped]${formatStashRefs(refs)}` })).toBe(true)
-      expect(isOffloadPlaceholder(new TextBlock(`[Dropped]${formatStashRefs(refs)}`))).toBe(true)
+    it('refFor references a tool result by its toolUseId and any other block by its own key', () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('a')] })
+      const message = new Message({ role: 'user', content: [new TextBlock('t'), toolResult], trackingId: 'track-1' })
+
+      expect(stash.refFor(toolResult, message, 1)).toBe('tu-1')
+      expect(stash.refFor(message.content[0]!, message, 0)).toBe('track-1_0')
     })
+
+    it('skips an OffloadedBlock and a tool result that holds one, keeping other blocks', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({
+        role: 'user',
+        content: [
+          new OffloadedBlock({ ref: 'track-0_0', preview: '[Dropped]' }),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new OffloadedBlock({
+                ref: 'tu-1',
+                preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed]',
+              }),
+              new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+            ],
+          }),
+          new TextBlock('kept'),
+        ],
+        trackingId: 'track-1',
+      })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_2': { text: 'kept' } })
+    })
+
+    it.each(['[Dropped] [ref: tu-1_0]', '[Dropped] [refs: tu-1_0, tu-1_1]'])(
+      'detects legacy text marker %j',
+      (text) => {
+        expect(isOffloadPlaceholder({ text })).toBe(true)
+        expect(isOffloadPlaceholder(new TextBlock(text))).toBe(true)
+      }
+    )
 
     it.each([
       { text: 'plain text' },

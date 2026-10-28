@@ -5,7 +5,7 @@ import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { PluginRegistry } from '../../plugins/registry.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
 import type { Tool } from '../../tools/tool.js'
@@ -128,7 +128,7 @@ describe('Offload strategies with stash', () => {
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
-    it('includes stash reference in the truncated preview', async () => {
+    it('leaves an OffloadedBlock referencing the tool result in the truncated preview', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
@@ -139,8 +139,26 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Stashed] [ref:')
+      const placeholder = block.content[0] as OffloadedBlock
+      expect(placeholder).toBeInstanceOf(OffloadedBlock)
+      expect(placeholder.ref).toBe('tool-123')
+      expect(placeholder.preview).toMatch(/^\[Truncated: .*\n\n\[Stashed\]$/s)
+      expect(placeholder.toText()).toContain('[Stashed] [ref: tool-123]')
+    })
+
+    it('does not offload a tool result that already holds an OffloadedBlock', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const messages = [makeToolResultMessage('x'.repeat(20000))]
+      await stashAll(stash, messages)
+      const strategy = Offload.truncate('toolResults', { previewTokens: 10 })
+      const context = makeContext(messages, stash)
+      await strategy.apply(context)
+      const once = (messages[0]!.content[0] as ToolResultBlock).content
+
+      const actedAgain = await Offload.drop('toolResults').apply(context)
+
+      expect(actedAgain).toBe(false)
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toBe(once)
     })
 
     it('does not stash when no stash is configured', async () => {
@@ -177,7 +195,7 @@ describe('Offload strategies with stash', () => {
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
-    it('includes stash reference in the drop marker', async () => {
+    it('leaves an OffloadedBlock referencing the tool result as the drop marker', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
@@ -188,8 +206,8 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Dropped] [ref:')
+      expect(block.content).toEqual([new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' })])
+      expect((block.content[0] as OffloadedBlock).toText()).toBe('[Dropped] [ref: tool-123]')
     })
   })
 
