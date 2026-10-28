@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Stash, isOffloadPlaceholder } from '../stash.js'
+import { Stash, formatStashKey, isOffloadPlaceholder, parseStashKey } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { Message, OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
@@ -134,6 +134,20 @@ describe('Stash', () => {
       await stash.clearSession()
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+  })
+
+  describe('stash keys', () => {
+    it.each([
+      { id: 'tu-1', index: 0 },
+      { id: 'call_12', index: 3 },
+      { id: 'removed-0199-abc', index: 0 },
+    ])('round-trips $id_$index', (key) => {
+      expect(parseStashKey(formatStashKey(key))).toEqual(key)
+    })
+
+    it.each(['tu-1', 'tu-1_', '_0', 'tu-1_x', 'tu-1_1a'])('rejects %j', (key) => {
+      expect(parseStashKey(key)).toBeNull()
     })
   })
 

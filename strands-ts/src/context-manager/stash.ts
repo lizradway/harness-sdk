@@ -32,6 +32,38 @@ function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
+/**
+ * A stash key, `<id>_<index>`. The id is a tool result's `toolUseId`, a message's `trackingId`,
+ * or `removed-<trackingId>` for messages removed together.
+ *
+ * @internal
+ */
+export interface StashKey {
+  /** Owner of the entry. */
+  id: string
+  /** Position of the entry among the owner's items. */
+  index: number
+}
+
+/** @internal */
+export function formatStashKey(key: StashKey): string {
+  return `${key.id}_${key.index}`
+}
+
+/**
+ * Parses a stash key. The id may itself contain `_`, so the index is whatever follows the last one.
+ *
+ * @returns The key, or `null` when the text after the last `_` is not an index
+ * @internal
+ */
+export function parseStashKey(key: string): StashKey | null {
+  const separator = key.lastIndexOf('_')
+  if (separator <= 0) return null
+  const index = key.slice(separator + 1)
+  if (!/^\d+$/.test(index)) return null
+  return { id: key.slice(0, separator), index: Number(index) }
+}
+
 const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
 
 /**
@@ -100,7 +132,7 @@ export class Stash {
    * @returns Reference key for retrieval
    */
   async store(id: string, blockIndex: number, data: Uint8Array): Promise<string> {
-    const key = `${id}_${blockIndex}`
+    const key = formatStashKey({ id, index: blockIndex })
     await this._storage.write(key, data)
     return key
   }

@@ -102,20 +102,32 @@ describe('retrieval tool', () => {
 
       expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual({ text: 'only' })
     })
+
+    it('matches the id exactly when ids contain underscores and digits', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('call', 0, encodeJSON({ text: 'bare' }))
+      await stash.store('call_12', 0, encodeJSON({ text: 'twelve' }))
+      const retrievalTool = createRetrievalTool(stash)
+
+      expect(await invoke(retrievalTool, { reference: 'call' })).toEqual({ text: 'bare' })
+      expect(await invoke(retrievalTool, { reference: 'call_12' })).toEqual({ text: 'twelve' })
+    })
   })
 
   describe('removed messages', () => {
     const removed = [
-      { role: 'user', content: [{ text: 'alpha' }] },
+      { role: 'user', content: [{ text: 'alpha' }], trackingId: 'r0' },
       {
         role: 'assistant',
         content: [{ toolUse: { toolUseId: 't', name: 'x', input: {} } }],
+        trackingId: 'r1',
       },
       {
         role: 'user',
         content: [
           { toolResult: { toolUseId: 't', status: 'success', content: [{ text: 'beta ERROR' }, { json: 1 }] } },
         ],
+        trackingId: 'r2',
       },
     ]
 
