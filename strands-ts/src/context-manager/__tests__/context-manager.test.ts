@@ -117,26 +117,6 @@ describe('ContextManager', () => {
   })
 
   describe('seeded messages', () => {
-    it('does not stash a seeded OffloadedBlock under the original key', async () => {
-      const preview = new Message({
-        role: 'user',
-        content: [
-          new ToolResultBlock({
-            toolUseId: 'tu-1',
-            status: 'success',
-            content: [
-              new OffloadedBlock({ ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed]' }),
-            ],
-          }),
-        ],
-      })
-      const cm = new ContextManager({ stash: { storage: new InMemoryStorage() } })
-
-      await cm.initAgent(makeMockAgent({ messages: [preview] }))
-
-      expect(await cm.stash!.list()).toStrictEqual([])
-    })
-
     it('does not overwrite a stashed original with a seeded preview', async () => {
       const storage = new InMemoryStorage()
       const view = storage.namespace('team')

@@ -206,7 +206,7 @@ describe('OffloadedBlock', () => {
         new ToolResultBlock({
           toolUseId: 'tu-1',
           status: 'success',
-          content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1\n\n[Stashed]' })],
+          content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1' })],
         }),
       ],
       trackingId: 'msg-1',
@@ -220,7 +220,7 @@ describe('OffloadedBlock', () => {
         toolResult: {
           toolUseId: 'tu-1',
           status: 'success',
-          content: [{ offloaded: { ref: 'tu-1', preview: 'row-1\n\n[Stashed]' } }],
+          content: [{ offloaded: { ref: 'tu-1', preview: 'row-1' } }],
         },
       },
     ])

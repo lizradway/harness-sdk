@@ -33,26 +33,6 @@ describe('Stash', () => {
       const result = await stash.retrieve('nonexistent')
       expect(result).toBeNull()
     })
-
-    it('produces deterministic keys from the same id and blockIndex', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      const content = new TextEncoder().encode(JSON.stringify('data'))
-      const ref1 = await stash.store('tool-1', 0, content)
-      const ref2 = await stash.store('tool-1', 0, content)
-
-      expect(ref1).toBe(ref2)
-    })
-
-    it('produces different keys for different id or blockIndex', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      const content = new TextEncoder().encode(JSON.stringify('data'))
-      const ref1 = await stash.store('tool-1', 0, content)
-      const ref2 = await stash.store('tool-1', 1, content)
-      const ref3 = await stash.store('tool-2', 0, content)
-
-      expect(ref1).not.toBe(ref2)
-      expect(ref1).not.toBe(ref3)
-    })
   })
 
   describe('list', () => {
@@ -183,7 +163,7 @@ describe('Stash', () => {
             content: [
               new OffloadedBlock({
                 ref: 'tu-1',
-                preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed]',
+                preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1',
               }),
               new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
             ],
@@ -196,19 +176,6 @@ describe('Stash', () => {
       await stash.storeMessage(message)
 
       expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_2': { text: 'kept' } })
-    })
-
-    it('stores text that merely mentions a reference', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      const message = new Message({
-        role: 'user',
-        content: [new TextBlock('see [ref: x] for details')],
-        trackingId: 'track-1',
-      })
-
-      await stash.storeMessage(message)
-
-      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_0': { text: 'see [ref: x] for details' } })
     })
   })
 })

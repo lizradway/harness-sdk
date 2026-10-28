@@ -120,7 +120,7 @@ describe('ModelProxy', () => {
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
-            content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1\n\n[Stashed]' }), image],
+            content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1' }), image],
           }),
         ],
         trackingId: 'msg-2',
@@ -139,7 +139,7 @@ describe('ModelProxy', () => {
             new ToolResultBlock({
               toolUseId: 'tu-1',
               status: 'success',
-              content: [new TextBlock('row-1\n\n[Stashed] [ref: tu-1]'), image],
+              content: [new TextBlock('row-1 [ref: tu-1]'), image],
             }),
           ],
           trackingId: 'msg-2',
