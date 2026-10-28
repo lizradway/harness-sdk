@@ -119,20 +119,32 @@ export class Stash {
   }
 
   /**
-   * The reference an {@link OffloadedBlock} carries for a content block.
+   * The reference an {@link OffloadedBlock} carries for a block it replaces, with the block stored
+   * under that reference if it is not already.
    *
    * A {@link ToolResultBlock} is referenced by its `toolUseId`; the retrieval tool resolves it to
-   * every stored item (`<toolUseId>_<i>`). Any other block is referenced by its own key
-   * (`<trackingId>_<blockIndex>`).
+   * every stored item (`<toolUseId>_<i>`). Any other block is referenced by its position
+   * (`<trackingId>_<blockIndex>`). History edits move blocks between messages and positions, so the
+   * key a block was stored under on arrival can differ from its key now; storing here keeps every
+   * emitted reference resolvable.
    *
-   * @param block - The content block
+   * @param block - The block about to be replaced
    * @param message - The message containing the block
    * @param blockIndex - Index of the block within the message
-   * @returns The reference key
+   * @returns The reference
    */
-  refFor(block: ContentBlock, message: Message, blockIndex: number): string {
-    if (block instanceof ToolResultBlock) return block.toolUseId
-    return `${message.trackingId}_${blockIndex}`
+  async ensureStashed(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
+    if (block instanceof ToolResultBlock) {
+      if ((await this.retrieve(formatStashKey({ id: block.toolUseId, index: 0 }))) === null) {
+        await this._storeToolResult(block)
+      }
+      return block.toolUseId
+    }
+    const key = formatStashKey({ id: message.trackingId, index: blockIndex })
+    if ((await this.retrieve(key)) === null) {
+      await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+    }
+    return key
   }
 
   /**

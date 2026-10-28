@@ -489,7 +489,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const stashRef = this._stash?.refFor(block, message, blockIndex)
+      const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
       const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement

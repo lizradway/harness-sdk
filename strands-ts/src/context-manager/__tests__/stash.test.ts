@@ -152,13 +152,23 @@ describe('Stash', () => {
   })
 
   describe('offload placeholders', () => {
-    it('refFor references a tool result by its toolUseId and any other block by its own key', () => {
+    it('ensureStashed references a tool result by its toolUseId and any other block by its position', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('a')] })
       const message = new Message({ role: 'user', content: [new TextBlock('t'), toolResult], trackingId: 'track-1' })
 
-      expect(stash.refFor(toolResult, message, 1)).toBe('tu-1')
-      expect(stash.refFor(message.content[0]!, message, 0)).toBe('track-1_0')
+      expect(await stash.ensureStashed(toolResult, message, 1)).toBe('tu-1')
+      expect(await stash.ensureStashed(message.content[0]!, message, 0)).toBe('track-1_0')
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'tu-1_0': { text: 'a' }, 'track-1_0': { text: 't' } })
+    })
+
+    it('ensureStashed leaves an entry already stored under the reference untouched', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text: 'original' })))
+      const message = new Message({ role: 'user', content: [new TextBlock('edited')], trackingId: 'track-1' })
+
+      expect(await stash.ensureStashed(message.content[0]!, message, 0)).toBe('track-1_0')
+      expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text: 'original' } })
     })
 
     it('skips an OffloadedBlock and a tool result that holds one, keeping other blocks', async () => {

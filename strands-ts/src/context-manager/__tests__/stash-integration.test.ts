@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
+import { repairAlternation } from '../strategies/offload/base.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
@@ -107,6 +108,27 @@ describe('ContextManager tool registration', () => {
 
 describe('Offload strategies with stash', () => {
   describe('truncate + stash', () => {
+    it('resolves the reference of a block that a history edit moved into another message', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const big = 'x'.repeat(20000)
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('q')], trackingId: 'u0' }),
+        new Message({ role: 'assistant', content: [new TextBlock('short')], trackingId: 'a1' }),
+        new Message({ role: 'assistant', content: [new TextBlock(big)], trackingId: 'a2' }),
+      ]
+      await stashAll(stash, messages)
+      // Merges a2 into a1: the big block is now a1_1, while it was stored on arrival as a2_0.
+      repairAlternation(messages)
+
+      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, stash))
+
+      const placeholder = messages[1]!.content[1] as OffloadedBlock
+      expect(placeholder).toBeInstanceOf(OffloadedBlock)
+      expect(placeholder.ref).toBe('a1_1')
+      const retrieve = createRetrievalTool(stash)
+      expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual({ text: big })
+    })
+
     it('persists original content to stash before truncating', async () => {
       const storage = new InMemoryStorage()
       const stash = new Stash(storage, 'test-session', 'test-agent')
