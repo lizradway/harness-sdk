@@ -1,5 +1,5 @@
 ---
-title: Pause for input and control
+title: Approve before your agent acts
 description: >-
   Let a model flag risky tool calls and pause the agent until a person approves them,
   while safe calls such as reads run on their own.
@@ -54,9 +54,9 @@ agent("Delete the rotated logs in /var/log/app")
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/sdk/agents/pause-for-input_imports.ts:classifier_imports"
+--8<-- "user-guide/sdk/agents/approve-before-acting_imports.ts:classifier_imports"
 
---8<-- "user-guide/sdk/agents/pause-for-input.ts:classifier"
+--8<-- "user-guide/sdk/agents/approve-before-acting.ts:classifier"
 ```
 
 </Tab>
@@ -95,6 +95,13 @@ questions fast, such as Jev or
 decision model or classifier function.
 [Human in the loop](./interventions/human-in-the-loop.md#risk-classifier) shows each
 option. Without a classifier, every tool call prompts.
+
+The classifier is a judgment, not a guarantee: it can rate a risky call safe. For a
+tool that must always ask, negate it with
+<Syntax py='allowed_tools=["!delete_files"]' ts="allowedTools: ['!delete_files']" />. A
+negated tool always prompts and can't be trusted. For hard limits, such as tools only
+some users may call, write [Cedar policies](./interventions/cedar-authorization.md).
+Cedar denies any call no policy permits, whatever the classifier or a person decides.
 
 ## Next steps
 
