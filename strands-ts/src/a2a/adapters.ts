@@ -61,6 +61,9 @@ export function contentBlocksToParts(blocks: ContentBlock[]): Part[] {
       case 'textBlock':
         parts.push({ kind: 'text', text: block.text })
         break
+      case 'offloadedBlock':
+        parts.push({ kind: 'text', text: block.toText() })
+        break
       case 'imageBlock':
       case 'videoBlock': {
         const filePart = _mediaBlockToFilePart(block)

@@ -6,6 +6,7 @@ import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
+  OffloadedBlock,
   TextBlock,
   CachePointBlock,
   GuardContentBlock,
@@ -898,6 +899,25 @@ describe('AnthropicModel', () => {
       // The request the provider receives carries only role and content — never trackingId or metadata.
       expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
       expect('trackingId' in captured.request.messages[0]).toBe(false)
+    })
+
+    it('sends an offloaded block as the text the model receives, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const placeholder = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [placeholder, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: '[Dropped] [ref: tu-1]' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: '[Dropped] [ref: tu-1]' },
+      ])
     })
 
     it('formats tools correctly', async () => {
