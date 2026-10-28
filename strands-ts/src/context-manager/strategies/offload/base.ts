@@ -117,11 +117,15 @@ export function toolMatchesTarget(
   return false
 }
 
+/** Whether a block is a text turn's content: the text itself, or the placeholder left where it was offloaded. */
+function isTextContent(block: ContentBlock): boolean {
+  return block instanceof TextBlock || block instanceof OffloadedBlock
+}
+
 export function targetMatchesMessage(target: OffloadTarget | undefined, message: Message): boolean {
   if (target === undefined || target === '*') return true
-  if (target === 'assistantText')
-    return message.role === 'assistant' && message.content.some((b) => b instanceof TextBlock)
-  if (target === 'userText') return message.role === 'user' && message.content.some((b) => b instanceof TextBlock)
+  if (target === 'assistantText') return message.role === 'assistant' && message.content.some(isTextContent)
+  if (target === 'userText') return message.role === 'user' && message.content.some(isTextContent)
   return false
 }
 

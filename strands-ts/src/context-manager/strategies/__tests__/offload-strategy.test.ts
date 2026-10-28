@@ -5,9 +5,10 @@ import {
   buildToolNameMap,
   collectRemovableWithPair,
   insertMarker,
+  targetMatchesMessage,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -232,6 +233,30 @@ describe('Offload.truncate', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(false)
+  })
+})
+
+describe('targetMatchesMessage', () => {
+  it.each(['assistantText', 'userText'] as const)('treats an offloaded %s block as that role text', (target) => {
+    const role = target === 'assistantText' ? 'assistant' : 'user'
+    const offloaded = new Message({ role, content: [new OffloadedBlock({ ref: 'm_0', preview: '[Dropped]' })] })
+    const toolOnly = new Message({
+      role,
+      content: [new ToolResultBlock({ toolUseId: 't', status: 'success', content: [new TextBlock('x')] })],
+    })
+
+    expect(targetMatchesMessage(target, offloaded)).toBe(true)
+    expect(targetMatchesMessage(target, toolOnly)).toBe(false)
+  })
+
+  it('does not offload an OffloadedBlock again under a role text target', async () => {
+    const placeholder = new OffloadedBlock({ ref: 'm_0', preview: 'x'.repeat(5000) })
+    const message = new Message({ role: 'assistant', content: [placeholder] })
+
+    const acted = await Offload.drop('assistantText').apply(makeContext([message]))
+
+    expect(acted).toBe(false)
+    expect(message.content[0]).toBe(placeholder)
   })
 })
 

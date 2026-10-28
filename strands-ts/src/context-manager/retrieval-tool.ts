@@ -57,9 +57,9 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       '  - line_range: { start, end } to read a specific span\n' +
       '  - Without pattern/line_range: returns the full original content\n\n' +
       'Examples:\n' +
-      '  { reference: "1_toolu_abc_0", pattern: "error" }\n' +
-      '  { reference: "1_toolu_abc_0", line_range: { start: 10, end: 25 } }\n' +
-      '  { reference: "1_toolu_abc_0" }',
+      '  { reference: "toolu_abc", pattern: "error" }\n' +
+      '  { reference: "toolu_abc", line_range: { start: 10, end: 25 } }\n' +
+      '  { reference: "toolu_abc" }',
     inputSchema: retrievalInputSchema,
     callback: async (input) => {
       const entries = await resolveReference(stash, input.reference)
