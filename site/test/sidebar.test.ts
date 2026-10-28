@@ -207,7 +207,7 @@ describe('Sidebar Generation from navigation.yml', () => {
       .map((item) => ({ label: item.label, slug: item.slug }))
     expect(flat).toEqual([
       { label: 'Manage the context window', slug: 'docs/user-guide/sdk/context-management' },
-      { label: 'Pause for input and control', slug: 'docs/user-guide/sdk/agents/interventions/human-in-the-loop' },
+      { label: 'Pause for input and control', slug: 'docs/user-guide/sdk/agents/pause-for-input' },
       { label: 'Coordinate multiple agents', slug: 'docs/user-guide/sdk/multi-agent/multi-agent-patterns' },
     ])
   })
