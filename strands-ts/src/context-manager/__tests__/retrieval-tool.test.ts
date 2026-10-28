@@ -104,6 +104,33 @@ describe('retrieval tool', () => {
     })
   })
 
+  describe('removed messages', () => {
+    const removed = [
+      { role: 'user', content: [{ text: 'alpha' }] },
+      {
+        role: 'assistant',
+        content: [{ toolUse: { toolUseId: 't', name: 'x', input: {} } }],
+      },
+      {
+        role: 'user',
+        content: [
+          { toolResult: { toolUseId: 't', status: 'success', content: [{ text: 'beta ERROR' }, { json: 1 }] } },
+        ],
+      },
+    ]
+
+    it('returns the stored messages and searches their text and tool-result text', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('removed-m1', 0, encodeJSON(removed))
+      const retrievalTool = createRetrievalTool(stash)
+
+      expect(await invoke(retrievalTool, { reference: 'removed-m1' })).toEqual(removed)
+      const matches = (await invoke(retrievalTool, { reference: 'removed-m1', pattern: 'ERROR' })) as string
+      expect(matches).toContain('[1 match for /ERROR/]')
+      expect(matches).toContain('> 2| beta ERROR')
+    })
+  })
+
   it.each([{}, { pattern: 'row-4321' }])('returns error for an offload placeholder with input %j', async (extra) => {
     const { stash, refPromise } = makeStashWithTextBlock(
       '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tool-1_0]'

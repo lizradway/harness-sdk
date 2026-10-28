@@ -123,6 +123,18 @@ export class Stash {
   }
 
   /**
+   * Store messages removed from the context window as one entry.
+   *
+   * @param removed - The removed messages, in conversation order
+   * @returns The reference an {@link OffloadedBlock} carries for them
+   */
+  async storeRemoved(removed: Message[]): Promise<string> {
+    const id = `removed-${removed[0]!.trackingId}`
+    await this.store(id, 0, encode(removed.map((message) => message.toJSON())))
+    return id
+  }
+
+  /**
    * Eagerly stash all content from a message on arrival.
    * Called via MessageAddedEvent so content is persisted before any strategy runs.
    * Offload placeholders are never stored: their keys belong to the originals they replaced.

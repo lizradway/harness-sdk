@@ -208,9 +208,9 @@ export function collectRemovableWithPair(messages: Message[], index: number): Me
 
 /**
  * Collects removable messages (with their tool pairs), then splices them from the array.
- * Returns the number of messages removed and the lowest index that was removed.
+ * Returns the removed messages in conversation order and the lowest index that was removed.
  */
-export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: number; lowestIndex: number } {
+export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: Message[]; lowestIndex: number } {
   const toSplice = new Set<Message>()
   for (const message of toRemove) {
     const index = messages.indexOf(message)
@@ -220,28 +220,25 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
     }
   }
 
-  let removed = 0
-  let lowestIndex = messages.length
-  for (const message of toSplice) {
-    const index = messages.indexOf(message)
-    if (index === -1) continue
-    if (index < lowestIndex) lowestIndex = index
-    messages.splice(index, 1)
-    removed++
+  const removed = messages.filter((message) => toSplice.has(message))
+  const lowestIndex = removed.length > 0 ? messages.indexOf(removed[0]!) : messages.length
+  for (const message of removed) {
+    messages.splice(messages.indexOf(message), 1)
   }
   return { removed, lowestIndex }
 }
 
 /**
- * Adds a removal marker as assistant content at the gap left by removed messages.
+ * Adds a removal marker as assistant content at the gap left by removed messages: an
+ * {@link OffloadedBlock} when the removed messages are retrievable under `stashRef`, otherwise text.
  *
  * The marker is appended to an assistant message beside the gap, which keeps that message's
  * tracking id and block indices for stash refs, or becomes its own assistant message. It never
  * joins message 0, and the last message is never removed, so a new marker never ends the history.
  */
-export function insertMarker(messages: Message[], index: number, text: string): void {
+export function insertMarker(messages: Message[], index: number, text: string, stashRef?: string): void {
   index = Math.max(1, Math.min(index, messages.length))
-  const block = new TextBlock(text)
+  const block = offloadPlaceholder(text, stashRef)
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
     if (neighbor > 0 && carrier?.role === 'assistant') {
@@ -414,15 +411,26 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (eligible.length === 0) return false
 
     const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
-    if (removed === 0) return false
+    if (removed.length === 0) return false
 
-    const marker = this._makeRemovalMarker(removed)
+    const marker = this._makeRemovalMarker(removed.length)
     if (marker) {
-      insertMarker(messages, lowestIndex, marker)
+      insertMarker(messages, lowestIndex, marker, await this._stashRemoved(removed))
     }
 
     repairAlternation(messages)
     return true
+  }
+
+  /** Stores removed messages for retrieval; a failed write leaves the marker without a reference. */
+  protected async _stashRemoved(removed: Message[]): Promise<string | undefined> {
+    if (!this._stash) return undefined
+    try {
+      return await this._stash.storeRemoved(removed)
+    } catch (error) {
+      logger.warn(`strategy=<${this.name}>, error=<${error}> | failed to stash removed messages`)
+      return undefined
+    }
   }
 
   /** Override to insert a marker when messages are removed. Return null for no marker. */
@@ -593,9 +601,9 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     const toRemove = removable.slice(0, removeCount)
 
     const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
-    if (removed === 0) return false
+    if (removed.length === 0) return false
 
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
+    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed.length), await this._stashRemoved(removed))
     repairAlternation(messages)
     return true
   }

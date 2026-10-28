@@ -209,6 +209,49 @@ describe('Offload strategies with stash', () => {
       expect(block.content).toEqual([new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' })])
       expect((block.content[0] as OffloadedBlock).toText()).toBe('[Dropped] [ref: tool-123]')
     })
+
+    it('marks removed messages with an OffloadedBlock that retrieves them', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const text = (role: 'user' | 'assistant', content: string, trackingId: string): Message =>
+        new Message({ role, content: [new TextBlock(content)], trackingId })
+      const first = text('assistant', 'first answer', 'm1')
+      const second = text('user', 'second question', 'm2')
+      const messages = [text('user', 'start', 'm0'), first, second, text('assistant', 'final', 'm3')]
+      await stashAll(stash, messages)
+      const strategy = Offload.drop('*').when({ utilization: 0.5 })
+
+      const acted = await strategy.apply(makeContext(messages, stash, 0.9))
+
+      expect(acted).toBe(true)
+      const marker = new OffloadedBlock({ ref: 'removed-m1', preview: '[Dropped: 2 messages]' })
+      expect(messages.map((message) => message.content)).toEqual([
+        [new TextBlock('start')],
+        [new TextBlock('final'), marker],
+      ])
+      const retrieve = createRetrievalTool(stash)
+      expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1' })).toEqual([
+        first.toJSON(),
+        second.toJSON(),
+      ])
+      expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1', pattern: 'second' })).toContain(
+        'second question'
+      )
+    })
+
+    it('leaves a text marker when there is no stash', async () => {
+      const messages = [
+        makeToolResultMessage('a', 't0'),
+        new Message({ role: 'assistant', content: [new TextBlock('mid')] }),
+        new Message({ role: 'user', content: [new TextBlock('next')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('final')] }),
+      ]
+
+      await Offload.drop('*')
+        .when({ utilization: 0.5 })
+        .apply(makeContext(messages, undefined, 0.9))
+
+      expect(messages.at(-1)!.content).toEqual([new TextBlock('final'), new TextBlock('[Dropped: 2 messages]')])
+    })
   })
 
   describe('binary content stashing', () => {

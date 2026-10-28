@@ -872,6 +872,15 @@ describe('insertMarker', () => {
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
   })
 
+  it('inserts an OffloadedBlock when the removed messages have a stash reference', () => {
+    const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
+    insertMarker(messages, 1, 'marker', 'removed-m1')
+    expect(messages[1]!.content).toEqual([
+      new TextBlock('a1'),
+      new OffloadedBlock({ ref: 'removed-m1', preview: 'marker' }),
+    ])
+  })
+
   it.each([
     [0, ['task', 'marker', 'u1']],
     [5, ['task', 'u1', 'marker']],

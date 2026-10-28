@@ -101,18 +101,19 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
 }
 
 /**
- * Tracks toolUseIds from retrieval tool invocations so their results
- * can be excluded from stashing (prevents retrieval loops).
+ * The toolUseIds of every retrieval tool call in the history. Their results are copies of
+ * stashed content, so the stash skips them.
  *
  * @internal
  */
-export function trackRetrievalToolUseIds(message: Message, skipSet: Set<string>): void {
-  if (message.role !== 'assistant') return
-  for (const block of message.content) {
-    if (block instanceof ToolUseBlock && block.name === RETRIEVAL_TOOL_NAME) {
-      skipSet.add(block.toolUseId)
+export function retrievalToolUseIds(messages: readonly Message[]): Set<string> {
+  const ids = new Set<string>()
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block instanceof ToolUseBlock && block.name === RETRIEVAL_TOOL_NAME) ids.add(block.toolUseId)
     }
   }
+  return ids
 }
 
 /**
@@ -141,12 +142,26 @@ function restoreMedia(data: Record<string, unknown>): ImageBlock | DocumentBlock
 
 function extractText(data: unknown): string | null {
   if (typeof data === 'string') return data
+  if (Array.isArray(data)) {
+    const parts = data.map(extractText).filter((part): part is string => part !== null)
+    return parts.length > 0 ? parts.join('\n') : null
+  }
   if (data && typeof data === 'object') {
     if ('text' in data && typeof (data as Record<string, unknown>).text === 'string') {
       return (data as Record<string, unknown>).text as string
     }
     if ('json' in data) {
       return JSON.stringify((data as Record<string, unknown>).json, null, 2)
+    }
+    // A stored message: its text and tool-result text, in order.
+    if ('content' in data && Array.isArray((data as Record<string, unknown>).content)) {
+      return extractText(
+        ((data as Record<string, unknown>).content as unknown[]).map((block) =>
+          block && typeof block === 'object' && 'toolResult' in block
+            ? (block as { toolResult: { content: unknown[] } }).toolResult.content
+            : block
+        )
+      )
     }
   }
   return null
