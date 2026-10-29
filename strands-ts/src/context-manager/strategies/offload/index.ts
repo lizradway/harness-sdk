@@ -6,14 +6,16 @@
 
 import type { TruncateConfig } from '../../methods/truncate.js'
 import type { SummarizeConfig } from '../../methods/summarize.js'
-import type { OffloadStrategyBuilder, OffloadTarget } from './base.js'
+import type { OffloadStrategyBuilder } from './base.js'
+import type { OffloadTarget } from './target.js'
 import { DropStrategy } from './drop.js'
 import { TruncateStrategy } from './truncate.js'
 import { SummarizeStrategy } from './summarize.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export { DROPPED_MARKER } from './drop.js'
-export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder } from './base.js'
+export type { OffloadConditions, OffloadStrategyBuilder } from './base.js'
+export type { OffloadTarget } from './target.js'
 
 /**
  * Offload strategy builder namespace.

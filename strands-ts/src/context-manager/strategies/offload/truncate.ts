@@ -15,7 +15,8 @@ import {
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
-import { BaseOffloadStrategy, offloadPlaceholder, type OffloadConditions, type OffloadTarget } from './base.js'
+import { BaseOffloadStrategy, offloadPlaceholder, type OffloadConditions } from './base.js'
+import type { OffloadTarget } from './target.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:truncate'

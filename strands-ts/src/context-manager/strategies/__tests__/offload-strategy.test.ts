@@ -1,14 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../offload/index.js'
-import {
-  getOldestMatches,
-  buildToolNameMap,
-  collectRemovableWithPair,
-  insertMarker,
-  repairAlternation,
-  targetMatchesMessage,
-  EmergencyTruncateStrategy,
-} from '../offload/base.js'
+import { EmergencyTruncateStrategy } from '../offload/base.js'
+import { buildToolNameMap, OffloadTargetMatcher } from '../offload/target.js'
+import { collectRemovableWithPair, insertMarker, repairAlternation } from '../../history-edits.js'
 import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock, Role } from '../../../types/messages.js'
 import { makeContext, makeToolResultMessage } from '../../../__fixtures__/context-manager-helpers.js'
@@ -190,7 +184,7 @@ describe('Offload.truncate', () => {
   })
 })
 
-describe('targetMatchesMessage', () => {
+describe('OffloadTargetMatcher.matchesText', () => {
   it.each(['assistantText', 'userText'] as const)('treats an offloaded %s block as that role text', (target) => {
     const role = target === 'assistantText' ? 'assistant' : 'user'
     const offloaded = new Message({ role, content: [new OffloadedBlock({ ref: 'm_0', preview: '[Dropped]' })] })
@@ -199,8 +193,8 @@ describe('targetMatchesMessage', () => {
       content: [new ToolResultBlock({ toolUseId: 't', status: 'success', content: [new TextBlock('x')] })],
     })
 
-    expect(targetMatchesMessage(target, offloaded)).toBe(true)
-    expect(targetMatchesMessage(target, toolOnly)).toBe(false)
+    expect(new OffloadTargetMatcher(target).matchesText(offloaded)).toBe(true)
+    expect(new OffloadTargetMatcher(target).matchesText(toolOnly)).toBe(false)
   })
 
   it('does not offload an OffloadedBlock again under a role text target', async () => {
@@ -722,7 +716,7 @@ describe('overflow bypass', () => {
   })
 })
 
-describe('getOldestMatches with ratio preserveRecent', () => {
+describe('OffloadTargetMatcher.oldestMatches', () => {
   function makeMessages(count: number): Message[] {
     return Array.from(
       { length: count },
@@ -734,7 +728,7 @@ describe('getOldestMatches with ratio preserveRecent', () => {
   it('integer preserveRecent keeps absolute count', () => {
     const messages = makeMessages(10)
     const toolNameMap = buildToolNameMap(messages)
-    const result = getOldestMatches(messages, '*', 3, toolNameMap, undefined, undefined)
+    const result = new OffloadTargetMatcher('*').oldestMatches(messages, 3, toolNameMap)
     expect(result).toHaveLength(7)
   })
 
@@ -742,7 +736,7 @@ describe('getOldestMatches with ratio preserveRecent', () => {
     const messages = makeMessages(10)
     const toolNameMap = buildToolNameMap(messages)
     // 0.7 = keep 70% of 10 = ceil(7) = 7 preserved, 3 returned
-    const result = getOldestMatches(messages, '*', 0.7, toolNameMap, undefined, undefined)
+    const result = new OffloadTargetMatcher('*').oldestMatches(messages, 0.7, toolNameMap)
     expect(result).toHaveLength(3)
   })
 
@@ -750,7 +744,7 @@ describe('getOldestMatches with ratio preserveRecent', () => {
     const messages = makeMessages(3)
     const toolNameMap = buildToolNameMap(messages)
     // 0.5 of 3 = ceil(1.5) = 2 preserved, 1 returned
-    const result = getOldestMatches(messages, '*', 0.5, toolNameMap, undefined, undefined)
+    const result = new OffloadTargetMatcher('*').oldestMatches(messages, 0.5, toolNameMap)
     expect(result).toHaveLength(1)
   })
 
@@ -758,7 +752,7 @@ describe('getOldestMatches with ratio preserveRecent', () => {
     const messages = makeMessages(10)
     const toolNameMap = buildToolNameMap(messages)
     // 0.99 of 10 = ceil(9.9) = 10 preserved, 0 returned
-    const result = getOldestMatches(messages, '*', 0.99, toolNameMap, undefined, undefined)
+    const result = new OffloadTargetMatcher('*').oldestMatches(messages, 0.99, toolNameMap)
     expect(result).toHaveLength(0)
   })
 })
@@ -794,7 +788,7 @@ describe('collectRemovableWithPair', () => {
 describe('insertMarker', () => {
   it('inserts an assistant message between user messages', () => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new OffloadedBlock({ preview: 'marker' }))
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(messages[1]!.content).toEqual([new OffloadedBlock({ preview: 'marker' })])
   })
@@ -807,7 +801,7 @@ describe('insertMarker', () => {
       metadata: { custom: { k: 'v' } },
     })
     const messages = [text('user', 'task'), original, text('user', 'u1')]
-    insertMarker(messages, 2, 'marker')
+    insertMarker(messages, 2, new OffloadedBlock({ preview: 'marker' }))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new OffloadedBlock({ preview: 'marker' })])
     expect(messages[1]!.trackingId).toBe('msg-1')
@@ -817,14 +811,14 @@ describe('insertMarker', () => {
 
   it('appends to the assistant message after the gap', () => {
     const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new OffloadedBlock({ preview: 'marker' }))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new OffloadedBlock({ preview: 'marker' })])
   })
 
   it('inserts an OffloadedBlock when the removed messages have a stash reference', () => {
     const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker', 'removed-m1')
+    insertMarker(messages, 1, new OffloadedBlock({ ref: 'removed-m1', preview: 'marker' }))
     expect(messages[1]!.content).toEqual([
       new TextBlock('a1'),
       new OffloadedBlock({ ref: 'removed-m1', preview: 'marker' }),
@@ -836,7 +830,7 @@ describe('insertMarker', () => {
     [5, ['task', 'u1', 'marker']],
   ])('clamps index %i into the history after message 0', (index, expected) => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, index, 'marker')
+    insertMarker(messages, index, new OffloadedBlock({ preview: 'marker' }))
     expect(messages.map((message) => previewOf(message.content[0]!))).toEqual(expected)
   })
 })

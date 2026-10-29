@@ -1,5 +1,6 @@
 /**
- * Base offload strategy and shared infrastructure.
+ * Base offload strategy: target routing, eager hooks, preserveRecent, and the shared
+ * per-block and message-level execution paths.
  */
 
 import { logger } from '../../../logging/logger.js'
@@ -20,22 +21,9 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided } from '../../methods/truncate.js'
+import { insertMarker, repairAlternation, spliceWithPairs } from '../../history-edits.js'
+import { buildToolNameMap, OffloadTargetMatcher, type OffloadTarget } from './target.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
-
-/**
- * Target for offload operations. This union is intentionally extensible — new
- * string-literal members can be added freely as new content categories emerge.
- *
- * - `"toolResults"` — all successful tool result blocks
- * - `"toolResultErrors"` — all failed tool result blocks
- * - `"assistantText"` — text blocks in assistant messages
- * - `"userText"` — text blocks in user messages (excluding tool results)
- * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
- * - `"*"` — all content in the context window (tool results + text blocks)
- *
- * @experimental
- */
-export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
 
 /**
  * Conditions that determine when an offload strategy fires.
@@ -75,273 +63,30 @@ export interface OffloadStrategyBuilder extends ContextStrategy {
   when(conditions: OffloadConditions): ContextStrategy
 }
 
-// --- Shared helpers ---
-
 function finiteOrUndefined(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined
 }
-
-/**
- * Builds a toolUseId → toolName map from all assistant messages in the conversation.
- * Called once per apply() to avoid O(messages × toolResults) scanning.
- */
-export function buildToolNameMap(messages: Message[]): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue
-    for (const block of message.content) {
-      if (block instanceof ToolUseBlock) {
-        map.set(block.toolUseId, block.name)
-      }
-    }
-  }
-  return map
-}
-
-export function toolMatchesTarget(
-  block: ToolResultBlock,
-  target: OffloadTarget,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): boolean {
-  if (target === '*') return true
-  if (target === 'toolResults') return block.status === 'success'
-  if (target === 'toolResultErrors') return block.status === 'error'
-
-  const toolName = toolNameMap.get(block.toolUseId)
-  if (!toolName) return false
-
-  if (toolExcludeFilter) return !toolExcludeFilter.has(toolName)
-  if (toolIncludeFilter) return toolIncludeFilter.has(toolName)
-
-  return false
-}
-
-/**
- * Whether a block is a text turn's content: the text itself, or the placeholder left where it was offloaded.
- *
- * @internal
- */
-export function isTextContent(block: ContentBlock): boolean {
-  return block instanceof TextBlock || block instanceof OffloadedBlock
-}
-
-export function targetMatchesMessage(target: OffloadTarget | undefined, message: Message): boolean {
-  if (target === undefined || target === '*') return true
-  if (target === 'assistantText') return message.role === 'assistant' && message.content.some(isTextContent)
-  if (target === 'userText') return message.role === 'user' && message.content.some(isTextContent)
-  return false
-}
-
-export function messageMatchesTarget(
-  message: Message,
-  target: OffloadTarget | undefined,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): boolean {
-  if (targetMatchesMessage(target, message)) return true
-  if (!target) return false
-
-  // Tool result targets — must be a user message with a matching tool result
-  if (message.role !== 'user') return false
-  for (const block of message.content) {
-    if (block instanceof ToolResultBlock) {
-      if (toolMatchesTarget(block, target, toolNameMap, toolIncludeFilter, toolExcludeFilter)) return true
-    }
-  }
-  return false
-}
-
-/**
- * Returns target-matching messages excluding the most recent matches.
- * First filters to only messages that match the target, then removes the tail.
- *
- * @param preserveRecent - Integer (1 or above): absolute count. Decimal (between 0 and 1 exclusive): ratio of matches to keep.
- */
-export function getOldestMatches(
-  messages: Message[],
-  target: OffloadTarget | undefined,
-  preserveRecent: number,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): Message[] {
-  const matching = messages.filter((message) =>
-    messageMatchesTarget(message, target, toolNameMap, toolIncludeFilter, toolExcludeFilter)
-  )
-  const count =
-    preserveRecent > 0 && preserveRecent < 1 ? Math.ceil(matching.length * preserveRecent) : Math.floor(preserveRecent)
-  if (count >= matching.length) return []
-  return matching.slice(0, -count)
-}
-
-/**
- * Collects a message and its paired partner (if any) for safe removal.
- * If removing a message would orphan a tool-use/tool-result pair, includes the partner
- * so the pair is removed together. Never collects message 0 or the last message, which the
- * next model call responds to.
- */
-export function collectRemovableWithPair(messages: Message[], index: number): Message[] {
-  const message = messages[index]
-  if (!message) return []
-  if (index === 0 || index === messages.length - 1) return []
-
-  const result: Message[] = [message]
-
-  const hasToolResult = message.content.some((block) => block instanceof ToolResultBlock)
-  if (hasToolResult) {
-    const prev = messages[index - 1]
-    if (prev && prev.content.some((block) => block instanceof ToolUseBlock)) {
-      if (index - 1 > 0) result.push(prev)
-      else return []
-    }
-  }
-
-  const hasToolUse = message.content.some((block) => block instanceof ToolUseBlock)
-  if (hasToolUse) {
-    const next = messages[index + 1]
-    if (next && next.content.some((block) => block instanceof ToolResultBlock)) {
-      if (index + 1 < messages.length - 1) result.push(next)
-      else return []
-    }
-  }
-
-  return result
-}
-
-/**
- * Collects removable messages (with their tool pairs), then splices them from the array.
- * Returns the removed messages in conversation order and the lowest index that was removed.
- */
-export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: Message[]; lowestIndex: number } {
-  const toSplice = new Set<Message>()
-  for (const message of toRemove) {
-    const index = messages.indexOf(message)
-    if (index === -1) continue
-    for (const removable of collectRemovableWithPair(messages, index)) {
-      toSplice.add(removable)
-    }
-  }
-
-  const removed = messages.filter((message) => toSplice.has(message))
-  const lowestIndex = removed.length > 0 ? messages.indexOf(removed[0]!) : messages.length
-  for (const message of removed) {
-    messages.splice(messages.indexOf(message), 1)
-  }
-  return { removed, lowestIndex }
-}
-
-/**
- * Adds a removal marker as assistant content at the gap left by removed messages: an
- * {@link OffloadedBlock} when the removed messages are retrievable under `stashRef`, otherwise text.
- *
- * The marker is appended to an assistant message beside the gap, which keeps that message's
- * tracking id and block indices for stash refs, or becomes its own assistant message. It never
- * joins message 0, and the last message is never removed, so a new marker never ends the history.
- */
-export function insertMarker(messages: Message[], index: number, text: string, stashRef?: string): void {
-  index = Math.max(1, Math.min(index, messages.length))
-  const block = offloadPlaceholder(text, stashRef)
-  for (const neighbor of [index - 1, index]) {
-    const carrier = messages[neighbor]
-    if (neighbor > 0 && carrier?.role === 'assistant') {
-      messages[neighbor] = carrier.withContent([...carrier.content, block])
-      return
-    }
-  }
-  messages.splice(index, 0, new Message({ role: 'assistant', content: [block] }))
-}
-
-/**
- * Merges consecutive same-role messages to restore the user/assistant alternation
- * that Anthropic/Bedrock APIs require. Called after message-level operations that
- * may leave gaps. Constructs new Message objects for merges to avoid mutating
- * objects that may be referenced elsewhere (session storage, event payloads).
- * A merge keeps the earlier message's tracking id and metadata, and is pinned if either was.
- */
-export function repairAlternation(messages: Message[]): void {
-  let writeIndex = 0
-  for (let readIndex = 0; readIndex < messages.length; readIndex++) {
-    const current = messages[readIndex]!
-    if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
-      const prev = messages[writeIndex - 1]!
-      let merged = prev.withContent([...prev.content, ...current.content])
-      if (current.metadata?.custom?.pinned === true && prev.metadata?.custom?.pinned !== true) {
-        merged = merged.withMetadata({ ...prev.metadata, custom: { ...prev.metadata?.custom, pinned: true } })
-      }
-      messages[writeIndex - 1] = merged
-    } else {
-      messages[writeIndex] = current
-      writeIndex++
-    }
-  }
-  messages.length = writeIndex
-}
-
-/**
- * Parses a string[] target into include/exclude filter sets.
- * Entries must be prefixed with `tool::` (e.g. `'tool::bash'`).
- * An additional `!` prefix excludes (e.g. `'!tool::bash'`).
- */
-export function resolveToolFilter(target: OffloadTarget | undefined): { include?: Set<string>; exclude?: Set<string> } {
-  if (!Array.isArray(target)) return {}
-
-  const TOOL_PREFIX = 'tool::'
-  const includes: string[] = []
-  const excludes: string[] = []
-
-  for (const entry of target) {
-    if (entry.startsWith('!')) {
-      const name = entry.slice(1)
-      excludes.push(name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name)
-    } else {
-      includes.push(entry.startsWith(TOOL_PREFIX) ? entry.slice(TOOL_PREFIX.length) : entry)
-    }
-  }
-
-  if (excludes.length > 0 && includes.length > 0) {
-    logger.warn('tool filter contains both includes and excludes, excludes will be ignored')
-    return { include: new Set(includes) }
-  }
-  if (excludes.length > 0) {
-    return { exclude: new Set(excludes) }
-  }
-  if (includes.length > 0) {
-    return { include: new Set(includes) }
-  }
-
-  return {}
-}
-
-// --- Base strategy class ---
 
 /** Shared offload logic: target routing, eager hooks, preserveRecent. */
 export abstract class BaseOffloadStrategy implements ContextStrategy {
   abstract readonly name: string
 
-  protected readonly _target: OffloadTarget | undefined
+  protected readonly _matcher: OffloadTargetMatcher
   protected readonly _threshold: number | undefined
   protected readonly _utilizationThreshold: number | undefined
   protected readonly _preserveRecent: number
-  protected readonly _includeFilter: Set<string> | undefined
-  protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
-    if (Array.isArray(target) && target.length === 0) {
-      throw new Error('Empty array target matches nothing — provide at least one target')
-    }
-
-    this._target = target
+    this._matcher = new OffloadTargetMatcher(target)
     this._threshold = finiteOrUndefined(conditions?.threshold)
     this._utilizationThreshold = finiteOrUndefined(conditions?.utilization)
     this._preserveRecent = finiteOrUndefined(conditions?.preserveRecent) ?? 0
+  }
 
-    const resolved = resolveToolFilter(target)
-    this._includeFilter = resolved.include
-    this._excludeFilter = resolved.exclude
+  /** The target this strategy was built with, for `when()` to rebuild it. */
+  protected get _target(): OffloadTarget | undefined {
+    return this._matcher.target
   }
 
   /** Whether this strategy operates at message-level (batch) vs per-block. */
@@ -357,8 +102,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
-      const toolNameMap = buildToolNameMap(messages)
-      await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
+      await this._transformBlocks(event.message, messages, buildToolNameMap(messages), event.agent)
     })
   }
 
@@ -374,30 +118,13 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Per-block execution: walk each message, transform individual blocks above threshold. */
   private async _applyPerBlock(context: ContextState): Promise<boolean> {
-    const { messages, agent } = context
-    const invocationContext = context.invocationContext
+    const { messages, agent, invocationContext } = context
     const toolNameMap = buildToolNameMap(messages)
-    const eligible =
-      this._preserveRecent > 0
-        ? getOldestMatches(
-            messages,
-            this._target,
-            this._preserveRecent,
-            toolNameMap,
-            this._includeFilter,
-            this._excludeFilter
-          )
-        : messages
     let acted = false
-
-    for (const message of eligible) {
-      const index = messages.indexOf(message)
-      if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) {
-        acted = true
-      }
+    for (const message of this._matcher.oldestMatches(messages, this._preserveRecent, toolNameMap)) {
+      if (isPinned(messages, messages.indexOf(message))) continue
+      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) acted = true
     }
-
     return acted
   }
 
@@ -425,7 +152,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (removed.length === 0) return false
 
     const marker = markerFor(removed.length)
-    if (marker !== null) insertMarker(messages, lowestIndex, marker, await this._stashRemoved(removed))
+    if (marker !== null) {
+      insertMarker(messages, lowestIndex, offloadPlaceholder(marker, await this._stashRemoved(removed)))
+    }
 
     repairAlternation(messages)
     return true
@@ -449,22 +178,22 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Whether a block is eligible for offload given the current target and filters. */
   protected _blockMatchesTarget(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
-    if (block instanceof ToolUseBlock) return false
-    if (block instanceof CachePointBlock) return false
-    if (block instanceof ReasoningBlock) return false
-    if (block instanceof OffloadedBlock) return false
-    if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
+    if (
+      block instanceof ToolUseBlock ||
+      block instanceof CachePointBlock ||
+      block instanceof ReasoningBlock ||
+      block instanceof OffloadedBlock
+    ) {
+      return false
+    }
+    if (block instanceof TextBlock) return this._matcher.matchesText(message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       // A result already offloaded keeps its opaque items at shifted positions; a second pass would mislabel them.
       if (block.content.some((item) => item instanceof OffloadedBlock)) return false
-      return (
-        this._target === undefined ||
-        toolMatchesTarget(block, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
-      )
+      return this._matcher.matchesToolResult(block, toolNameMap)
     }
-    if (this._target === '*' || this._target === undefined) return true
-    return false
+    return this._matcher.matchesAll
   }
 
   /** Process eligible blocks in a message. */
@@ -481,7 +210,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const block = message.content[blockIndex]!
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
-      const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
+      const tokens = await this._countBlockTokens(block, message, agent)
       if (tokens <= effectiveThreshold) continue
 
       const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
@@ -498,46 +227,34 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
     const { messages, agent } = context
     const toolNameMap = buildToolNameMap(messages)
-
-    let candidates: Message[]
-    if (this._preserveRecent > 0) {
-      candidates = getOldestMatches(
-        messages,
-        this._target,
-        this._preserveRecent,
-        toolNameMap,
-        this._includeFilter,
-        this._excludeFilter
-      ).filter((message) => {
-        const index = messages.indexOf(message)
-        return index > 0 && !isPinned(messages, index)
-      })
-    } else {
-      candidates = messages.filter(
-        (message, index) =>
-          index > 0 &&
-          !isPinned(messages, index) &&
-          messageMatchesTarget(message, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
-      )
-    }
-
+    const candidates = this._matcher.oldestMatches(messages, this._preserveRecent, toolNameMap).filter((message) => {
+      const index = messages.indexOf(message)
+      return index > 0 && !isPinned(messages, index)
+    })
     if (this._threshold === undefined) return candidates
 
     const eligible: Message[] = []
     for (const message of candidates) {
-      let hasOversize = false
-      for (const block of message.content) {
-        if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
-
-        const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-        if (tokens > this._threshold!) {
-          hasOversize = true
-          break
-        }
-      }
-      if (hasOversize) eligible.push(message)
+      if (await this._hasOversizedBlock(message, toolNameMap, agent)) eligible.push(message)
     }
     return eligible
+  }
+
+  /** Whether any block the target covers exceeds the threshold. */
+  private async _hasOversizedBlock(
+    message: Message,
+    toolNameMap: Map<string, string>,
+    agent: LocalAgent
+  ): Promise<boolean> {
+    for (const block of message.content) {
+      if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
+      if ((await this._countBlockTokens(block, message, agent)) > this._threshold!) return true
+    }
+    return false
+  }
+
+  private _countBlockTokens(block: ContentBlock, message: Message, agent: LocalAgent): Promise<number> {
+    return agent.model.countTokens([new Message({ role: message.role, content: [block] })])
   }
 
   /**

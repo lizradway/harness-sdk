@@ -19,7 +19,7 @@ import {
 import type { InvokeModelContext } from '../../../middleware/stages.js'
 import type { MiddlewareInputHandler } from '../../../middleware/types.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
-import { isTextContent } from '../../strategies/offload/base.js'
+import { isTextContent } from '../../strategies/offload/target.js'
 
 /** Default number of recent messages to preserve verbatim during summarization or truncation. */
 const DEFAULT_KEEP_RECENT_MESSAGES = 10

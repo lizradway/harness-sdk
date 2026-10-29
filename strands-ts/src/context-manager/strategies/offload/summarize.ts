@@ -20,13 +20,9 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import {
-  BaseOffloadStrategy,
-  collectRemovableWithPair,
-  offloadPlaceholder,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+import { collectRemovableWithPair } from '../../history-edits.js'
+import { BaseOffloadStrategy, offloadPlaceholder, type OffloadConditions } from './base.js'
+import type { OffloadTarget } from './target.js'
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
