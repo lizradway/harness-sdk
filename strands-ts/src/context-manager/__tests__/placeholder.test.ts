@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DROPPED_MARKER,
-  formatDroppedMedia,
+  formatDropped,
   formatDroppedMessages,
   formatElided,
   formatOffloaded,
@@ -31,8 +30,8 @@ describe('offloadPlaceholder', () => {
 
 describe('markers', () => {
   it.each([
-    ['a dropped block', DROPPED_MARKER, '[Dropped]'],
-    ['dropped media', formatDroppedMedia('image'), '[Dropped: image, removed from context after it was viewed]'],
+    ['a dropped block', formatDropped(), '[Dropped]'],
+    ['dropped media', formatDropped('image'), '[Dropped: image, removed from context after it was viewed]'],
     ['one dropped message', formatDroppedMessages(1), '[Dropped: 1 message]'],
     ['dropped messages', formatDroppedMessages(3), '[Dropped: 3 messages]'],
     ['an offloaded block', formatOffloaded(2525), '[Offloaded: ~2,525 tokens]'],

@@ -34,19 +34,12 @@ export function offloadPlaceholder(
 }
 
 /**
- * Marker for a dropped block.
+ * Marker for a dropped block, naming the media kind when it was media.
  *
  * @internal
  */
-export const DROPPED_MARKER = marker('Dropped')
-
-/**
- * Marker for a dropped media block, such as `[Dropped: image, removed from context after it was viewed]`.
- *
- * @internal
- */
-export function formatDroppedMedia(mediaKind: string): string {
-  return marker('Dropped', mediaKind, AFTER_VIEWING)
+export function formatDropped(mediaKind?: string): string {
+  return marker('Dropped', mediaKind, mediaKind && AFTER_VIEWING)
 }
 
 /**

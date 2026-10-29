@@ -9,7 +9,7 @@ import { Message, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
-import { DROPPED_MARKER, formatDroppedMedia, formatDroppedMessages } from '../../placeholder.js'
+import { formatDropped, formatDroppedMessages } from '../../placeholder.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
@@ -35,16 +35,8 @@ export class DropStrategy extends BaseOffloadStrategy {
     _agent: LocalAgent,
     stashRef: string | undefined
   ): Promise<ContentBlock | null> {
-    if (block instanceof ToolResultBlock) {
-      logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
-      return block.withContent([this._placeholder(DROPPED_MARKER, stashRef)])
-    }
-    const kind = mediaKind(block)
-    if (kind) {
-      logger.debug(`trackingId=<${message.trackingId}> | dropped media block from context window`)
-      return this._placeholder(formatDroppedMedia(kind), stashRef)
-    }
-    logger.debug(`trackingId=<${message.trackingId}> | dropped block from context window`)
-    return this._placeholder(DROPPED_MARKER, stashRef)
+    logger.debug(`trackingId=<${message.trackingId}>, block=<${block.type}> | dropped block from context window`)
+    const placeholder = this._placeholder(formatDropped(mediaKind(block)), stashRef)
+    return block instanceof ToolResultBlock ? block.withContent([placeholder]) : placeholder
   }
 }

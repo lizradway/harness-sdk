@@ -4,7 +4,7 @@
 
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
-import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
+import type { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -40,12 +40,7 @@ const TOOL_PREFIX = 'tool::'
  * @internal
  */
 export function isMediaBlock(block: ContentBlock): block is MediaBlock {
-  return (
-    block instanceof ImageBlock ||
-    block instanceof DocumentBlock ||
-    block instanceof VideoBlock ||
-    block instanceof AudioBlock
-  )
+  return mediaKind(block) !== undefined
 }
 
 /**
