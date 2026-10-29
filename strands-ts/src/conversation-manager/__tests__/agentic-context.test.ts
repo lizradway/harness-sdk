@@ -322,7 +322,9 @@ describe('pinContextTool', () => {
         textMsg('assistant', 'Old'),
         new Message({
           role: 'user',
-          content: [new TextBlock('[Dropped] [ref: m_0]', { offloaded: { ref: 'm_0', preview: '[Dropped]' } })],
+          content: [
+            new TextBlock('[Dropped] [ref: m_0]', { metadata: { offloaded: { ref: 'm_0', preview: '[Dropped]' } } }),
+          ],
         }),
         textMsg('assistant', 'New answer'),
       ]

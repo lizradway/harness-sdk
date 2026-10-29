@@ -271,13 +271,13 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
 /**
  * The text block that stands in for offloaded content: the preview, followed by the stash reference
- * when the original is retrievable, with both recorded in `offloaded`.
+ * when the original is retrievable, with both recorded in `metadata.offloaded`.
  *
  * @internal
  */
 export function offloadPlaceholder(preview: string, stashRef: string | undefined): TextBlock {
-  if (stashRef === undefined) return new TextBlock(preview, { offloaded: { preview } })
-  return new TextBlock(`${preview} [ref: ${stashRef}]`, { offloaded: { preview, ref: stashRef } })
+  if (stashRef === undefined) return new TextBlock(preview, { metadata: { offloaded: { preview } } })
+  return new TextBlock(`${preview} [ref: ${stashRef}]`, { metadata: { offloaded: { preview, ref: stashRef } } })
 }
 
 // --- Emergency truncation strategy ---

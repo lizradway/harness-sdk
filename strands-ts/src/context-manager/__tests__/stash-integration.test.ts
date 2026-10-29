@@ -76,8 +76,8 @@ describe('Offload strategies with stash', () => {
       await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { stash }))
 
       const placeholder = messages[1]!.content[1] as TextBlock
-      expect((placeholder as TextBlock).offloaded).toBeDefined()
-      expect(placeholder.offloaded!.ref).toBe('a1_1')
+      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(placeholder.metadata!.offloaded!.ref).toBe('a1_1')
       const retrieve = createRetrievalTool(stash)
       expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual(new TextBlock(big))
     })
@@ -115,10 +115,10 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const placeholder = block.content[0] as TextBlock
-      expect((placeholder as TextBlock).offloaded).toBeDefined()
-      expect(placeholder.offloaded!.ref).toBe('tool-123')
-      expect(placeholder.offloaded!.preview).toMatch(/^\[Truncated: /)
-      expect(placeholder.text).toBe(`${placeholder.offloaded!.preview} [ref: tool-123]`)
+      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(placeholder.metadata!.offloaded!.ref).toBe('tool-123')
+      expect(placeholder.metadata!.offloaded!.preview).toMatch(/^\[Truncated: /)
+      expect(placeholder.text).toBe(`${placeholder.metadata!.offloaded!.preview} [ref: tool-123]`)
     })
 
     it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
@@ -159,7 +159,9 @@ describe('Offload strategies with stash', () => {
 
       expect(actedAgain).toBe(true)
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
-        new TextBlock('[Dropped] [ref: tool-123]', { offloaded: { ref: 'tool-123', preview: '[Dropped]' } }),
+        new TextBlock('[Dropped] [ref: tool-123]', {
+          metadata: { offloaded: { ref: 'tool-123', preview: '[Dropped]' } },
+        }),
       ])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
         new TextBlock(original)
@@ -175,9 +177,9 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock
-      expect((placeholder as TextBlock).offloaded).toBeDefined()
-      expect(placeholder.offloaded!.ref).toBeUndefined()
-      expect(placeholder.text).toBe(placeholder.offloaded!.preview)
+      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(placeholder.metadata!.offloaded!.ref).toBeUndefined()
+      expect(placeholder.text).toBe(placeholder.metadata!.offloaded!.preview)
     })
   })
 
@@ -213,7 +215,9 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       expect(block.content).toEqual([
-        new TextBlock('[Dropped] [ref: tool-123]', { offloaded: { ref: 'tool-123', preview: '[Dropped]' } }),
+        new TextBlock('[Dropped] [ref: tool-123]', {
+          metadata: { offloaded: { ref: 'tool-123', preview: '[Dropped]' } },
+        }),
       ])
       expect((block.content[0] as TextBlock).text).toBe('[Dropped] [ref: tool-123]')
     })
@@ -232,7 +236,7 @@ describe('Offload strategies with stash', () => {
 
       expect(acted).toBe(true)
       const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
-        offloaded: { ref: 'removed-m1', preview: '[Dropped: 2 messages]' },
+        metadata: { offloaded: { ref: 'removed-m1', preview: '[Dropped: 2 messages]' } },
       })
       expect(messages.map((message) => message.content)).toEqual([
         [new TextBlock('start')],
@@ -262,7 +266,7 @@ describe('Offload strategies with stash', () => {
 
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
-        new TextBlock('[Dropped: 2 messages]', { offloaded: { preview: '[Dropped: 2 messages]' } }),
+        new TextBlock('[Dropped: 2 messages]', { metadata: { offloaded: { preview: '[Dropped: 2 messages]' } } }),
       ])
     })
   })

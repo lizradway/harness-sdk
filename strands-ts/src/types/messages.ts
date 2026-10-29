@@ -242,6 +242,17 @@ export interface OffloadedBlockData {
 }
 
 /**
+ * Metadata attached to a text block. Not sent to model providers.
+ */
+export interface TextBlockMetadata {
+  /**
+   * Present when the block stands in for content the context manager offloaded; `text` is then the
+   * preview followed by the reference token.
+   */
+  offloaded?: OffloadedBlockData
+}
+
+/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -251,10 +262,9 @@ export interface TextBlockData {
   text: string
 
   /**
-   * Present when the block stands in for content the context manager offloaded; `text` is then the
-   * preview followed by the reference token.
+   * Optional metadata about the block. Not sent to model providers.
    */
-  offloaded?: OffloadedBlockData
+  metadata?: TextBlockMetadata
 }
 
 /**
@@ -272,14 +282,14 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
   readonly text: string
 
   /**
-   * Present when the block stands in for content the context manager offloaded.
+   * Optional metadata about the block. Not sent to model providers.
    */
-  readonly offloaded?: OffloadedBlockData
+  readonly metadata?: TextBlockMetadata
 
-  constructor(text: string, options?: { offloaded?: OffloadedBlockData }) {
+  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
     this.text = text
-    if (options?.offloaded !== undefined) {
-      this.offloaded = options.offloaded
+    if (options?.metadata !== undefined) {
+      this.metadata = options.metadata
     }
   }
 
@@ -288,7 +298,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text, ...(this.offloaded !== undefined && { offloaded: this.offloaded }) }
+    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
   }
 
   /**
@@ -298,7 +308,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text, { ...(data.offloaded !== undefined && { offloaded: data.offloaded }) })
+    return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
   }
 }
 
@@ -307,8 +317,10 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
  *
  * @internal
  */
-export function isOffloaded(block: unknown): block is TextBlock & { offloaded: OffloadedBlockData } {
-  return block instanceof TextBlock && block.offloaded !== undefined
+export function isOffloaded(
+  block: unknown
+): block is TextBlock & { metadata: TextBlockMetadata & { offloaded: OffloadedBlockData } } {
+  return block instanceof TextBlock && block.metadata?.offloaded !== undefined
 }
 
 /**

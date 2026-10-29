@@ -169,8 +169,8 @@ describe('Agent contextManager', () => {
       await agent.invoke('list the rows')
 
       const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as TextBlock
-      expect((stored as TextBlock).offloaded).toBeDefined()
-      expect(stored.offloaded!.ref).toBe('tu-1')
+      expect((stored as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(stored.metadata!.offloaded!.ref).toBe('tu-1')
       const received = (sent.mock.calls[1]![0][2]!.content[0] as ToolResultBlock).content[0]
       expect(received).toBeInstanceOf(TextBlock)
       expect((received as TextBlock).text).toBe(stored.text)

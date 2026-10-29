@@ -68,7 +68,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = messages[0]!.content[0] as ToolResultBlock
-      expect((block.content[0] as TextBlock).offloaded!.preview).toContain('[Summarized:')
+      expect((block.content[0] as TextBlock).metadata!.offloaded!.preview).toContain('[Summarized:')
     })
 
     it('summarizes with agent.auxModel when the strategy has no model', async () => {
@@ -102,7 +102,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = message.content[0] as TextBlock
-      expect(block.offloaded!.preview).toContain('[Summarized:')
+      expect(block.metadata!.offloaded!.preview).toContain('[Summarized:')
     })
 
     it('summarizes user text blocks', async () => {
@@ -119,7 +119,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = message.content[0] as TextBlock
-      expect(block.offloaded!.preview).toContain('[Summarized:')
+      expect(block.metadata!.offloaded!.preview).toContain('[Summarized:')
     })
 
     it('skips when utilization is below threshold', async () => {
@@ -186,7 +186,9 @@ describe('Offload.summarize', () => {
           status: 'success',
           content: [
             new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output', {
-              offloaded: { preview: '[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output' },
+              metadata: {
+                offloaded: { preview: '[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output' },
+              },
             }),
           ],
         }),
@@ -250,9 +252,9 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toBe(largeText)
-    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).offloaded!.preview).toContain(
-      '[Summarized:'
-    )
+    expect(
+      ((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).metadata!.offloaded!.preview
+    ).toContain('[Summarized:')
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<rejected>'))
     warnSpy.mockRestore()
   })
@@ -320,7 +322,7 @@ describe('repeated summarization', () => {
     expect(messages[0]!.metadata).toEqual(task().metadata)
     const summaries = messages
       .flatMap((message) => message.content)
-      .filter((block) => isOffloaded(block) && block.offloaded.preview.startsWith('[Summarized:'))
+      .filter((block) => isOffloaded(block) && block.metadata.offloaded.preview.startsWith('[Summarized:'))
     expect(summaries).toHaveLength(1)
   })
 })

@@ -129,7 +129,7 @@ describe('ContextManager', () => {
             status: 'success',
             content: [
               new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]', {
-                offloaded: { ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview' },
+                metadata: { offloaded: { ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview' } },
               }),
             ],
           }),

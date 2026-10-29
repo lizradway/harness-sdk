@@ -201,7 +201,11 @@ describe('Tracer', () => {
         messages: [
           new Message({
             role: 'user',
-            content: [new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })],
+            content: [
+              new TextBlock('[Dropped] [ref: tu-1]', {
+                metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+              }),
+            ],
           }),
         ],
         agentName: 'test-agent',

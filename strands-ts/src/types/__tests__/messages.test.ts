@@ -183,14 +183,19 @@ describe('TextBlock', () => {
 
 describe('TextBlock standing in for offloaded content', () => {
   test('carries what it stands in for and serializes it beside the text', () => {
-    const block = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
+    const block = new TextBlock('[Dropped] [ref: tu-1]', {
+      metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+    })
 
     expect(block).toEqual({
       type: 'textBlock',
       text: '[Dropped] [ref: tu-1]',
-      offloaded: { ref: 'tu-1', preview: '[Dropped]' },
+      metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
     })
-    expect(block.toJSON()).toEqual({ text: '[Dropped] [ref: tu-1]', offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+    })
     expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
   })
 
@@ -206,11 +211,13 @@ describe('TextBlock standing in for offloaded content', () => {
     const message = new Message({
       role: 'user',
       content: [
-        new TextBlock('[Dropped] [ref: msg-1_0]', { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } }),
+        new TextBlock('[Dropped] [ref: msg-1_0]', {
+          metadata: { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } },
+        }),
         new ToolResultBlock({
           toolUseId: 'tu-1',
           status: 'success',
-          content: [new TextBlock('row-1 [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: 'row-1' } })],
+          content: [new TextBlock('row-1 [ref: tu-1]', { metadata: { offloaded: { ref: 'tu-1', preview: 'row-1' } } })],
         }),
       ],
       trackingId: 'msg-1',
@@ -219,12 +226,12 @@ describe('TextBlock standing in for offloaded content', () => {
     const data = JSON.parse(JSON.stringify(message)) as MessageData
 
     expect(data.content).toEqual([
-      { text: '[Dropped] [ref: msg-1_0]', offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } },
+      { text: '[Dropped] [ref: msg-1_0]', metadata: { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } } },
       {
         toolResult: {
           toolUseId: 'tu-1',
           status: 'success',
-          content: [{ text: 'row-1 [ref: tu-1]', offloaded: { ref: 'tu-1', preview: 'row-1' } }],
+          content: [{ text: 'row-1 [ref: tu-1]', metadata: { offloaded: { ref: 'tu-1', preview: 'row-1' } } }],
         },
       },
     ])

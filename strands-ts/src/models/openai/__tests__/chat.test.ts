@@ -392,7 +392,9 @@ describe('OpenAIModel', () => {
     it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
       const captured: { request: any } = { request: null }
       const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
-      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
+      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+        metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+      })
       await collectIterator(
         provider.stream([
           new Message({ role: 'user', content: [placeholder] }),

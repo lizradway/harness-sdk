@@ -153,7 +153,10 @@ describe('retrieval tool', () => {
       await stash.store(
         'tool-1',
         0,
-        encodeJSON({ text: '[Dropped] [ref: tool-1]', offloaded: { preview: '[Dropped]', ref: 'tool-1' } })
+        encodeJSON({
+          text: '[Dropped] [ref: tool-1]',
+          metadata: { offloaded: { preview: '[Dropped]', ref: 'tool-1' } },
+        })
       )
       const retrievalTool = createRetrievalTool(stash)
 

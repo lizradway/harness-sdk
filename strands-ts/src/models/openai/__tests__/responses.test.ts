@@ -521,7 +521,9 @@ describe("OpenAIModel (api: 'responses')", () => {
     })
 
     it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
-      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
+      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+        metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+      })
       const messages = [
         new Message({ role: 'user', content: [placeholder] }),
         new Message({ role: 'assistant', content: [placeholder] }),
