@@ -14,7 +14,7 @@ import { SummarizeStrategy } from './summarize.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export type { OffloadStrategy } from './base.js'
-export type { OffloadConditions, Percent } from './conditions.js'
+export type { OffloadConditions } from './conditions.js'
 export type { OffloadTarget } from './target.js'
 
 /**

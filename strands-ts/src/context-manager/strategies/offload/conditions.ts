@@ -10,7 +10,7 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
 /**
  * A share of a whole, written as a percent string such as `'70%'` or `'12.5%'`.
  *
- * @experimental
+ * @internal
  */
 export type Percent = `${number}%`
 
