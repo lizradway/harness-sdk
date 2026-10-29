@@ -13,7 +13,6 @@ import {
   GuardContentBlock,
   JsonBlock,
   Message,
-  OffloadedBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -114,7 +113,6 @@ export async function summarizeContent(
  */
 function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
   if (block instanceof TextBlock || block instanceof ImageBlock || block instanceof DocumentBlock) return [block]
-  if (block instanceof OffloadedBlock) return [new TextBlock(block.toText())]
   if (block instanceof JsonBlock) return [new TextBlock(JSON.stringify(block.json, null, 2))]
   if (block instanceof CitationsBlock) return block.content.map((content) => new TextBlock(content.text))
   if (block instanceof GuardContentBlock) {

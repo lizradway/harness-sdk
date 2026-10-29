@@ -150,13 +150,11 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
 
     for (const block of message.content) {
       switch (block.type) {
-        case 'textBlock':
-        case 'offloadedBlock': {
-          const text = block.type === 'textBlock' ? block.text : block.toText()
+        case 'textBlock': {
           if (role === 'user') {
-            contentItems.push({ type: 'input_text', text })
+            contentItems.push({ type: 'input_text', text: block.text })
           } else {
-            contentItems.push({ type: 'output_text', text })
+            contentItems.push({ type: 'output_text', text: block.text })
           }
           break
         }
@@ -271,10 +269,6 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
       case 'textBlock':
         texts.push(c.text)
         parts.push({ type: 'input_text', text: c.text })
-        break
-      case 'offloadedBlock':
-        texts.push(c.toText())
-        parts.push({ type: 'input_text', text: c.toText() })
         break
       case 'jsonBlock': {
         const jsonBlock = c as { json: unknown }

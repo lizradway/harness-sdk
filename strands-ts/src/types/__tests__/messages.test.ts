@@ -182,20 +182,25 @@ describe('TextBlock', () => {
 })
 
 describe('OffloadedBlock', () => {
-  test('creates offloaded block and renders its model text', () => {
+  test('is a text block whose text is the preview followed by the reference', () => {
     const block = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
 
-    expect(block).toEqual({ type: 'offloadedBlock', ref: 'tu-1', preview: '[Dropped]' })
-    expect(block.toText()).toBe('[Dropped] [ref: tu-1]')
+    expect(block).toBeInstanceOf(TextBlock)
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped] [ref: tu-1]', ref: 'tu-1', preview: '[Dropped]' })
   })
 
   test('renders and serializes without a reference when the original was not stashed', () => {
     const block = new OffloadedBlock({ preview: '[Dropped]' })
 
-    expect(block).toEqual({ type: 'offloadedBlock', preview: '[Dropped]' })
-    expect(block.toText()).toBe('[Dropped]')
-    expect(block.toJSON()).toEqual({ offloaded: { preview: '[Dropped]' } })
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped]', preview: '[Dropped]' })
+    expect(block.toJSON()).toEqual({ text: '[Dropped]', offloaded: { preview: '[Dropped]' } })
     expect(OffloadedBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
+  test('loads as plain text where the offloaded field is not understood', () => {
+    const data = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' }).toJSON()
+
+    expect(TextBlock.fromJSON(data)).toEqual(new TextBlock('[Dropped] [ref: tu-1]'))
   })
 
   test('round-trips through message data at top level and inside a tool result', () => {
@@ -215,16 +220,19 @@ describe('OffloadedBlock', () => {
     const data = JSON.parse(JSON.stringify(message)) as MessageData
 
     expect(data.content).toEqual([
-      { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } },
+      { text: '[Dropped] [ref: msg-1_0]', offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } },
       {
         toolResult: {
           toolUseId: 'tu-1',
           status: 'success',
-          content: [{ offloaded: { ref: 'tu-1', preview: 'row-1' } }],
+          content: [{ text: 'row-1 [ref: tu-1]', offloaded: { ref: 'tu-1', preview: 'row-1' } }],
         },
       },
     ])
-    expect(Message.fromMessageData(data)).toEqual(message)
+    const restored = Message.fromMessageData(data)
+    expect(restored).toEqual(message)
+    expect(restored.content[0]).toBeInstanceOf(OffloadedBlock)
+    expect((restored.content[1] as ToolResultBlock).content[0]).toBeInstanceOf(OffloadedBlock)
   })
 })
 

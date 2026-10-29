@@ -715,9 +715,6 @@ function estimateContentBlockTokens(block: ContentBlock): number {
     case 'textBlock':
       total += heuristicText(block.text)
       break
-    case 'offloadedBlock':
-      total += heuristicText(block.toText())
-      break
     case 'toolUseBlock':
       total += heuristicText(block.name)
       total += heuristicJson(block.input)
@@ -726,8 +723,6 @@ function estimateContentBlockTokens(block: ContentBlock): number {
       for (const item of block.content) {
         if (item.type === 'textBlock') {
           total += heuristicText(item.text)
-        } else if (item.type === 'offloadedBlock') {
-          total += heuristicText(item.toText())
         } else if (item.type === 'jsonBlock') {
           total += heuristicJson(item.json)
         }

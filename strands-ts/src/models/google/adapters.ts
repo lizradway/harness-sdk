@@ -93,9 +93,6 @@ function formatContentBlock(block: ContentBlock, toolUseIdToName: Map<string, st
     case 'textBlock':
       return [{ text: block.text }]
 
-    case 'offloadedBlock':
-      return [{ text: block.toText() }]
-
     case 'imageBlock':
       return formatImageBlock(block)
 
@@ -292,9 +289,6 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
     switch (c.type) {
       case 'textBlock':
         output.push({ text: c.text })
-        break
-      case 'offloadedBlock':
-        output.push({ text: c.toText() })
         break
       case 'jsonBlock':
         output.push({ json: c.json })

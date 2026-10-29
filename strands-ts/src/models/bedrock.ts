@@ -1458,9 +1458,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       case 'textBlock':
         return { text: block.text }
 
-      case 'offloadedBlock':
-        return { text: block.toText() }
-
       case 'toolUseBlock':
         return {
           toolUse: {
@@ -1475,8 +1472,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           switch (content.type) {
             case 'textBlock':
               return { text: content.text }
-            case 'offloadedBlock':
-              return { text: content.toText() }
             case 'jsonBlock':
               return { json: content.json }
             case 'imageBlock':

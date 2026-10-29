@@ -3,8 +3,10 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
+
+const isText = (block: ContentBlock): boolean => block instanceof TextBlock
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -43,15 +45,6 @@ export function buildToolNameMap(messages: Message[]): Map<string, string> {
 }
 
 /**
- * Whether a block is a text turn's content: the text itself, or the placeholder left where it was offloaded.
- *
- * @internal
- */
-export function isTextContent(block: ContentBlock): boolean {
-  return block instanceof TextBlock || block instanceof OffloadedBlock
-}
-
-/**
  * Matches blocks and messages against an {@link OffloadTarget}. A `string[]` target's `tool::`
  * entries are parsed once, here.
  *
@@ -82,8 +75,8 @@ export class OffloadTargetMatcher {
   /** Whether a message is a text turn this target covers. */
   matchesText(message: Message): boolean {
     if (this.matchesAll) return true
-    if (this.target === 'assistantText') return message.role === 'assistant' && message.content.some(isTextContent)
-    if (this.target === 'userText') return message.role === 'user' && message.content.some(isTextContent)
+    if (this.target === 'assistantText') return message.role === 'assistant' && message.content.some(isText)
+    if (this.target === 'userText') return message.role === 'user' && message.content.some(isText)
     return false
   }
 

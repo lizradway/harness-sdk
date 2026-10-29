@@ -173,7 +173,7 @@ describe('Agent contextManager', () => {
       expect(stored.ref).toBe('tu-1')
       const received = (sent.mock.calls[1]![0][2]!.content[0] as ToolResultBlock).content[0]
       expect(received).toBeInstanceOf(TextBlock)
-      expect((received as TextBlock).text).toBe(stored.toText())
+      expect((received as TextBlock).text).toBe(stored.text)
       expect((received as TextBlock).text).toMatch(/ \[ref: tu-1\]$/)
 
       const retrieve = createRetrievalTool(agent.contextManager!.stash!) as unknown as {

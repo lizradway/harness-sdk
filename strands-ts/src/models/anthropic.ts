@@ -853,9 +853,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       case 'textBlock':
         return { type: 'text', text: block.text }
 
-      case 'offloadedBlock':
-        return { type: 'text', text: block.toText() }
-
       case 'imageBlock': {
         const imgBlock = block as ImageBlock
         let mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
@@ -963,7 +960,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         const innerContent = block.content
           .map((c) => {
             if (c.type === 'textBlock') return { type: 'text' as const, text: c.text }
-            if (c.type === 'offloadedBlock') return { type: 'text' as const, text: c.toText() }
             if (c.type === 'jsonBlock') return { type: 'text' as const, text: JSON.stringify(c.json) }
 
             // Recursively format any other content block (image, document, video, etc.)

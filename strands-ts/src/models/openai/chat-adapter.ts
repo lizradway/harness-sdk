@@ -176,10 +176,6 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
               contentParts.push({ type: 'text', text: block.text })
               break
             }
-            case 'offloadedBlock': {
-              contentParts.push({ type: 'text', text: block.toText() })
-              break
-            }
             case 'imageBlock': {
               const formatted = formatImageContentPart(block as ImageBlock)
               if (formatted) contentParts.push(formatted)
@@ -285,10 +281,6 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
             textParts.push(block.text)
             break
           }
-          case 'offloadedBlock': {
-            textParts.push(block.toText())
-            break
-          }
           case 'toolUseBlock': {
             try {
               toolUseCalls.push({
@@ -354,8 +346,6 @@ function splitToolResultMedia(
   for (const c of toolResult.content) {
     if (c.type === 'textBlock') {
       textParts.push(c.text)
-    } else if (c.type === 'offloadedBlock') {
-      textParts.push(c.toText())
     } else if (c.type === 'jsonBlock') {
       try {
         textParts.push(JSON.stringify(c.json))

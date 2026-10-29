@@ -117,7 +117,7 @@ describe('Offload strategies with stash', () => {
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
       expect(placeholder.ref).toBe('tool-123')
       expect(placeholder.preview).toMatch(/^\[Truncated: /)
-      expect(placeholder.toText()).toBe(`${placeholder.preview} [ref: tool-123]`)
+      expect(placeholder.text).toBe(`${placeholder.preview} [ref: tool-123]`)
     })
 
     it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
@@ -150,7 +150,7 @@ describe('Offload strategies with stash', () => {
       const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
       expect(placeholder.ref).toBeUndefined()
-      expect(placeholder.toText()).toBe(placeholder.preview)
+      expect(placeholder.text).toBe(placeholder.preview)
     })
   })
 
@@ -186,7 +186,7 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       expect(block.content).toEqual([new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' })])
-      expect((block.content[0] as OffloadedBlock).toText()).toBe('[Dropped] [ref: tool-123]')
+      expect((block.content[0] as OffloadedBlock).text).toBe('[Dropped] [ref: tool-123]')
     })
 
     it('marks removed messages with an OffloadedBlock that retrieves them', async () => {

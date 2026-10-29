@@ -15,7 +15,6 @@ import {
   contentBlockFromData,
   JsonBlock,
   Message,
-  OffloadedBlock,
   TextBlock,
   ToolResultBlock,
   toolResultContentFromData,
@@ -106,7 +105,6 @@ function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
 function isToolResultContent(entry: StashEntry): entry is ToolResultContent {
   return (
     entry instanceof TextBlock ||
-    entry instanceof OffloadedBlock ||
     entry instanceof JsonBlock ||
     entry instanceof ImageBlock ||
     entry instanceof VideoBlock ||
@@ -196,7 +194,6 @@ function entryText(entry: StashEntry): string | null {
 
 function blockText(block: ContentBlock | ToolResultContent): string | null {
   if (block instanceof TextBlock) return block.text
-  if (block instanceof OffloadedBlock) return block.toText()
   if (block instanceof JsonBlock) return JSON.stringify(block.json, null, 2)
   if (block instanceof ToolResultBlock) return joinText(block.content.map(blockText))
   if (block instanceof CitationsBlock) return joinText(block.content.map((cited) => cited.text ?? null))

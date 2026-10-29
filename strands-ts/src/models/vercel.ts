@@ -791,9 +791,6 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
       case 'textBlock':
         content.push({ type: 'text', text: block.text })
         break
-      case 'offloadedBlock':
-        content.push({ type: 'text', text: block.toText() })
-        break
       case 'imageBlock':
       case 'documentBlock':
       case 'videoBlock':
@@ -837,9 +834,6 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
     switch (block.type) {
       case 'textBlock':
         content.push({ type: 'text', text: block.text })
-        break
-      case 'offloadedBlock':
-        content.push({ type: 'text', text: block.toText() })
         break
       case 'reasoningBlock':
         if (block.text) {
@@ -945,9 +939,6 @@ function formatToolResultOutput(
     switch (c.type) {
       case 'textBlock':
         value.push({ type: 'text', text: c.text })
-        break
-      case 'offloadedBlock':
-        value.push({ type: 'text', text: c.toText() })
         break
       case 'jsonBlock':
         value.push({ type: 'text', text: JSON.stringify(c.json) })

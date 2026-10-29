@@ -1,12 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
-import { ModelProxy, renderForModel } from '../model-proxy.js'
+import { describe, it, expect } from 'vitest'
+import { ModelProxy } from '../model-proxy.js'
 import type { StreamAggregatedResult } from '../model.js'
 import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock, type ContentBlock } from '../../types/messages.js'
-import { ImageBlock } from '../../types/media.js'
+import { Message, TextBlock, type ContentBlock } from '../../types/messages.js'
 
 function userMessage(text: string): Message {
   return new Message({ role: 'user', content: [new TextBlock(text)] })
@@ -106,66 +105,6 @@ describe('ModelProxy', () => {
         ...direct.result,
         message: { ...direct.result.message, trackingId: anyTrackingId },
       })
-    })
-  })
-
-  describe('rendering offloaded blocks', () => {
-    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })
-    const stored = (): Message[] => [
-      new Message({ role: 'user', content: [new TextBlock('plain')], trackingId: 'msg-1' }),
-      new Message({
-        role: 'user',
-        content: [
-          new OffloadedBlock({ ref: 'msg-2_0', preview: '[Dropped]' }),
-          new ToolResultBlock({
-            toolUseId: 'tu-1',
-            status: 'success',
-            content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1' }), image],
-          }),
-        ],
-        trackingId: 'msg-2',
-        metadata: { custom: { pinned: true } },
-      }),
-    ]
-
-    it('sends each OffloadedBlock as text in place, including inside tool results', () => {
-      const rendered = renderForModel(stored())
-
-      expect(rendered[1]).toEqual(
-        new Message({
-          role: 'user',
-          content: [
-            new TextBlock('[Dropped] [ref: msg-2_0]'),
-            new ToolResultBlock({
-              toolUseId: 'tu-1',
-              status: 'success',
-              content: [new TextBlock('row-1 [ref: tu-1]'), image],
-            }),
-          ],
-          trackingId: 'msg-2',
-          metadata: { custom: { pinned: true } },
-        })
-      )
-    })
-
-    it('returns a message with nothing to render as the same instance and leaves the input unmodified', () => {
-      const messages = stored()
-      const before = messages.map((message) => message.toJSON())
-
-      const rendered = renderForModel(messages)
-
-      expect(rendered[0]).toBe(messages[0])
-      expect(messages.map((message) => message.toJSON())).toEqual(before)
-    })
-
-    it('passes the rendered history to the model', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
-      const spy = vi.spyOn(model, 'streamAggregated')
-
-      await drain(new ModelProxy(model).streamAggregated(stored()))
-
-      const sent = spy.mock.calls[0]![0]
-      expect(sent[1]!.content[0]).toEqual(new TextBlock('[Dropped] [ref: msg-2_0]'))
     })
   })
 })

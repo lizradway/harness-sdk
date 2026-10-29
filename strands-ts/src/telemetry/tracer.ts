@@ -1326,8 +1326,6 @@ export class Tracer {
       switch (block.type) {
         case 'textBlock':
           return { type: 'text', content: block.text }
-        case 'offloadedBlock':
-          return { type: 'text', content: block.toText() }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }
         case 'toolResultBlock':
@@ -1350,8 +1348,6 @@ export class Tracer {
         switch (block.type) {
           case 'textBlock':
             return { text: block.text }
-          case 'offloadedBlock':
-            return { text: block.toText() }
           case 'toolUseBlock':
             return { type: 'toolUse', name: block.name, toolUseId: block.toolUseId, input: block.input }
           case 'toolResultBlock':
