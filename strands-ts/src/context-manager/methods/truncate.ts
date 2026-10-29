@@ -84,28 +84,33 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
 }
 
 /**
- * Splits a tool result into a preview of its textual content and the items kept as they are.
- * Text and JSON blocks are serialized into the preview. Opaque blocks (images, video, documents)
- * are kept untouched — their payloads cannot be meaningfully previewed as text.
+ * A tool result split by {@link truncateToolResultBlock}.
  *
- * @returns The preview and the kept items, or `null` when nothing would be truncated.
+ * @internal
  */
-export function truncateToolResultBlock(
-  block: ToolResultBlock,
-  config?: TruncateConfig
-): { preview: string; opaque: ToolResultContent[] } | null {
+export interface TruncatedToolResult {
+  /** Preview of the result's text and JSON items. */
+  preview: string
+  /** Items kept as they are: media, whose payload can't be previewed as text, and placeholders. */
+  kept: ToolResultContent[]
+}
+
+/**
+ * Splits a tool result into a preview of its text and JSON items and the items kept as they are.
+ *
+ * @returns The split result, or `null` when nothing would be truncated.
+ */
+export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): TruncatedToolResult | null {
   const textual: string[] = []
-  const opaque: ToolResultContent[] = []
+  const kept: ToolResultContent[] = []
 
   for (const content of block.content) {
-    if (isOffloaded(content)) {
-      opaque.push(content)
-    } else if (content instanceof TextBlock) {
+    if (content instanceof TextBlock && !isOffloaded(content)) {
       textual.push(content.text)
     } else if (content instanceof JsonBlock) {
       textual.push(JSON.stringify(content.toJSON()))
     } else {
-      opaque.push(content)
+      kept.push(content)
     }
   }
 
@@ -116,7 +121,7 @@ export function truncateToolResultBlock(
   const fullText = textual.join('\n')
   const preview = buildPreview(fullText, textual.length, config)
 
-  return preview === fullText ? null : { preview, opaque }
+  return preview === fullText ? null : { preview, kept }
 }
 
 /**

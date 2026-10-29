@@ -102,7 +102,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
       if (!truncated) return null
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return block.withContent([this._placeholder(truncated.preview, stashRef), ...truncated.opaque])
+      return block.withContent([this._placeholder(truncated.preview, stashRef), ...truncated.kept])
     }
     if (block instanceof TextBlock) {
       const truncated = truncateTextBlock(block, this._truncateConfig)
