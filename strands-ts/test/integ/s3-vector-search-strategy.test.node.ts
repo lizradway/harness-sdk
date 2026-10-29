@@ -164,11 +164,13 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
     await tenantA.write('a-only.md', encode('Tenant A budget review for the launch event.'))
     await tenantB.write('notes.md', encode('Tenant B is migrating its database to Postgres.'))
 
+    // Wait until every vector is visible, so the per-tenant assertions below can't pass vacuously.
     const query = 'product launch'
-    const resultsA = await searchUntil(tenantA, query, (r) => r.length >= 2)
-    expect(keys(resultsA).sort()).toEqual(['a-only.md', 'notes.md'])
-    const resultsB = await searchUntil(tenantB, query, (r) => r.length >= 1)
-    expect(keys(resultsB)).toEqual(['notes.md'])
+    const expected = ['tenant-a/notes.md', 'tenant-a/a-only.md', 'tenant-b/notes.md']
+    await searchUntil(makeStorage(), query, (r) => expected.every((key) => keys(r).includes(key)))
+
+    expect(keys(await tenantA.search(query)).sort()).toEqual(['a-only.md', 'notes.md'])
+    expect(keys(await tenantB.search(query))).toEqual(['notes.md'])
 
     // Deleting tenant A's notes.md must not remove tenant B's vector for the same key.
     await tenantA.delete('notes.md')
