@@ -89,15 +89,45 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
   })
 }
 
-/** The stored content itself: a single media block as is, otherwise its JSON form cut to `maxChars`. */
+/**
+ * The stored content itself. Tool result items are returned as the blocks they are, so media reaches
+ * the model as media and only their text is cut to `maxChars`; anything else is returned in its JSON form.
+ */
 function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
-  const only = entries.length === 1 ? entries[0] : undefined
-  if (only instanceof ImageBlock || only instanceof DocumentBlock || only instanceof VideoBlock) {
-    return only as unknown as JSONValue
+  if (entries.every(isToolResultContent)) {
+    const blocks = clipText(entries, maxChars)
+    return (blocks.length === 1 ? blocks[0]! : blocks) as unknown as JSONValue
   }
-  const data = only === undefined ? entries.map(entryToData) : entryToData(only)
+  const data = entries.length === 1 ? entryToData(entries[0]!) : entries.map(entryToData)
   const serialized = JSON.stringify(data)
   return serialized.length <= maxChars ? data : `${serialized.slice(0, maxChars)}\n\n[truncated]`
+}
+
+function isToolResultContent(entry: StashEntry): entry is ToolResultContent {
+  return (
+    entry instanceof TextBlock ||
+    entry instanceof OffloadedBlock ||
+    entry instanceof JsonBlock ||
+    entry instanceof ImageBlock ||
+    entry instanceof VideoBlock ||
+    entry instanceof DocumentBlock
+  )
+}
+
+/** Cuts the items' text to `maxChars` in total, in order; media passes through untouched. */
+function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultContent[] {
+  let budget = maxChars
+  return blocks.map((block) => {
+    const text = blockText(block)
+    if (text === null) return block
+    if (text.length <= budget) {
+      budget -= text.length
+      return block
+    }
+    const clipped = new TextBlock(`${text.slice(0, budget)}\n\n[truncated]`)
+    budget = 0
+    return clipped
+  })
 }
 
 /** The lines of the entries' text that match `pattern` or fall in `line_range`. */
@@ -123,7 +153,7 @@ async function resolveReference(stash: Stash, reference: string): Promise<StashE
   const exact = await stash.retrieve(reference)
   if (exact) return entriesFrom([exact])
 
-  const keys = (await stash.list())
+  const keys = (await stash.list(`${reference}_`))
     .map((key) => ({ key, parsed: parseStashKey(key) }))
     .filter(({ parsed }) => parsed?.id === reference)
     .sort((left, right) => left.parsed!.index - right.parsed!.index)

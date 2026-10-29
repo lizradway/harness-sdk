@@ -189,8 +189,6 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof TextBlock) return this._matcher.matchesText(message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
-      // A result already offloaded keeps its opaque items at shifted positions; a second pass would mislabel them.
-      if (block.content.some((item) => item instanceof OffloadedBlock)) return false
       return this._matcher.matchesToolResult(block, toolNameMap)
     }
     return this._matcher.matchesAll

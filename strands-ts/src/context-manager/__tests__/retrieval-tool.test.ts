@@ -3,6 +3,7 @@ import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ImageBlock } from '../../types/media.js'
+import { JsonBlock, TextBlock } from '../../types/messages.js'
 
 function invoke(retrievalTool: ReturnType<typeof createRetrievalTool>, input: unknown): Promise<unknown> {
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
@@ -31,7 +32,7 @@ describe('retrieval tool', () => {
     const retrievalTool = createRetrievalTool(stash)
 
     const result = await invoke(retrievalTool, { reference: ref })
-    expect(result).toEqual({ text: 'hello world\nline two' })
+    expect(result).toEqual(new TextBlock('hello world\nline two'))
   })
 
   it('searches with pattern', async () => {
@@ -83,7 +84,23 @@ describe('retrieval tool', () => {
 
       const result = await invoke(retrievalTool, { reference: 'tool-1' })
 
-      expect(result).toEqual([{ text: 'first' }, { json: { count: 2 } }, { text: 'third ERROR' }])
+      expect(result).toEqual([
+        new TextBlock('first'),
+        new JsonBlock({ json: { count: 2 } }),
+        new TextBlock('third ERROR'),
+      ])
+    })
+
+    it('returns media as media and cuts only the text to the result budget', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('tool-1', 0, encodeJSON({ image: { format: 'png', source: { bytes: 'iVBORw0KGgo=' } } }))
+      await stash.store('tool-1', 1, encodeJSON({ text: 'x'.repeat(100) }))
+      const retrievalTool = createRetrievalTool(stash, 10)
+
+      const result = (await invoke(retrievalTool, { reference: 'tool-1' })) as unknown[]
+
+      expect(result[0]).toBeInstanceOf(ImageBlock)
+      expect(result[1]).toEqual(new TextBlock(`${'x'.repeat(40)}\n\n[truncated]`))
     })
 
     it('searches across the items text', async () => {
@@ -100,7 +117,7 @@ describe('retrieval tool', () => {
       await stash.store('tool-1', 0, encodeJSON({ text: 'only' }))
       const retrievalTool = createRetrievalTool(stash)
 
-      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual({ text: 'only' })
+      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual(new TextBlock('only'))
     })
 
     it('matches the id exactly when ids contain underscores and digits', async () => {
@@ -109,8 +126,8 @@ describe('retrieval tool', () => {
       await stash.store('call_12', 0, encodeJSON({ text: 'twelve' }))
       const retrievalTool = createRetrievalTool(stash)
 
-      expect(await invoke(retrievalTool, { reference: 'call' })).toEqual({ text: 'bare' })
-      expect(await invoke(retrievalTool, { reference: 'call_12' })).toEqual({ text: 'twelve' })
+      expect(await invoke(retrievalTool, { reference: 'call' })).toEqual(new TextBlock('bare'))
+      expect(await invoke(retrievalTool, { reference: 'call_12' })).toEqual(new TextBlock('twelve'))
     })
   })
 
@@ -161,7 +178,7 @@ describe('retrieval tool', () => {
     const retrievalTool = createRetrievalTool(stash)
 
     const result = await invoke(retrievalTool, { reference: ref })
-    expect(result).toEqual({ json })
+    expect(result).toEqual(new JsonBlock({ json }))
   })
 
   it('returns error when searching non-text content', async () => {

@@ -78,7 +78,7 @@ describe('Offload strategies with stash', () => {
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
       expect(placeholder.ref).toBe('a1_1')
       const retrieve = createRetrievalTool(stash)
-      expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual({ text: big })
+      expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual(new TextBlock(big))
     })
 
     it('persists original content to stash before truncating', async () => {
@@ -120,19 +120,23 @@ describe('Offload strategies with stash', () => {
       expect(placeholder.toText()).toBe(`${placeholder.preview} [ref: tool-123]`)
     })
 
-    it('does not offload a tool result that already holds an OffloadedBlock', async () => {
+    it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      const messages = [makeToolResultMessage('x'.repeat(20000))]
+      const original = 'x'.repeat(20000)
+      const messages = [makeToolResultMessage(original)]
       await stashAll(stash, messages)
-      const strategy = Offload.truncate('toolResults', { previewTokens: 10 })
       const context = makeContext(messages, { stash })
-      await strategy.apply(context)
-      const once = (messages[0]!.content[0] as ToolResultBlock).content
+      await Offload.truncate('toolResults', { previewTokens: 10 }).apply(context)
 
       const actedAgain = await Offload.drop('toolResults').apply(context)
 
-      expect(actedAgain).toBe(false)
-      expect((messages[0]!.content[0] as ToolResultBlock).content).toBe(once)
+      expect(actedAgain).toBe(true)
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
+        new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' }),
+      ])
+      expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
+        new TextBlock(original)
+      )
     })
 
     it('leaves a placeholder without a reference when no stash is configured', async () => {
@@ -372,7 +376,7 @@ describe('Offload strategies with stash', () => {
       const keys = await stash.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
-      expect(result).toEqual({ text: 'hello world' })
+      expect(result).toEqual(new TextBlock('hello world'))
     })
 
     it('restores document blocks as DocumentBlock instances', async () => {

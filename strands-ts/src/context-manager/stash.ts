@@ -135,13 +135,14 @@ export class Stash {
    */
   async ensureStashed(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
     if (block instanceof ToolResultBlock) {
-      if ((await this.retrieve(formatStashKey({ id: block.toolUseId, index: 0 }))) === null) {
-        await this._storeToolResult(block)
-      }
+      const stored = (await this.list(`${block.toolUseId}_`)).filter(
+        (key) => parseStashKey(key)?.id === block.toolUseId
+      )
+      if (stored.length < block.content.length) await this._storeToolResult(block)
       return block.toolUseId
     }
     const key = formatStashKey({ id: message.trackingId, index: blockIndex })
-    if ((await this.retrieve(key)) === null) {
+    if (!(await this.list(key)).includes(key)) {
       await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
     }
     return key
@@ -165,11 +166,13 @@ export class Stash {
    * Offload placeholders are never stored: their keys belong to the originals they replaced.
    *
    * @param message - The message whose content should be persisted
+   * @param skipToolUseIds - Tool results to leave out, such as the retrieval tool's own
    */
-  async storeMessage(message: Message): Promise<void> {
+  async storeMessage(message: Message, skipToolUseIds?: ReadonlySet<string>): Promise<void> {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
+        if (skipToolUseIds?.has(block.toolUseId)) continue
         if (block.content.some((item) => item instanceof OffloadedBlock)) continue
         await this._storeToolResult(block)
       } else if (
@@ -202,10 +205,10 @@ export class Stash {
   }
 
   /**
-   * List all stashed references.
+   * List stashed references, optionally only those starting with `prefix`.
    */
-  async list(): Promise<string[]> {
-    return this._storage.list('')
+  async list(prefix = ''): Promise<string[]> {
+    return this._storage.list(prefix)
   }
 
   /**

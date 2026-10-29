@@ -301,6 +301,9 @@ function requestText(message: Message, characterLimit: number): string | undefin
       case 'textBlock':
         if (block.text.trim().length > 0) parts.push(block.text)
         break
+      case 'offloadedBlock':
+        parts.push(block.toText())
+        break
       case 'guardContentBlock':
         if (block.text !== undefined && block.text.text.trim().length > 0) parts.push('[Guarded content]')
         break
