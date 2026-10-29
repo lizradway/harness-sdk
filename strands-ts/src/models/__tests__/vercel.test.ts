@@ -11,15 +11,7 @@ import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
-import {
-  Message,
-  OffloadedBlock,
-  TextBlock,
-  ToolUseBlock,
-  ToolResultBlock,
-  ReasoningBlock,
-  JsonBlock,
-} from '../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock, JsonBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
 
@@ -648,7 +640,7 @@ describe('VercelModel', () => {
 
       it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
         const { collect, callArgs } = setupCaptureTest()
-        const placeholder = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+        const placeholder = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
         await collect([
           new Message({ role: 'user', content: [placeholder] }),
           new Message({ role: 'assistant', content: [placeholder] }),

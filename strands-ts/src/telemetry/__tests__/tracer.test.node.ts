@@ -2,14 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
-import {
-  Message,
-  OffloadedBlock,
-  TextBlock,
-  ToolResultBlock,
-  ToolUseBlock,
-  CachePointBlock,
-} from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 
@@ -205,7 +198,12 @@ describe('Tracer', () => {
       const tracer = new Tracer()
 
       tracer.startAgentSpan({
-        messages: [new Message({ role: 'user', content: [new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })] })],
+        messages: [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })],
+          }),
+        ],
         agentName: 'test-agent',
       })
 

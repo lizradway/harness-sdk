@@ -4,14 +4,7 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import {
-  Message,
-  OffloadedBlock,
-  TextBlock,
-  ToolUseBlock,
-  ToolResultBlock,
-  GuardContentBlock,
-} from '../../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
@@ -399,7 +392,7 @@ describe('OpenAIModel', () => {
     it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
       const captured: { request: any } = { request: null }
       const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
-      const placeholder = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
       await collectIterator(
         provider.stream([
           new Message({ role: 'user', content: [placeholder] }),

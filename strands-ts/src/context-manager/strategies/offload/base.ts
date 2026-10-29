@@ -6,8 +6,8 @@
 import { logger } from '../../../logging/logger.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
 import {
+  isOffloaded,
   Message,
-  OffloadedBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -182,7 +182,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       block instanceof ToolUseBlock ||
       block instanceof CachePointBlock ||
       block instanceof ReasoningBlock ||
-      block instanceof OffloadedBlock
+      isOffloaded(block)
     ) {
       return false
     }
@@ -270,13 +270,14 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 }
 
 /**
- * The block that stands in for offloaded content. It carries the stash reference when the
- * original is retrievable.
+ * The text block that stands in for offloaded content: the preview, followed by the stash reference
+ * when the original is retrievable, with both recorded in `offloaded`.
  *
  * @internal
  */
-export function offloadPlaceholder(preview: string, stashRef: string | undefined): OffloadedBlock {
-  return new OffloadedBlock(stashRef === undefined ? { preview } : { preview, ref: stashRef })
+export function offloadPlaceholder(preview: string, stashRef: string | undefined): TextBlock {
+  if (stashRef === undefined) return new TextBlock(preview, { offloaded: { preview } })
+  return new TextBlock(`${preview} [ref: ${stashRef}]`, { offloaded: { preview, ref: stashRef } })
 }
 
 // --- Emergency truncation strategy ---

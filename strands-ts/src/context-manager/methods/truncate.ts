@@ -4,7 +4,7 @@
  * Replaces content with a preview (head, tail, or head-tail).
  */
 
-import { JsonBlock, OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
@@ -87,7 +87,7 @@ export function truncateToolResultBlock(
   const opaque: ToolResultContent[] = []
 
   for (const content of block.content) {
-    if (content instanceof OffloadedBlock) {
+    if (isOffloaded(content)) {
       opaque.push(content)
     } else if (content instanceof TextBlock) {
       textual.push(content.text)

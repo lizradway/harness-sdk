@@ -10,8 +10,8 @@
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
 import {
+  isOffloaded,
   Message,
-  OffloadedBlock,
   ToolResultBlock,
   ToolUseBlock,
   CachePointBlock,
@@ -119,7 +119,7 @@ export class Stash {
   }
 
   /**
-   * The reference an {@link OffloadedBlock} carries for a block it replaces, with the block stored
+   * The reference an offload placeholder carries for the block it replaces, with the block stored
    * under that reference if it is not already.
    *
    * A {@link ToolResultBlock} is referenced by its `toolUseId`; the retrieval tool resolves it to
@@ -152,7 +152,7 @@ export class Stash {
    * Store messages removed from the context window as one entry.
    *
    * @param removed - The removed messages, in conversation order
-   * @returns The reference an {@link OffloadedBlock} carries for them
+   * @returns The reference the placeholder left in their place carries
    */
   async storeRemoved(removed: Message[]): Promise<string> {
     const id = `removed-${removed[0]!.trackingId}`
@@ -173,13 +173,13 @@ export class Stash {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
         if (skipToolUseIds?.has(block.toolUseId)) continue
-        if (block.content.some((item) => item instanceof OffloadedBlock)) continue
+        if (block.content.some(isOffloaded)) continue
         await this._storeToolResult(block)
       } else if (
         block instanceof ToolUseBlock ||
         block instanceof CachePointBlock ||
         block instanceof ReasoningBlock ||
-        block instanceof OffloadedBlock
+        isOffloaded(block)
       ) {
         continue
       } else {

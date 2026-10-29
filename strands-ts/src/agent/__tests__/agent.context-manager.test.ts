@@ -8,7 +8,7 @@ import { ContextManager } from '../../context-manager/context-manager.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
 import { tool } from '../../tools/tool-factory.js'
-import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
 
 function internals(agent: Agent): any {
@@ -146,7 +146,7 @@ describe('Agent contextManager', () => {
   })
 
   describe('offloaded tool results', () => {
-    it('stores an OffloadedBlock, sends the model its text, and resolves the toolUseId to the original', async () => {
+    it('stores an sends the model its text, and resolves the toolUseId to the original', async () => {
       const rows = tool({
         name: 'rows',
         description: 'lists rows',
@@ -168,9 +168,9 @@ describe('Agent contextManager', () => {
 
       await agent.invoke('list the rows')
 
-      const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock
-      expect(stored).toBeInstanceOf(OffloadedBlock)
-      expect(stored.ref).toBe('tu-1')
+      const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as TextBlock
+      expect((stored as TextBlock).offloaded).toBeDefined()
+      expect(stored.offloaded!.ref).toBe('tu-1')
       const received = (sent.mock.calls[1]![0][2]!.content[0] as ToolResultBlock).content[0]
       expect(received).toBeInstanceOf(TextBlock)
       expect((received as TextBlock).text).toBe(stored.text)

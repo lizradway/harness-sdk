@@ -6,7 +6,7 @@
  */
 
 import { Message, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
-import type { OffloadedBlock } from '../types/messages.js'
+import type { TextBlock } from '../types/messages.js'
 
 /**
  * Collects a message and its paired partner (if any) for safe removal.
@@ -71,7 +71,7 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
  * tracking id and block indices for stash refs, or becomes its own assistant message. It never
  * joins message 0, and the last message is never removed, so a new marker never ends the history.
  */
-export function insertMarker(messages: Message[], index: number, marker: OffloadedBlock): void {
+export function insertMarker(messages: Message[], index: number, marker: TextBlock): void {
   index = Math.max(1, Math.min(index, messages.length))
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]

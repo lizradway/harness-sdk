@@ -3,7 +3,7 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
@@ -127,7 +127,11 @@ describe('ContextManager', () => {
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
-            content: [new OffloadedBlock({ ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview' })],
+            content: [
+              new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]', {
+                offloaded: { ref: 'tu-1', preview: '[Truncated: 1 block, ~7,500 tokens] preview' },
+              }),
+            ],
           }),
         ],
       })

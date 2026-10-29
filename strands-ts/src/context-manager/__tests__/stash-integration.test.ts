@@ -6,7 +6,7 @@ import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { PluginRegistry } from '../../plugins/registry.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
 import { makeContext, makeToolResultMessage } from '../../__fixtures__/context-manager-helpers.js'
@@ -74,9 +74,9 @@ describe('Offload strategies with stash', () => {
 
       await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { stash }))
 
-      const placeholder = messages[1]!.content[1] as OffloadedBlock
-      expect(placeholder).toBeInstanceOf(OffloadedBlock)
-      expect(placeholder.ref).toBe('a1_1')
+      const placeholder = messages[1]!.content[1] as TextBlock
+      expect((placeholder as TextBlock).offloaded).toBeDefined()
+      expect(placeholder.offloaded!.ref).toBe('a1_1')
       const retrieve = createRetrievalTool(stash)
       expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual(new TextBlock(big))
     })
@@ -113,11 +113,11 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const placeholder = block.content[0] as OffloadedBlock
-      expect(placeholder).toBeInstanceOf(OffloadedBlock)
-      expect(placeholder.ref).toBe('tool-123')
-      expect(placeholder.preview).toMatch(/^\[Truncated: /)
-      expect(placeholder.text).toBe(`${placeholder.preview} [ref: tool-123]`)
+      const placeholder = block.content[0] as TextBlock
+      expect((placeholder as TextBlock).offloaded).toBeDefined()
+      expect(placeholder.offloaded!.ref).toBe('tool-123')
+      expect(placeholder.offloaded!.preview).toMatch(/^\[Truncated: /)
+      expect(placeholder.text).toBe(`${placeholder.offloaded!.preview} [ref: tool-123]`)
     })
 
     it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
@@ -132,7 +132,7 @@ describe('Offload strategies with stash', () => {
 
       expect(actedAgain).toBe(true)
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
-        new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' }),
+        new TextBlock('[Dropped] [ref: tool-123]', { offloaded: { ref: 'tool-123', preview: '[Dropped]' } }),
       ])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
         new TextBlock(original)
@@ -147,10 +147,10 @@ describe('Offload strategies with stash', () => {
 
       await strategy.apply(context)
 
-      const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as OffloadedBlock
-      expect(placeholder).toBeInstanceOf(OffloadedBlock)
-      expect(placeholder.ref).toBeUndefined()
-      expect(placeholder.text).toBe(placeholder.preview)
+      const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock
+      expect((placeholder as TextBlock).offloaded).toBeDefined()
+      expect(placeholder.offloaded!.ref).toBeUndefined()
+      expect(placeholder.text).toBe(placeholder.offloaded!.preview)
     })
   })
 
@@ -185,8 +185,10 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      expect(block.content).toEqual([new OffloadedBlock({ ref: 'tool-123', preview: '[Dropped]' })])
-      expect((block.content[0] as OffloadedBlock).text).toBe('[Dropped] [ref: tool-123]')
+      expect(block.content).toEqual([
+        new TextBlock('[Dropped] [ref: tool-123]', { offloaded: { ref: 'tool-123', preview: '[Dropped]' } }),
+      ])
+      expect((block.content[0] as TextBlock).text).toBe('[Dropped] [ref: tool-123]')
     })
 
     it('marks removed messages with an OffloadedBlock that retrieves them', async () => {
@@ -202,7 +204,9 @@ describe('Offload strategies with stash', () => {
       const acted = await strategy.apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       expect(acted).toBe(true)
-      const marker = new OffloadedBlock({ ref: 'removed-m1', preview: '[Dropped: 2 messages]' })
+      const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
+        offloaded: { ref: 'removed-m1', preview: '[Dropped: 2 messages]' },
+      })
       expect(messages.map((message) => message.content)).toEqual([
         [new TextBlock('start')],
         [new TextBlock('final'), marker],
@@ -231,7 +235,7 @@ describe('Offload strategies with stash', () => {
 
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
-        new OffloadedBlock({ preview: '[Dropped: 2 messages]' }),
+        new TextBlock('[Dropped: 2 messages]', { offloaded: { preview: '[Dropped: 2 messages]' } }),
       ])
     })
   })

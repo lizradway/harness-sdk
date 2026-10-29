@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash, formatStashKey, parseStashKey } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
-import { Message, OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
 describe('Stash', () => {
@@ -151,19 +151,18 @@ describe('Stash', () => {
       expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text: 'original' } })
     })
 
-    it('skips an OffloadedBlock and a tool result that holds one, keeping other blocks', async () => {
+    it('skips a placeholder and a tool result that holds one, keeping other blocks', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({
         role: 'user',
         content: [
-          new OffloadedBlock({ ref: 'track-0_0', preview: '[Dropped]' }),
+          new TextBlock('[Dropped] [ref: track-0_0]', { offloaded: { ref: 'track-0_0', preview: '[Dropped]' } }),
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
             content: [
-              new OffloadedBlock({
-                ref: 'tu-1',
-                preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1',
+              new TextBlock('[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]', {
+                offloaded: { ref: 'tu-1', preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1' },
               }),
               new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
             ],

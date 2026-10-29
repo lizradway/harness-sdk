@@ -1,7 +1,7 @@
 import { describe, expect, test, it } from 'vitest'
 import {
+  isOffloaded,
   Message,
-  OffloadedBlock,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
@@ -181,37 +181,36 @@ describe('TextBlock', () => {
   })
 })
 
-describe('OffloadedBlock', () => {
-  test('is a text block whose text is the preview followed by the reference', () => {
-    const block = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' })
+describe('TextBlock standing in for offloaded content', () => {
+  test('carries what it stands in for and serializes it beside the text', () => {
+    const block = new TextBlock('[Dropped] [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
 
-    expect(block).toBeInstanceOf(TextBlock)
-    expect(block).toEqual({ type: 'textBlock', text: '[Dropped] [ref: tu-1]', ref: 'tu-1', preview: '[Dropped]' })
+    expect(block).toEqual({
+      type: 'textBlock',
+      text: '[Dropped] [ref: tu-1]',
+      offloaded: { ref: 'tu-1', preview: '[Dropped]' },
+    })
+    expect(block.toJSON()).toEqual({ text: '[Dropped] [ref: tu-1]', offloaded: { ref: 'tu-1', preview: '[Dropped]' } })
+    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
   })
 
-  test('renders and serializes without a reference when the original was not stashed', () => {
-    const block = new OffloadedBlock({ preview: '[Dropped]' })
+  test('a plain text block carries and serializes no offloaded field', () => {
+    const block = new TextBlock('hello')
 
-    expect(block).toEqual({ type: 'textBlock', text: '[Dropped]', preview: '[Dropped]' })
-    expect(block.toJSON()).toEqual({ text: '[Dropped]', offloaded: { preview: '[Dropped]' } })
-    expect(OffloadedBlock.fromJSON(block.toJSON())).toEqual(block)
-  })
-
-  test('loads as plain text where the offloaded field is not understood', () => {
-    const data = new OffloadedBlock({ ref: 'tu-1', preview: '[Dropped]' }).toJSON()
-
-    expect(TextBlock.fromJSON(data)).toEqual(new TextBlock('[Dropped] [ref: tu-1]'))
+    expect(block).toEqual({ type: 'textBlock', text: 'hello' })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+    expect(isOffloaded(block)).toBe(false)
   })
 
   test('round-trips through message data at top level and inside a tool result', () => {
     const message = new Message({
       role: 'user',
       content: [
-        new OffloadedBlock({ ref: 'msg-1_0', preview: '[Dropped]' }),
+        new TextBlock('[Dropped] [ref: msg-1_0]', { offloaded: { ref: 'msg-1_0', preview: '[Dropped]' } }),
         new ToolResultBlock({
           toolUseId: 'tu-1',
           status: 'success',
-          content: [new OffloadedBlock({ ref: 'tu-1', preview: 'row-1' })],
+          content: [new TextBlock('row-1 [ref: tu-1]', { offloaded: { ref: 'tu-1', preview: 'row-1' } })],
         }),
       ],
       trackingId: 'msg-1',
@@ -231,8 +230,8 @@ describe('OffloadedBlock', () => {
     ])
     const restored = Message.fromMessageData(data)
     expect(restored).toEqual(message)
-    expect(restored.content[0]).toBeInstanceOf(OffloadedBlock)
-    expect((restored.content[1] as ToolResultBlock).content[0]).toBeInstanceOf(OffloadedBlock)
+    expect(isOffloaded(restored.content[0])).toBe(true)
+    expect(isOffloaded((restored.content[1] as ToolResultBlock).content[0])).toBe(true)
   })
 })
 
