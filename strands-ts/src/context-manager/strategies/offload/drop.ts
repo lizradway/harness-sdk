@@ -19,6 +19,10 @@ export class DropStrategy extends BaseOffloadStrategy {
     super('offload:drop', target, conditions)
   }
 
+  protected _withConditions(conditions: OffloadConditions): DropStrategy {
+    return new DropStrategy(this._target, conditions)
+  }
+
   protected override _makeRemovalMarker(count: number): string {
     return `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`
   }

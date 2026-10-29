@@ -20,14 +20,14 @@ const CHARS_PER_TOKEN = 4
 export interface TruncateConfig {
   /**
    * Number of tokens to keep as preview text. Defaults to 1,000. Content that already fits is left unchanged. For
-   * `Offload.truncate('*')` without a `threshold`, the budget of whole messages kept at the head and tail; the rest
-   * are replaced by one `[... N messages elided ...]` marker.
+   * `Offload.truncate('*')` without a `blockThreshold`, the budget of whole messages kept at the head and tail; the
+   * rest are replaced by one `[... N messages elided ...]` marker.
    */
   previewTokens?: number
 
   /**
    * Which portion of the text to keep as preview. Defaults to 'headTail'. For `Offload.truncate('*')` without a
-   * `threshold`, `'head'` keeps only the oldest messages and `'tail'` only the newest.
+   * `blockThreshold`, `'head'` keeps only the oldest messages and `'tail'` only the newest.
    */
   preview?: 'head' | 'tail' | 'headTail'
 }

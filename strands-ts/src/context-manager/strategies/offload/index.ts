@@ -6,82 +6,70 @@
 
 import type { TruncateConfig } from '../../methods/truncate.js'
 import type { SummarizeConfig } from '../../methods/summarize.js'
-import type { ContextStrategy } from '../../types.js'
-import { validateTarget } from './base.js'
-import type { OffloadConditions, OffloadStrategyBuilder, OffloadTarget } from './base.js'
+import type { OffloadStrategy, OffloadTarget } from './base.js'
 import { DropStrategy } from './drop.js'
 import { TruncateStrategy } from './truncate.js'
 import { SummarizeStrategy } from './summarize.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export { DROPPED_MARKER } from './drop.js'
-export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder, Percent } from './base.js'
-
-/** Deliberately not a `ContextStrategy`, so `.when()` is required. */
-function builder(
-  target: OffloadTarget,
-  when: (conditions: OffloadConditions) => ContextStrategy
-): OffloadStrategyBuilder {
-  validateTarget(target)
-  return { when: (conditions) => when(conditions ?? {}) }
-}
+export type { OffloadTarget, OffloadConditions, OffloadStrategy, Percent } from './base.js'
 
 /**
- * Offload strategy builder namespace. Each method returns a builder; call `.when()` on it to get the strategy.
+ * Offload strategy namespace. Each method returns a strategy; call `.when()` on it to set when and on what it acts.
  *
  * - `Offload.drop(target)` — drop matching content from context window entirely
  * - `Offload.truncate(target, config)` — replace with a preview
  * - `Offload.summarize(target, config)` — replace with LLM-generated summary
  */
 interface OffloadNamespace {
-  /** Drop matching content from context window entirely. */
-  drop(target: OffloadTarget): OffloadStrategyBuilder
+  /** Drop matching content from context window entirely. Without `.when()` conditions, drops each block on arrival. */
+  drop(target: OffloadTarget): OffloadStrategy
 
-  /** Replace oversized content with a preview. */
-  truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder
+  /** Replace oversized content with a preview. Without `.when()` conditions, truncates each block on arrival. */
+  truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategy
 
-  /** Replace oversized content with an LLM-generated summary. */
-  summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder
+  /** Replace content with an LLM-generated summary. Without `.when()` conditions, summarizes each block on arrival. */
+  summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy
 }
 
 /**
- * Builder for offload strategies — reduces content in the context window.
+ * Offload strategies — reduce content in the context window.
  *
- * Target `'*'` acts on whole messages; any other target acts on each block. `threshold` measures whichever the
- * target acts on, and `utilization` only gates when the strategy fires.
+ * Target `'*'` acts on whole messages; any other target acts on each block. `blockThreshold` measures whichever the
+ * target acts on, and `contextUtilization` only gates when the strategy fires. Targets `'*'` and `'media'` need
+ * conditions from `.when()`; without them, a strategy acts on each matching block as it arrives.
  *
  * @example
  * ```typescript
- * // Per-block: truncate each tool result over 1500 tokens to a 750-token preview, eagerly
- * Offload.truncate("toolResults", { previewTokens: 750 }).when({ threshold: 1500 })
- * // Per-block: truncate specific tools' results over 5% of the context window
- * Offload.truncate(["tool::bash", "tool::read_file"]).when({ threshold: "5%" })
- * // Messages: summarize the oldest messages at 70% utilization, keeping the newest 4
- * Offload.summarize("*").when({ utilization: "70%", preserveRecent: 4 })
- * // Per-block: drop each failed tool result over 500 tokens
- * Offload.drop("toolResultErrors").when({ threshold: 500 })
- * // Per-block, eager: with no conditions, acts on each message as it arrives
- * Offload.drop("toolResults").when({})
- * // Per-block, gated: at 80% utilization, drop older tool results, keeping the newest 5
- * Offload.drop("toolResults").when({ utilization: "80%", preserveRecent: 5 })
- * // Per-block, gated: at 80% utilization, drop older images, documents, video, and audio, keeping the newest
- * Offload.drop("media").when({ utilization: "80%", preserveRecent: 1 })
+ * // Per-block, eager: truncate each tool result over 1500 tokens to a 750-token preview
+ * Offload.truncate("toolResults", { previewTokens: 750 }).when({ blockThreshold: 1500 })
+ * // Per-block, eager: truncate specific tools' results over 5% of the context window
+ * Offload.truncate(["tool::bash", "tool::read_file"]).when({ blockThreshold: "5%" })
+ * // Messages: summarize the oldest messages at 70% context utilization, keeping the newest 4
+ * Offload.summarize("*").when({ contextUtilization: "70%", preserveRecent: 4 })
+ * // Per-block, eager: with no conditions, drop each failed tool result as it arrives
+ * Offload.drop("toolResultErrors")
+ * // Per-block, gated: at 80% context utilization, drop older tool results, keeping the newest 5
+ * Offload.drop("toolResults").when({ contextUtilization: "80%", preserveRecent: 5 })
+ * // Per-block, gated: at 80% context utilization, drop older images, documents, video, and audio, keeping the newest
+ * Offload.drop("media").when({ contextUtilization: "80%", preserveRecent: 1 })
  * // Messages: once the window is full, drop the oldest messages, keeping the newest 70%
- * Offload.drop("*").when({ utilization: "100%", preserveRecent: "70%" })
- * // Messages: at 90% utilization, summarize messages over 2000 tokens, keeping the newest 4
- * Offload.summarize("*").when({ utilization: "90%", threshold: 2000, preserveRecent: 4 })
+ * Offload.drop("*").when({ contextUtilization: "100%", preserveRecent: "70%" })
+ * // Messages: at 90% context utilization, summarize messages over 2000 tokens, keeping the newest 4
+ * Offload.summarize("*").when({ contextUtilization: "90%", blockThreshold: 2000, preserveRecent: 4 })
  * ```
  */
 export const Offload: OffloadNamespace = {
-  drop(target: OffloadTarget): OffloadStrategyBuilder {
-    return builder(target, (conditions) => new DropStrategy(target, conditions))
+  drop(target: OffloadTarget): OffloadStrategy {
+    return new DropStrategy(target)
   },
 
-  truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategyBuilder {
-    return builder(target, (conditions) => new TruncateStrategy(target, config, conditions))
+  truncate(target: OffloadTarget, config?: TruncateConfig): OffloadStrategy {
+    return new TruncateStrategy(target, config)
   },
 
-  summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategyBuilder {
-    return builder(target, (conditions) => new SummarizeStrategy(target, config, conditions))
+  summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy {
+    return new SummarizeStrategy(target, config)
   },
 }

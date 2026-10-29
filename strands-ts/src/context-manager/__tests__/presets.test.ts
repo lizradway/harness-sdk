@@ -75,27 +75,15 @@ describe('presets', () => {
       )
     })
 
-    it.each([
-      ['drop', Offload.drop('toolResults')],
-      ['truncate', Offload.truncate('toolResults')],
-      ['summarize', Offload.summarize('*')],
-    ])('rejects an Offload.%s() builder without .when()', (_method, builder) => {
-      expect(() => resolveStrategies([builder as unknown as ContextStrategy])).toThrow(
-        'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
-          'a target other than "*" or "media" can call .when({}) to run on every new message'
-      )
-    })
-
     it.each([null, undefined])('rejects a %s entry', (entry) => {
       expect(() => resolveStrategies([entry as unknown as ContextStrategy])).toThrow(
         `Strategy entries must be a strategy or a preset name, got ${String(entry)}`
       )
     })
 
-    it('accepts an Offload builder once .when() is called', () => {
-      const result = resolveStrategies([Offload.drop('toolResults').when({})])
-      expect(result).toHaveLength(1)
-      expect(result[0]!.name).toBe('offload:drop')
+    it('accepts an Offload strategy without .when()', () => {
+      const strategy = Offload.drop('toolResults')
+      expect(resolveStrategies([strategy])).toStrictEqual([strategy])
     })
   })
 

@@ -39,6 +39,10 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     this._config = config ?? {}
   }
 
+  protected _withConditions(conditions: OffloadConditions): SummarizeStrategy {
+    return new SummarizeStrategy(this._target, this._config, conditions)
+  }
+
   override async apply(context: ContextState): Promise<boolean> {
     if (!this._resolveModel(context.agent)) {
       logger.warn('no model available for summarization')

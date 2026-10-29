@@ -39,21 +39,25 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
     // A percent needs the context window, so init checks it.
-    if (this._threshold && !this._threshold.isShare) {
-      this._checkThresholdExceedsPreview(this._threshold.value, String(this._threshold.value))
+    if (this._blockThreshold && !this._blockThreshold.isShare) {
+      this._checkThresholdExceedsPreview(this._blockThreshold.value, String(this._blockThreshold.value))
     }
   }
 
+  protected _withConditions(conditions: OffloadConditions): TruncateStrategy {
+    return new TruncateStrategy(this._target, this._truncateConfig, conditions)
+  }
+
   /**
-   * Checks a percent threshold against `previewTokens`, then initializes the strategy.
+   * Checks a percent blockThreshold against `previewTokens`, then initializes the strategy.
    *
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
-   * @throws Error when a percent `threshold` of the context window is no larger than `previewTokens`, or
-   *   `utilization` is a token count larger than the model's `contextWindowLimit`
+   * @throws Error when a percent `blockThreshold` of the context window is no larger than `previewTokens`, or the
+   *   base strategy's conditions can't run on this agent
    */
   override init(agent: LocalAgent, stash?: Stash): void {
-    if (this._threshold?.isShare) {
+    if (this._blockThreshold?.isShare) {
       const tokens = this._resolveThreshold(agent) ?? 0
       this._checkThresholdExceedsPreview(tokens, `${tokens} tokens of the context window`)
     }
@@ -63,18 +67,18 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   private _checkThresholdExceedsPreview(tokens: number, shown: string): void {
     if (tokens > this._previewTokens) return
     throw new Error(
-      `threshold (${shown}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise threshold or lower previewTokens`
+      `blockThreshold (${shown}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise blockThreshold or lower previewTokens`
     )
   }
 
   /**
    * Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. With a
-   * `threshold`, shortens each eligible message in place instead.
+   * `blockThreshold`, shortens each eligible message in place instead.
    */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages } = context
     if (messages.length <= 1) return false
-    if (this._threshold) return this._shortenEach(context)
+    if (this._blockThreshold) return this._shortenEach(context)
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
     const eligible = (await this._getEligibleMessages(context)).filter((message) => !hasElisionMarker(message))

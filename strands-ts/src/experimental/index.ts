@@ -16,7 +16,7 @@ export { Offload } from '../context-manager/strategies/offload/index.js'
 export type {
   OffloadTarget,
   OffloadConditions,
-  OffloadStrategyBuilder,
+  OffloadStrategy,
   Percent,
 } from '../context-manager/strategies/offload/base.js'
 export type { TruncateConfig } from '../context-manager/methods/truncate.js'

@@ -44,11 +44,11 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
   // Defaults are tuning decisions, not API promises — adjust freely.
   switch (name) {
     case 'proactiveSummarization':
-      return [Offload.summarize('*').when({ utilization: '70%', preserveRecent: '70%' })]
+      return [Offload.summarize('*').when({ contextUtilization: '70%', preserveRecent: '70%' })]
     case 'largeToolOffloading':
-      return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ threshold: 2500 })]
+      return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ blockThreshold: 2500 })]
     case 'overflowProtection':
-      return [Offload.drop('*').when({ utilization: '100%', preserveRecent: 4 })]
+      return [Offload.drop('*').when({ contextUtilization: '100%', preserveRecent: 4 })]
     case 'staleToolCleanup':
       return [Offload.drop('toolResults').when({ preserveRecent: 5 })]
   }
@@ -59,7 +59,7 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
  *
  * @param entries - Array of raw strategies and/or preset name strings
  * @returns Flattened array of concrete strategies
- * @throws Error when an entry is nullish, an unknown preset name, or an `Offload` builder without `.when()`
+ * @throws Error when an entry is nullish or an unknown preset name
  * @internal
  */
 export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName)[]): ContextStrategy[] {
@@ -72,11 +72,6 @@ export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName
       strategies.push(...resolvePreset(entry as StrategyPresetName))
     } else if (entry === null || entry === undefined) {
       throw new Error(`Strategy entries must be a strategy or a preset name, got ${String(entry)}`)
-    } else if (typeof entry.apply !== 'function') {
-      throw new Error(
-        'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
-          'a target other than "*" or "media" can call .when({}) to run on every new message'
-      )
     } else {
       strategies.push(entry)
     }

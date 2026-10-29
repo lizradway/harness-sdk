@@ -49,20 +49,21 @@ export type Percent = `${number}%`
 /**
  * Conditions that determine when and how an offload strategy fires.
  *
- * - `utilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of 1,000
- *   or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
- * - `threshold` sets how large content must be to act on. A whole number selects content larger than that many
- *   tokens; `'5%'` selects content larger than 5% of the context window (10,000 tokens of a 200,000-token window).
+ * - `contextUtilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of
+ *   1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
+ * - `blockThreshold` sets how large each block, or each message for target `'*'`, must be to act on. A whole number
+ *   selects content larger than that many tokens; `'5%'` selects content larger than 5% of the context window (10,000
+ *   tokens of a 200,000-token window).
  * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
  *   `'70%'` keeps the newest 70% of them.
  *
- * With no `utilization`, the strategy runs before every model call, or on each message as it arrives when the target
- * isn't `'*'` and `preserveRecent` is unset.
+ * With no `contextUtilization`, the strategy runs before every model call, or on each message as it arrives when the
+ * target isn't `'*'` and `preserveRecent` is unset.
  *
- * Granularity: target `'*'` acts on whole messages, and `threshold` measures each message. Drop removes them,
- * summarize merges each contiguous run, and truncate elides the middle or, with a `threshold`, shortens each one. Any
- * other target acts on each block, and `threshold` measures each block. `utilization` only gates when the strategy
- * fires, and `preserveRecent` only protects the newest matching messages.
+ * Granularity: target `'*'` acts on whole messages, and `blockThreshold` measures each message. Drop removes them,
+ * summarize merges each contiguous run, and truncate elides the middle or, with a `blockThreshold`, shortens each one.
+ * Any other target acts on each block, and `blockThreshold` measures each block. `contextUtilization` only gates when
+ * the strategy fires, and `preserveRecent` only protects the newest matching messages.
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
  * strategy's threshold and gets skipped.
@@ -74,13 +75,13 @@ export interface OffloadConditions {
    * Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or
    * more for conversation tokens, at most the model's `contextWindowLimit`.
    */
-  utilization?: number | Percent
+  contextUtilization?: number | Percent
 
   /**
    * Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the
    * context window. Unset, there is no size check. Media the token count can't measure always passes.
    */
-  threshold?: number | Percent
+  blockThreshold?: number | Percent
 
   /**
    * Newest matching messages never touched: a count, or `'70%'` of the matches, rounded up so a share above 0 keeps at
@@ -90,15 +91,15 @@ export interface OffloadConditions {
 }
 
 /**
- * Result of `Offload.drop/truncate/summarize`. Call `.when()` to get a strategy. For targets other than `'*'` and
- * `'media'`, pass `{}` to act on each message as it arrives, including the one the model answers next. A strategy keeps
- * per-agent state, so give each agent its own: call `.when()` once per agent.
+ * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
+ * arrives, including the one the model answers next; targets `'*'` and `'media'` need conditions from `.when()`. A
+ * strategy keeps per-agent state, so give each agent its own.
  *
  * @experimental
  */
-export interface OffloadStrategyBuilder {
-  /** Sets the conditions that determine when and how this strategy fires, and returns the strategy. */
-  when(conditions: OffloadConditions): ContextStrategy
+export interface OffloadStrategy extends ContextStrategy {
+  /** Returns a copy of this strategy with these conditions in place of its current ones. */
+  when(conditions?: OffloadConditions): OffloadStrategy
 }
 
 // --- Condition parsing ---
@@ -120,17 +121,17 @@ export interface ParsedCondition {
 
 const PERCENT_PATTERN = /^\d+(\.\d+)?%$/
 
-/** Smaller whole numbers are almost always a percent written without "%", like `utilization: 80`. */
+/** Smaller whole numbers are almost always a percent written without "%", like `contextUtilization: 80`. */
 const MIN_UTILIZATION_TOKENS = 1000
 
 /** Per condition: the accepted range for a `'N%'` value's N, the smallest whole count, and the accepted forms. */
 const CONDITION_RULES = {
-  utilization: {
+  contextUtilization: {
     percentInRange: (percent: number): boolean => percent > 0 && percent <= 100,
     minCount: MIN_UTILIZATION_TOKENS,
     expected: `a "N%" string up to "100%" or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
   },
-  threshold: {
+  blockThreshold: {
     percentInRange: (percent: number): boolean => percent > 0 && percent < 100,
     minCount: 1,
     expected: 'a "N%" string below "100%" or a whole token count above 0',
@@ -172,7 +173,7 @@ function percentHint(raw: unknown): string {
 function validateConditionNames(conditions: OffloadConditions | undefined): void {
   for (const name of Object.keys(conditions ?? {})) {
     if (!Object.hasOwn(CONDITION_RULES, name)) {
-      throw new Error(`unknown condition "${name}": expected utilization, threshold, or preserveRecent`)
+      throw new Error(`unknown condition "${name}": expected contextUtilization, blockThreshold, or preserveRecent`)
     }
   }
 }
@@ -481,24 +482,24 @@ export function resolveToolFilter(target: OffloadTarget | undefined): { include?
 const NO_PRESERVE: ParsedCondition = { value: 0, isShare: false }
 
 /** Shared offload logic: condition parsing, firing, granularity, eager hooks, preserveRecent. */
-export abstract class BaseOffloadStrategy implements ContextStrategy {
+export abstract class BaseOffloadStrategy implements OffloadStrategy {
   readonly name: string
 
   protected readonly _target: OffloadTarget | undefined
-  protected readonly _threshold: ParsedCondition | undefined
-  protected readonly _utilization: ParsedCondition | undefined
+  protected readonly _blockThreshold: ParsedCondition | undefined
+  protected readonly _contextUtilization: ParsedCondition | undefined
   protected readonly _preserveRecent: ParsedCondition
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
+  private _warnedUnconditional = false
 
   /**
    * @param name - Strategy name, `offload:<method>`
    * @param target - Content the strategy acts on
-   * @param conditions - When and how the strategy fires; omitted only by internal strategies
-   * @throws Error when the target is empty or excludes every tool it includes, a condition value is invalid, a
-   *   whole-message strategy has none of `utilization`, `threshold`, or `preserveRecent`, or a `'media'` strategy has
-   *   neither `utilization` nor `preserveRecent`
+   * @param conditions - When and how the strategy fires; omitted, it acts on each matching block as it arrives
+   * @throws Error when the target is empty or excludes every tool it includes, a condition value is invalid, or
+   *   conditions are given that leave the strategy unable to run (see {@link BaseOffloadStrategy.init})
    */
   constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
     validateTarget(target)
@@ -506,26 +507,56 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
     this.name = name
     this._target = target
-    this._utilization = parseCondition('utilization', conditions?.utilization)
-    this._threshold = parseCondition('threshold', conditions?.threshold)
+    this._contextUtilization = parseCondition('contextUtilization', conditions?.contextUtilization)
+    this._blockThreshold = parseCondition('blockThreshold', conditions?.blockThreshold)
     this._preserveRecent = parseCondition('preserveRecent', conditions?.preserveRecent) ?? NO_PRESERVE
 
     const resolved = resolveToolFilter(target)
     this._includeFilter = resolved.include
     this._excludeFilter = resolved.exclude
 
-    if (!conditions) return
-    const method = name.slice(name.indexOf(':') + 1)
+    if (conditions) this._checkRunnable()
+  }
+
+  /**
+   * Returns a copy of this strategy with these conditions in place of its current ones.
+   *
+   * @param conditions - When and how the strategy fires
+   * @returns The strategy with these conditions. A strategy keeps per-agent state, so give each agent its own.
+   * @throws Error when a condition value is invalid, or the conditions leave the strategy unable to run
+   */
+  when(conditions: OffloadConditions = {}): BaseOffloadStrategy {
+    return this._withConditions(conditions)
+  }
+
+  /** Builds the same strategy, with the same target and config, under new conditions. */
+  protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
+
+  /** The method name in `Offload.<method>()`. */
+  private get _method(): string {
+    return this.name.slice(this.name.indexOf(':') + 1)
+  }
+
+  /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
+  private _checkRunnable(): void {
     if (this._actsOnMessages && this._isUnconditional) {
       throw new Error(
-        `Offload.${method}("*") would act on every message; set utilization, threshold, or a preserveRecent above 0`
+        `Offload.${this._method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
       )
     }
     if (this._target === 'media' && this._runsEagerly) {
       throw new Error(
-        `Offload.${method}("media") would remove media before the model sees it; set utilization or a preserveRecent above 0`
+        `Offload.${this._method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
       )
     }
+  }
+
+  private _warnUnconditional(): void {
+    if (this._warnedUnconditional || !this._isUnconditional) return
+    this._warnedUnconditional = true
+    logger.warn(
+      `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
+    )
   }
 
   /** Whether this strategy acts on whole messages rather than individual blocks. */
@@ -535,23 +566,28 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Whether no condition narrows when or what the strategy acts on. */
   private get _isUnconditional(): boolean {
-    return this._utilization === undefined && this._threshold === undefined && this._preserveRecent.value === 0
+    return (
+      this._contextUtilization === undefined && this._blockThreshold === undefined && this._preserveRecent.value === 0
+    )
   }
 
   /** Whether the eager hook processes each message as it arrives. */
   private get _runsEagerly(): boolean {
-    return this._utilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
+    return this._contextUtilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
   }
 
   /**
-   * Checks utilization against the model's context window, then registers the eager hook if this runs eagerly.
+   * Checks the conditions can run on this agent, then registers the eager hook if this runs eagerly.
    *
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
-   * @throws Error when `utilization` is a token count larger than the model's `contextWindowLimit`
+   * @throws Error when a whole-message strategy has none of `contextUtilization`, `blockThreshold`, or
+   *   `preserveRecent`, a `'media'` strategy has neither `contextUtilization` nor `preserveRecent`, or
+   *   `contextUtilization` is a token count larger than the model's `contextWindowLimit`
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
+    this._checkRunnable()
     this._checkUtilizationFits(agent)
     if (!this._runsEagerly) return
     agent.addHook(MessageAddedEvent, async (event) => {
@@ -571,32 +607,32 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   private _checkUtilizationFits(agent: LocalAgent): void {
-    const utilization = this._utilization
+    const utilization = this._contextUtilization
     if (!utilization || utilization.isShare) return
     const limit = agent.model.getConfig().contextWindowLimit
     if (!limit) {
       logger.warn(
-        `utilization=<${utilization.value}> | contextWindowLimit is not set on the model, skipping the context window check | set contextWindowLimit in your model config`
+        `contextUtilization=<${utilization.value}> | contextWindowLimit is not set on the model, skipping the context window check | set contextWindowLimit in your model config`
       )
       return
     }
     if (utilization.value <= limit) return
     throw new Error(
-      `utilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
+      `contextUtilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
     )
   }
 
   /** Whether the utilization gate (if any) is open: on overflow, or at or above the configured share. */
   private _utilizationReached(context: ContextState): boolean {
-    const utilization = this._utilization
+    const utilization = this._contextUtilization
     if (!utilization || context.overflow) return true
     const share = utilization.isShare ? utilization.value : utilization.value / effectiveWindowLimit(context.agent)
     return context.utilization >= share
   }
 
-  /** Tokens above which content is offloaded, or undefined when `threshold` is unset so no size check applies. */
+  /** Tokens above which content is offloaded, or undefined when `blockThreshold` is unset so no size check applies. */
   protected _resolveThreshold(agent: LocalAgent): number | undefined {
-    const threshold = this._threshold
+    const threshold = this._blockThreshold
     if (!threshold) return undefined
     return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
   }
@@ -690,11 +726,12 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
         acted = true
       }
     }
+    if (acted) this._warnUnconditional()
     return acted
   }
 
   /**
-   * Messages outside `preserveRecent` and larger than `threshold`, excluding message 0 and pinned messages, in
+   * Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0 and pinned messages, in
    * history order.
    */
   protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
@@ -754,6 +791,10 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
 
   override init(_agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
+  }
+
+  protected _withConditions(): EmergencyTruncateStrategy {
+    return new EmergencyTruncateStrategy()
   }
 
   override async apply(context: ContextState): Promise<boolean> {

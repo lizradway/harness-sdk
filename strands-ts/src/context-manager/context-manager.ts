@@ -73,9 +73,9 @@ export class ContextManager implements Plugin {
       ? resolveStrategies(config.strategies)
       : [
           Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AUTO_TRUNCATE_THRESHOLD,
+            blockThreshold: AUTO_TRUNCATE_THRESHOLD,
           }),
-          Offload.summarize('*').when({ utilization: AUTO_SUMMARIZE_UTILIZATION, preserveRecent: 4 }),
+          Offload.summarize('*').when({ contextUtilization: AUTO_SUMMARIZE_UTILIZATION, preserveRecent: 4 }),
         ]
     this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
     const stashConfig = config?.stash
@@ -100,9 +100,9 @@ export class ContextManager implements Plugin {
       return new ContextManager({
         strategies: [
           Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AGENTIC_TRUNCATE_THRESHOLD,
+            blockThreshold: AGENTIC_TRUNCATE_THRESHOLD,
           }),
-          Offload.summarize('*').when({ utilization: '100%', preserveRecent: 4 }),
+          Offload.summarize('*').when({ contextUtilization: '100%', preserveRecent: 4 }),
         ],
       })
     }
