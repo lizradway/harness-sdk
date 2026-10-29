@@ -39,12 +39,8 @@ export interface OffloadStrategy extends ContextStrategy {
   when(conditions?: OffloadConditions): OffloadStrategy
 }
 
-/**
- * Text for the placeholder left where messages were removed, given the removed messages, or null to keep them.
- *
- * @internal
- */
-export type RemovalPreview = (removed: Message[]) => string | null | Promise<string | null>
+/** Placeholder text for the messages about to be removed, with their tool pairs, or null to keep them. */
+type PlaceholderText = (removed: Message[]) => Promise<string | null>
 
 /** The strategy removing messages: its name for logs, its method for the placeholder, and its stash. */
 interface Remover {
@@ -62,12 +58,12 @@ interface Remover {
 async function removeMessages(
   messages: Message[],
   toRemove: Message[],
-  preview: RemovalPreview,
+  textFor: PlaceholderText,
   { name, method, stash }: Remover
 ): Promise<boolean> {
   const removed = withPairs(messages, toRemove)
   if (removed.length === 0) return false
-  const text = await preview(removed)
+  const text = await textFor(removed)
   if (text === null) return false
 
   const { lowestIndex } = spliceWithPairs(messages, removed)
@@ -230,8 +226,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /** Removes messages with their tool pairs and leaves a placeholder at the gap; `apply` restores alternation. */
-  protected _removeMessages(messages: Message[], toRemove: Message[], preview: RemovalPreview): Promise<boolean> {
-    return removeMessages(messages, toRemove, preview, { name: this.name, method: this._method, stash: this._stash })
+  protected _removeMessages(messages: Message[], toRemove: Message[], textFor: PlaceholderText): Promise<boolean> {
+    return removeMessages(messages, toRemove, textFor, { name: this.name, method: this._method, stash: this._stash })
   }
 
   /** The placeholder this strategy leaves for a block it replaced. */
@@ -329,9 +325,9 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const preview = (removed: Message[]): string => formatElided(removed.length)
     const remover = { name: this.name, method: 'truncate' as const, stash: this._stash }
-    if (!(await removeMessages(messages, removable.slice(0, removeCount), preview, remover))) return false
+    const textFor = async ({ length }: Message[]): Promise<string> => formatElided(length)
+    if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, remover))) return false
     repairAlternation(messages)
     return true
   }

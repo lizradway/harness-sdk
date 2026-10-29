@@ -72,8 +72,10 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
     const eligible = (await this._getEligibleMessages(context)).filter((message) => !carriesElisionMarker(message))
-    return this._removeMessages(context.messages, await this._selectMiddle(eligible, context.agent), ({ length }) =>
-      formatElided(length)
+    return this._removeMessages(
+      context.messages,
+      await this._selectMiddle(eligible, context.agent),
+      async ({ length }) => formatElided(length)
     )
   }
 

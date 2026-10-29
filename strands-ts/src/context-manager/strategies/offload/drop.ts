@@ -25,7 +25,7 @@ export class DropStrategy extends BaseOffloadStrategy {
 
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const eligible = await this._getEligibleMessages(context)
-    return this._removeMessages(context.messages, eligible, ({ length }) => formatDroppedMessages(length))
+    return this._removeMessages(context.messages, eligible, async ({ length }) => formatDroppedMessages(length))
   }
 
   protected async _replaceBlock(
