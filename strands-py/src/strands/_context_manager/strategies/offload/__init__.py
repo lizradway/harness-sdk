@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import OffloadStrategyBuilder
 from .drop import DropStrategy
 from .summarize import SummarizeStrategy
 from .truncate import TruncateStrategy
@@ -19,25 +18,25 @@ class _OffloadNamespace:
     """Factory for creating offload strategies via ``Offload.truncate(...)``, ``Offload.drop(...)``, etc.
 
     Example:
-        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(threshold=1500)
-        >>> Offload.summarize("*").when(utilization="85%", preserve_recent=2)
-        >>> Offload.drop("tool_result_errors").when()
-        >>> Offload.drop("media").when(utilization="80%", preserve_recent=1)
-        >>> Offload.summarize("*").when(utilization="90%", threshold=2000, preserve_recent=4)
+        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500)
+        >>> Offload.summarize("*").when(context_utilization="85%", preserve_recent=2)
+        >>> Offload.drop("tool_result_errors")
+        >>> Offload.drop("media").when(context_utilization="80%", preserve_recent=1)
+        >>> Offload.summarize("*").when(context_utilization="90%", block_threshold=2000, preserve_recent=4)
     """
 
-    def drop(self, target: OffloadTarget) -> OffloadStrategyBuilder:
+    def drop(self, target: OffloadTarget) -> DropStrategy:
         """Drop matching content from context window entirely.
 
         Args:
             target: What content to target for dropping.
 
         Returns:
-            A builder; call ``.when()`` on it to get the strategy.
+            The strategy. With no ``.when()`` conditions, it drops each matching block as it arrives.
         """
-        return OffloadStrategyBuilder(target, lambda conditions: DropStrategy(target, conditions))
+        return DropStrategy(target)
 
-    def truncate(self, target: OffloadTarget, config: TruncateConfig | None = None) -> OffloadStrategyBuilder:
+    def truncate(self, target: OffloadTarget, config: TruncateConfig | None = None) -> TruncateStrategy:
         """Replace oversized content with a preview.
 
         Args:
@@ -45,11 +44,11 @@ class _OffloadNamespace:
             config: Method-specific config (preview_tokens, preview mode).
 
         Returns:
-            A builder; call ``.when()`` on it to get the strategy.
+            The strategy. With no ``.when()`` conditions, it truncates each matching block as it arrives.
         """
-        return OffloadStrategyBuilder(target, lambda conditions: TruncateStrategy(target, config, conditions))
+        return TruncateStrategy(target, config)
 
-    def summarize(self, target: OffloadTarget, config: SummarizeConfig | None = None) -> OffloadStrategyBuilder:
+    def summarize(self, target: OffloadTarget, config: SummarizeConfig | None = None) -> SummarizeStrategy:
         """Replace oversized content with an LLM-generated summary.
 
         Args:
@@ -57,9 +56,9 @@ class _OffloadNamespace:
             config: Method-specific config (model, system_prompt).
 
         Returns:
-            A builder; call ``.when()`` on it to get the strategy.
+            The strategy. With no ``.when()`` conditions, it summarizes each matching block as it arrives.
         """
-        return OffloadStrategyBuilder(target, lambda conditions: SummarizeStrategy(target, config, conditions))
+        return SummarizeStrategy(target, config)
 
 
 Offload = _OffloadNamespace()

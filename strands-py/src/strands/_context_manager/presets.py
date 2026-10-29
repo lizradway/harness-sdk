@@ -9,7 +9,6 @@ you need a specific, pinned configuration.
 from __future__ import annotations
 
 from .strategies.offload import Offload
-from .strategies.offload.base import OffloadStrategyBuilder
 from .types import ContextStrategy
 
 StrategyPresetName = str
@@ -42,11 +41,11 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
         The strategy array for the given preset.
     """
     if name == "proactive_summarization":
-        return [Offload.summarize("*").when(utilization="70%", preserve_recent="70%")]
+        return [Offload.summarize("*").when(context_utilization="70%", preserve_recent="70%")]
     if name == "large_tool_offloading":
-        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)]
+        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(block_threshold=2500)]
     if name == "overflow_protection":
-        return [Offload.drop("*").when(utilization="100%", preserve_recent=4)]
+        return [Offload.drop("*").when(context_utilization="100%", preserve_recent=4)]
     if name == "stale_tool_cleanup":
         return [Offload.drop("tool_results").when(preserve_recent=5)]
     raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
@@ -60,17 +59,9 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
 
     Returns:
         Flattened list of concrete strategies.
-
-    Raises:
-        TypeError: If an entry is an ``Offload`` builder that ``.when()`` was never called on.
     """
     strategies: list[ContextStrategy] = []
     for entry in entries:
-        if isinstance(entry, OffloadStrategyBuilder):
-            raise TypeError(
-                'Offload strategies need .when() before use, for example .when(utilization="80%"); '
-                'a target other than "*" or "media" can call .when() with no conditions to run on every new message'
-            )
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
         else:

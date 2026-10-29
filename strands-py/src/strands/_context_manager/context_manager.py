@@ -84,9 +84,9 @@ class ContextManager(Plugin):
         else:
             user_strategies = [
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
-                    threshold=_AUTO_TRUNCATE_THRESHOLD,
+                    block_threshold=_AUTO_TRUNCATE_THRESHOLD,
                 ),
-                Offload.summarize("*").when(utilization=_AUTO_SUMMARIZE_UTILIZATION, preserve_recent=4),
+                Offload.summarize("*").when(context_utilization=_AUTO_SUMMARIZE_UTILIZATION, preserve_recent=4),
             ]
         self._strategies: list[ContextStrategy] = [*user_strategies, EmergencyTruncateStrategy()]
 
@@ -142,9 +142,9 @@ class ContextManager(Plugin):
         if strategy == "agentic":
             agentic_strategies: list[ContextStrategy | str] = [
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
-                    threshold=_AGENTIC_TRUNCATE_THRESHOLD,
+                    block_threshold=_AGENTIC_TRUNCATE_THRESHOLD,
                 ),
-                Offload.summarize("*").when(utilization="100%", preserve_recent=4),
+                Offload.summarize("*").when(context_utilization="100%", preserve_recent=4),
             ]
             return ContextManager(strategies=agentic_strategies)
         if isinstance(strategy, str):

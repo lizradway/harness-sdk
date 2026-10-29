@@ -51,6 +51,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
 
+    def _with_conditions(self, conditions: OffloadConditions) -> SummarizeStrategy:
+        return SummarizeStrategy(self._target, self._config, conditions)
+
     async def apply(self, context: ContextState) -> bool:
         """Apply summarization. Returns False if no model is available."""
         if not self._resolve_model(context.agent):

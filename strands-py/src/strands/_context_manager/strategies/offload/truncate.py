@@ -66,19 +66,22 @@ class TruncateStrategy(BaseOffloadStrategy):
         self._truncate_config: TruncateConfig = config or {}
         super().__init__(target, conditions)
 
-        threshold = (conditions or {}).get("threshold")
+        block_threshold = (conditions or {}).get("block_threshold")
         # A percent needs the context window, so init checks it.
-        if isinstance(threshold, int):
-            self._check_threshold_exceeds_preview(threshold, str(threshold))
+        if isinstance(block_threshold, int):
+            self._check_threshold_exceeds_preview(block_threshold, str(block_threshold))
+
+    def _with_conditions(self, conditions: OffloadConditions) -> TruncateStrategy:
+        return TruncateStrategy(self._target, self._truncate_config, conditions)
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """Check a percent threshold against ``preview_tokens``, then initialize the strategy.
+        """Check a percent block_threshold against ``preview_tokens``, then initialize the strategy.
 
         Raises:
-            ValueError: If a percent ``threshold`` of the context window is no larger than ``preview_tokens``,
-                or ``utilization`` is a token count larger than the model's ``context_window_limit``.
+            ValueError: If a percent ``block_threshold`` of the context window is no larger than ``preview_tokens``,
+                or the base strategy's conditions can't run on this agent.
         """
-        if self._threshold is not None and self._threshold.is_share:
+        if self._block_threshold is not None and self._block_threshold.is_share:
             tokens = self._resolve_threshold(agent) or 0
             self._check_threshold_exceeds_preview(tokens, f"{tokens} tokens of the context window")
         super().init(agent, stash)
@@ -87,16 +90,16 @@ class TruncateStrategy(BaseOffloadStrategy):
         preview_tokens = _resolve_preview_tokens(self._truncate_config)
         if tokens <= preview_tokens:
             raise ValueError(
-                f"threshold ({shown}) must be greater than preview_tokens ({preview_tokens}) "
-                "to ensure truncation converges; raise threshold or lower preview_tokens"
+                f"block_threshold ({shown}) must be greater than preview_tokens ({preview_tokens}) "
+                "to ensure truncation converges; raise block_threshold or lower preview_tokens"
             )
 
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle.
 
-        With a ``threshold``, shortens each eligible message in place instead.
+        With a ``block_threshold``, shortens each eligible message in place instead.
         """
-        if self._threshold is not None:
+        if self._block_threshold is not None:
             return await self._shorten_each(context)
         messages = context.messages
         # Skipping earlier markers lets a pass with nothing new to elide return False instead of re-eliding them.

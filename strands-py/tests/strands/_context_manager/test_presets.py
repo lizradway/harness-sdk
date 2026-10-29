@@ -44,12 +44,12 @@ class TestResolveStrategies:
         assert strategies[1].name == "offload:drop"
 
     def test_passes_through_instances(self):
-        custom = Offload.drop("*").when(threshold=500)
+        custom = Offload.drop("*").when(block_threshold=500)
         strategies = _resolve_strategies([custom])
         assert strategies == [custom]
 
     def test_mixed_presets_and_instances(self):
-        custom = Offload.drop("*").when(threshold=500)
+        custom = Offload.drop("*").when(block_threshold=500)
         strategies = _resolve_strategies(["proactive_summarization", custom])
         assert len(strategies) == 2
         assert strategies[0].name == "offload:summarize"
@@ -59,9 +59,9 @@ class TestResolveStrategies:
         with pytest.raises(ValueError, match="Unknown strategy preset"):
             _resolve_strategies(["nonexistent"])
 
-    def test_rejects_builder_without_when(self):
-        with pytest.raises(TypeError, match=r"need \.when\(\) before use"):
-            _resolve_strategies([Offload.drop("tool_results")])
+    def test_accepts_strategy_without_when(self):
+        strategy = Offload.drop("tool_results")
+        assert _resolve_strategies([strategy]) == [strategy]
 
     def test_empty_list(self):
         assert _resolve_strategies([]) == []

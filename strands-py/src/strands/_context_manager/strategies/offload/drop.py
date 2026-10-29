@@ -30,6 +30,9 @@ class DropStrategy(BaseOffloadStrategy):
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
         super().__init__(target, conditions)
 
+    def _with_conditions(self, conditions: OffloadConditions) -> DropStrategy:
+        return DropStrategy(self._target, conditions)
+
     def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"
         return f"[Dropped: {count} {word}]"

@@ -21,7 +21,7 @@ from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
 from ...stash import Stash
-from ...types import ContextState, ContextStrategy, is_text_block, is_tool_result_block, is_tool_use_block
+from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -41,25 +41,26 @@ class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and on what an offload strategy acts.
 
     A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
-    Target ``"*"`` acts on whole messages, and ``threshold`` measures each message. Drop removes
+    Target ``"*"`` acts on whole messages, and ``block_threshold`` measures each message. Drop removes
     them, summarize merges each contiguous run, and truncate elides the middle or, with a
-    ``threshold``, shortens each one. Any other target acts on individual blocks, and
-    ``threshold`` measures each block.
+    ``block_threshold``, shortens each one. Any other target acts on individual blocks, and
+    ``block_threshold`` measures each block.
 
     Attributes:
-        utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
+        context_utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
             whole number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds
             the model's ``context_window_limit``. Unset, the strategy runs before every model
             call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
-        threshold: How large content must be to act on. A whole number selects content larger than
-            that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
-            tokens of a 200,000-token window). Media the token count can't measure always passes.
+        block_threshold: How large each block, or each message for target ``"*"``, must be to act on. A whole
+            number selects content larger than that many tokens; ``"5%"`` selects content larger than 5% of the
+            context window (10,000 tokens of a 200,000-token window). Media the token count can't measure
+            always passes.
         preserve_recent: Matching messages the strategy never touches. A whole number keeps that
             many of the newest; ``"70%"`` keeps the newest 70% of them.
     """
 
-    utilization: int | str
-    threshold: int | str
+    context_utilization: int | str
+    block_threshold: int | str
     preserve_recent: int | str
 
 
@@ -76,7 +77,7 @@ class _Measure:
 
 
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
-# Smaller whole numbers are almost always a percent written without "%", like utilization=80.
+# Smaller whole numbers are almost always a percent written without "%", like context_utilization=80.
 _MIN_UTILIZATION_TOKENS = 1000
 
 
@@ -90,12 +91,12 @@ class _ConditionRule:
 
 
 _CONDITION_RULES = {
-    "utilization": _ConditionRule(
+    "context_utilization": _ConditionRule(
         lambda percent: 0 < percent <= 100,
         _MIN_UTILIZATION_TOKENS,
         f'a "N%" string up to "100%" or a whole token count of at least {_MIN_UTILIZATION_TOKENS}',
     ),
-    "threshold": _ConditionRule(
+    "block_threshold": _ConditionRule(
         lambda percent: 0 < percent < 100, 1, 'a "N%" string below "100%" or a whole token count above 0'
     ),
     "preserve_recent": _ConditionRule(
@@ -129,16 +130,16 @@ def _value_hint(value: object, rule: _ConditionRule) -> str:
 
 def _build_conditions(
     *,
-    utilization: int | str | None = None,
-    threshold: int | str | None = None,
+    context_utilization: int | str | None = None,
+    block_threshold: int | str | None = None,
     preserve_recent: int | str = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
-    if utilization is not None:
-        conditions["utilization"] = utilization
-    if threshold is not None:
-        conditions["threshold"] = threshold
+    if context_utilization is not None:
+        conditions["context_utilization"] = context_utilization
+    if block_threshold is not None:
+        conditions["block_threshold"] = block_threshold
     if preserve_recent:
         conditions["preserve_recent"] = preserve_recent
     return conditions
@@ -400,8 +401,8 @@ class BaseOffloadStrategy(ABC):
         ...
 
     _target: OffloadTarget | None
-    _utilization: _Measure | None
-    _threshold: _Measure | None
+    _context_utilization: _Measure | None
+    _block_threshold: _Measure | None
     _preserve_recent: _Measure
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
@@ -412,39 +413,96 @@ class BaseOffloadStrategy(ABC):
 
         Args:
             target: Content the strategy applies to.
-            conditions: Conditions from ``.when()``. ``None`` skips condition validation, for
-                internal strategies that override ``apply``.
+            conditions: Conditions from ``.when()``. ``None`` leaves the strategy unconditioned and
+                defers checking that it can run without conditions to ``init``, so ``.when()`` can still add them.
 
         Raises:
             ValueError: If ``target`` is an empty list or excludes every tool it includes, a condition
-                value is invalid, a message-level strategy has no ``utilization``, ``threshold``, or
-                ``preserve_recent``, or a ``"media"`` strategy has neither ``utilization`` nor ``preserve_recent``.
+                value is invalid, or ``conditions`` are given and can't run (see ``init``).
         """
         _validate_target(target)
         self._target = target
         self._stash = None
-        conditions_given = conditions is not None
-        conditions = conditions or {}
-        utilization = conditions.get("utilization")
-        threshold = conditions.get("threshold")
-        self._utilization = _parse_condition("utilization", utilization) if utilization is not None else None
-        self._threshold = _parse_condition("threshold", threshold) if threshold is not None else None
-        self._preserve_recent = _parse_condition("preserve_recent", conditions.get("preserve_recent", 0))
+        given = conditions or {}
+        context_utilization = given.get("context_utilization")
+        block_threshold = given.get("block_threshold")
+        self._context_utilization = (
+            _parse_condition("context_utilization", context_utilization) if context_utilization is not None else None
+        )
+        self._block_threshold = (
+            _parse_condition("block_threshold", block_threshold) if block_threshold is not None else None
+        )
+        self._preserve_recent = _parse_condition("preserve_recent", given.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
+        if conditions is not None:
+            self._check_runnable()
 
-        if not conditions_given:
-            return
+    def when(
+        self,
+        *,
+        context_utilization: int | str | None = None,
+        block_threshold: int | str | None = None,
+        preserve_recent: int | str = 0,
+    ) -> BaseOffloadStrategy:
+        """Return a copy of the strategy with these conditions in place of its current ones.
+
+        Args:
+            context_utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
+                whole number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds
+                the model's ``context_window_limit``. Unset, the strategy runs before every model
+                call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
+            block_threshold: How large each block, or each message for target ``"*"``, must be to act on. A whole
+                number selects content larger than that many tokens; ``"5%"`` selects content larger than 5% of
+                the context window (10,000 tokens of a 200,000-token window). Media the token count can't
+                measure always passes.
+            preserve_recent: Matching messages the strategy never touches. A whole number keeps that
+                many of the newest; ``"70%"`` keeps the newest 70% of them.
+
+        Returns:
+            The strategy with these conditions. A strategy keeps per-agent state, so give each agent its own.
+
+        Raises:
+            ValueError: If a condition value is invalid, a target ``"*"`` strategy has none of
+                ``context_utilization``, ``block_threshold``, or ``preserve_recent``, or a target ``"media"``
+                strategy has neither ``context_utilization`` nor ``preserve_recent``.
+        """
+        return self._with_conditions(
+            _build_conditions(
+                context_utilization=context_utilization,
+                block_threshold=block_threshold,
+                preserve_recent=preserve_recent,
+            )
+        )
+
+    @abstractmethod
+    def _with_conditions(self, conditions: OffloadConditions) -> BaseOffloadStrategy:
+        """Build a strategy like this one with ``conditions``."""
+        ...
+
+    def _check_runnable(self) -> None:
+        """Raise if the strategy's conditions leave it acting on every message, or removing media unseen."""
         method = self.name.removeprefix("offload:")
         if self._acts_on_messages and self._is_unconditional:
             raise ValueError(
-                f'Offload.{method}("*") would act on every message; set utilization, threshold,'
-                " or a preserve_recent above 0"
+                f'Offload.{method}("*") would act on every message; use .when() to set context_utilization,'
+                " block_threshold, or a preserve_recent above 0"
             )
         if self._target == "media" and self._runs_eagerly:
             raise ValueError(
                 f'Offload.{method}("media") would remove media before the model sees it;'
-                " set utilization or a preserve_recent above 0"
+                " use .when() to set context_utilization or a preserve_recent above 0"
             )
+
+    def _warn_unconditional(self) -> None:
+        if not self._is_unconditional:
+            return
+        method = self.name.removeprefix("offload:")
+        # Caller depth varies, so stacklevel=1 pins dedup to this line: once per process for each strategy message.
+        warnings.warn(
+            f"Offload.{method}({self._target!r}) has no conditions, so it acts on every matching block as it arrives,"
+            " before the model reads it; use .when() to set block_threshold, context_utilization, or preserve_recent",
+            stacklevel=1,
+        )
 
     @property
     def _acts_on_messages(self) -> bool:
@@ -453,7 +511,7 @@ class BaseOffloadStrategy(ABC):
     @property
     def _is_unconditional(self) -> bool:
         """Whether no condition narrows when or what the strategy acts on."""
-        return self._utilization is None and self._threshold is None and not self._preserves_recent
+        return self._context_utilization is None and self._block_threshold is None and not self._preserves_recent
 
     @property
     def _preserves_recent(self) -> bool:
@@ -462,48 +520,53 @@ class BaseOffloadStrategy(ABC):
     @property
     def _runs_eagerly(self) -> bool:
         """Whether the eager hook processes each message as it arrives."""
-        return self._utilization is None and not self._preserves_recent and not self._acts_on_messages
+        return self._context_utilization is None and not self._preserves_recent and not self._acts_on_messages
 
     def _resolve_threshold(self, agent: Agent) -> int | None:
-        """Resolve ``threshold`` to tokens, or None when unset so no size check applies."""
-        if self._threshold is None:
+        """Resolve ``block_threshold`` to tokens, or None when unset so no size check applies."""
+        if self._block_threshold is None:
             return None
-        if not self._threshold.is_share:
-            return int(self._threshold.value)
-        return math.ceil(self._threshold.of(_window_limit(agent)))
+        if not self._block_threshold.is_share:
+            return int(self._block_threshold.value)
+        return math.ceil(self._block_threshold.of(_window_limit(agent)))
 
     def _check_utilization_fits(self, agent: Agent) -> None:
-        if self._utilization is None or self._utilization.is_share:
+        if self._context_utilization is None or self._context_utilization.is_share:
             return
+        tokens = int(self._context_utilization.value)
         limit = agent.model.context_window_limit
         if not limit:
             # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
             warnings.warn(
-                f"utilization ({int(self._utilization.value)}) can't be checked against the context window because"
+                f"context_utilization ({tokens}) can't be checked against the context window because"
                 " context_window_limit is not set on the model; set context_window_limit in your model config",
                 stacklevel=1,
             )
             return
-        if self._utilization.value > limit:
+        if tokens > limit:
             raise ValueError(
-                f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
+                f"context_utilization ({tokens}) is larger than the model's context window "
                 f'({limit} tokens); use a smaller token count or a "N%" share'
             )
 
     def _utilization_reached(self, context: ContextState) -> bool:
-        if self._utilization is None or context.overflow:
+        if self._context_utilization is None or context.overflow:
             return True
-        if self._utilization.is_share:
-            return context.utilization >= self._utilization.value
-        return context.utilization >= self._utilization.value / _window_limit(context.agent)
+        if self._context_utilization.is_share:
+            return context.utilization >= self._context_utilization.value
+        return context.utilization >= self._context_utilization.value / _window_limit(context.agent)
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """Check utilization against the model's context window, then register the eager hook if this runs eagerly.
+        """Check the conditions can run on this agent, then register the eager hook if this runs eagerly.
 
         Raises:
-            ValueError: If ``utilization`` is a token count larger than the model's ``context_window_limit``.
+            ValueError: If the strategy has target ``"*"`` and none of ``context_utilization``,
+                ``block_threshold``, or ``preserve_recent``, has target ``"media"`` and neither
+                ``context_utilization`` nor ``preserve_recent``, or ``context_utilization`` is a token count
+                larger than the model's ``context_window_limit``.
         """
         self._stash = stash
+        self._check_runnable()
         self._check_utilization_fits(agent)
         from ....hooks.events import MessageAddedEvent
 
@@ -647,13 +710,15 @@ class BaseOffloadStrategy(ABC):
                 content[block_index] = replacement
                 acted = True
 
+        if acted:
+            self._warn_unconditional()
         return acted
 
     async def _get_eligible_messages(self, context: ContextState) -> list[Message]:
         """Collect the messages a message-level strategy may act on, oldest first.
 
         Excludes message 0, pinned messages, the matches ``preserve_recent`` keeps, and messages at
-        or under ``threshold``.
+        or under ``block_threshold``.
         """
         messages = context.messages
         tool_name_map = _build_tool_name_map(messages)
@@ -685,58 +750,3 @@ class BaseOffloadStrategy(ABC):
     ) -> ContentBlock | None:
         """Transform a block. Return the replacement, or None to skip."""
         ...
-
-
-class OffloadStrategyBuilder:
-    """An offload strategy waiting for its conditions. Call ``.when()`` to get the strategy.
-
-    A strategy keeps per-agent state, so give each agent its own: call ``.when()`` once per agent.
-    """
-
-    def __init__(self, target: OffloadTarget, factory: Callable[[OffloadConditions], ContextStrategy]) -> None:
-        """Initialize the builder.
-
-        Args:
-            target: Content the strategy applies to.
-            factory: Builds the strategy from its conditions.
-
-        Raises:
-            ValueError: If ``target`` is an empty list or excludes every tool it includes.
-        """
-        _validate_target(target)
-        self._factory = factory
-
-    def when(
-        self,
-        *,
-        utilization: int | str | None = None,
-        threshold: int | str | None = None,
-        preserve_recent: int | str = 0,
-    ) -> ContextStrategy:
-        """Return the strategy with these conditions.
-
-        For targets other than ``"*"`` and ``"media"``, call with no arguments to act on each message as it
-        arrives, including the one the model answers next.
-
-        Args:
-            utilization: When the strategy fires. ``"80%"`` fires at 80% of the context window; a
-                whole number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds
-                the model's ``context_window_limit``. Unset, the strategy runs before every model
-                call, or on each message as it arrives when the target isn't ``"*"`` and ``preserve_recent`` is unset.
-            threshold: How large content must be to act on. A whole number selects content larger than
-                that many tokens; ``"5%"`` selects content larger than 5% of the context window (10,000
-                tokens of a 200,000-token window). Media the token count can't measure always passes.
-            preserve_recent: Matching messages the strategy never touches. A whole number keeps that
-                many of the newest; ``"70%"`` keeps the newest 70% of them.
-
-        Returns:
-            The configured strategy.
-
-        Raises:
-            ValueError: If a condition value is invalid, a target ``"*"`` strategy has none of
-                ``utilization``, ``threshold``, or ``preserve_recent``, or a target ``"media"`` strategy
-                has neither ``utilization`` nor ``preserve_recent``.
-        """
-        return self._factory(
-            _build_conditions(utilization=utilization, threshold=threshold, preserve_recent=preserve_recent)
-        )
