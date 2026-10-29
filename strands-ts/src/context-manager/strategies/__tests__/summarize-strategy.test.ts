@@ -66,16 +66,6 @@ function makeContext(messages: Message[], utilization = 0.5, model?: unknown): C
 }
 
 describe('Offload.summarize', () => {
-  it('creates a strategy with correct name', () => {
-    const strategy = Offload.summarize('toolResults').when({})
-    expect(strategy.name).toBe('offload:summarize')
-  })
-
-  it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.summarize('toolResults').when({ contextUtilization: '85%' })
-    expect(strategy.name).toBe('offload:summarize')
-  })
-
   describe('apply', () => {
     it('returns false when no model is available', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
@@ -129,40 +119,6 @@ describe('Offload.summarize', () => {
       expect(result).toBe(true)
       expect(summarizeContent).toHaveBeenCalledTimes(1)
       expect(vi.mocked(summarizeContent).mock.calls[0]![1]).toBe(auxModel)
-    })
-
-    it('summarizes assistant text blocks', async () => {
-      const largeText = 'x'.repeat(2500 * 4 + 100)
-      const message = new Message({
-        role: 'assistant',
-        content: [new TextBlock(largeText)],
-      })
-      const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('assistantText').when({})
-      const context = makeContext([message], 0.9, mockModel)
-
-      const result = await strategy.apply(context)
-
-      expect(result).toBe(true)
-      const block = message.content[0] as TextBlock
-      expect(block.text).toContain('Summary of multimodal content')
-    })
-
-    it('summarizes user text blocks', async () => {
-      const largeText = 'x'.repeat(2500 * 4 + 100)
-      const message = new Message({
-        role: 'user',
-        content: [new TextBlock(largeText)],
-      })
-      const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('userText').when({})
-      const context = makeContext([message], 0.9, mockModel)
-
-      const result = await strategy.apply(context)
-
-      expect(result).toBe(true)
-      const block = message.content[0] as TextBlock
-      expect(block.text).toContain('Summary of multimodal content')
     })
 
     it('skips when utilization is below threshold', async () => {

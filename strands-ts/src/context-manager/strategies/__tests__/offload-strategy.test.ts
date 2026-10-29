@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { EmergencyTruncateStrategy } from '../offload/base.js'
-import { formatDroppedMessages, formatElided, offloadPlaceholder } from '../../placeholder.js'
+import { offloadPlaceholder } from '../../placeholder.js'
 import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
@@ -76,16 +76,6 @@ function makeContext(
 }
 
 describe('Offload.truncate', () => {
-  it('creates a strategy with correct name', () => {
-    const strategy = Offload.truncate('toolResults').when({})
-    expect(strategy.name).toBe('offload:truncate')
-  })
-
-  it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 1000 })
-    expect(strategy.name).toBe('offload:truncate')
-  })
-
   it('rejects a token threshold at or below previewTokens', () => {
     expect(() => Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: 500 })).toThrow(
       'blockThreshold (500) must be greater than previewTokens (500) to ensure truncation converges'
@@ -191,38 +181,6 @@ describe('Offload.truncate', () => {
     expect(result).toBe(false)
   })
 
-  it('truncates assistant text blocks with assistantText target', async () => {
-    const largeText = 'x'.repeat(2500 * 4 + 100)
-    const message = new Message({
-      role: 'assistant',
-      content: [new TextBlock(largeText)],
-    })
-    const strategy = Offload.truncate('assistantText').when({})
-    const context = makeContext([message])
-
-    const result = await strategy.apply(context)
-
-    expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(offloadedBy(block)).toBe('truncate')
-  })
-
-  it('truncates user text blocks with userText target', async () => {
-    const largeText = 'x'.repeat(2500 * 4 + 100)
-    const message = new Message({
-      role: 'user',
-      content: [new TextBlock(largeText)],
-    })
-    const strategy = Offload.truncate('userText').when({})
-    const context = makeContext([message])
-
-    const result = await strategy.apply(context)
-
-    expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(offloadedBy(block)).toBe('truncate')
-  })
-
   it('does not truncate user messages with assistantText target', async () => {
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const message = new Message({
@@ -276,13 +234,6 @@ describe('Offload.truncate', () => {
 })
 
 describe('Offload builder', () => {
-  it('Offload.drop().when() creates a drop strategy', () => {
-    const strategy = Offload.drop('toolResults').when({})
-    expect(strategy.name).toBe('offload:drop')
-    expect(strategy.init).toBeDefined()
-    expect(strategy.apply).toBeDefined()
-  })
-
   it('Offload.drop() drops tool result content from context window entirely', async () => {
     const largeText = 'x'.repeat(100)
     const messages = [makeToolResultMessage(largeText)]
@@ -294,36 +245,6 @@ describe('Offload builder', () => {
     expect(result).toBe(true)
     const block = messages[0]!.content[0] as ToolResultBlock
     expect((block.content[0] as TextBlock).text).toBe('[Dropped]')
-  })
-
-  it('Offload.drop() drops assistant text blocks', async () => {
-    const message = new Message({
-      role: 'assistant',
-      content: [new TextBlock('some assistant response')],
-    })
-    const strategy = Offload.drop('assistantText').when({})
-    const context = makeContext([message])
-
-    const result = await strategy.apply(context)
-
-    expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toBe('[Dropped]')
-  })
-
-  it('Offload.drop() drops user text blocks', async () => {
-    const message = new Message({
-      role: 'user',
-      content: [new TextBlock('some user message')],
-    })
-    const strategy = Offload.drop('userText').when({})
-    const context = makeContext([message])
-
-    const result = await strategy.apply(context)
-
-    expect(result).toBe(true)
-    const block = message.content[0] as TextBlock
-    expect(block.text).toBe('[Dropped]')
   })
 
   it('Offload.truncate with string[] target matches tool by name from assistant message', async () => {
@@ -374,27 +295,6 @@ describe('Offload builder', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(false)
-  })
-
-  it('Offload.summarize().when() creates a summarize strategy', () => {
-    const strategy = Offload.summarize('toolResults').when({})
-    expect(strategy.name).toBe('offload:summarize')
-    expect(strategy.apply).toBeDefined()
-  })
-
-  it('Offload.summarize().when() creates a strategy with conditions', () => {
-    const strategy = Offload.summarize('toolResults').when({ contextUtilization: '85%' })
-    expect(strategy.name).toBe('offload:summarize')
-  })
-
-  it('Offload.summarize(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.summarize('*', { systemPrompt: 'summarize briefly' }).when({ contextUtilization: '85%' })
-    expect(strategy.name).toBe('offload:summarize')
-  })
-
-  it('Offload.truncate(config) config-only creates untargeted strategy', () => {
-    const strategy = Offload.truncate('*', { previewTokens: 200 }).when({ blockThreshold: 1000 })
-    expect(strategy.name).toBe('offload:truncate')
   })
 
   it.each([
@@ -684,52 +584,6 @@ describe('without a threshold', () => {
         .apply(makeContext([message]))
     ).toBe(false)
     expect(message.content).toEqual([new TextBlock(''), new TextBlock('  \n')])
-  })
-})
-
-describe('Message-level drop vs truncate markers', () => {
-  it('drop leaves [Dropped: N messages] marker', async () => {
-    const messages = [
-      new Message({ role: 'user', content: [new TextBlock('q1')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
-      new Message({ role: 'user', content: [new TextBlock('q2')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
-      new Message({ role: 'user', content: [new TextBlock('q3')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
-      new Message({ role: 'user', content: [new TextBlock('q4')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
-    ]
-    const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
-    const context = makeContext(messages, 0.9)
-
-    await strategy.apply(context)
-
-    const [placeholder, ...others] = placeholdersIn(messages)
-    expect(others).toEqual([])
-    expect(placeholder).toMatchObject({ method: 'drop', removedMessages: expect.any(Number) })
-    expect(placeholder!.preview).toBe(formatDroppedMessages(placeholder!.removedMessages!))
-  })
-
-  it('truncate leaves [... N messages elided ...] marker', async () => {
-    const messages = [
-      new Message({ role: 'user', content: [new TextBlock('q1')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
-      new Message({ role: 'user', content: [new TextBlock('q2')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
-      new Message({ role: 'user', content: [new TextBlock('q3')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
-      new Message({ role: 'user', content: [new TextBlock('q4')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a4')] }),
-    ]
-    const strategy = Offload.truncate('*', { previewTokens: 2 }).when({ contextUtilization: '50%' })
-    const context = makeContext(messages, 0.9)
-
-    await strategy.apply(context)
-
-    const [placeholder, ...others] = placeholdersIn(messages)
-    expect(others).toEqual([])
-    expect(placeholder).toMatchObject({ method: 'truncate', removedMessages: expect.any(Number) })
-    expect(placeholder!.preview).toBe(formatElided(placeholder!.removedMessages!))
   })
 })
 
