@@ -21,7 +21,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided } from '../../methods/truncate.js'
-import { insertMarker, repairAlternation, spliceWithPairs } from '../../history-edits.js'
+import { insertMarker, repairAlternation, spliceWithPairs } from '../../message-trimming.js'
 import { buildToolNameMap, OffloadTargetMatcher, type OffloadTarget } from './target.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 

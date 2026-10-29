@@ -1,6 +1,6 @@
 /**
- * Edits to the message history that keep it valid for the model: removing messages with their
- * tool pairs, marking the gap, and restoring user/assistant alternation.
+ * Trimming messages from the context window while keeping it valid for the model: removing them with
+ * their tool pairs, marking the gap, and restoring user/assistant alternation.
  *
  * @internal
  */

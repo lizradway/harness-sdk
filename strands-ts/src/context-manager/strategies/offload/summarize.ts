@@ -20,7 +20,7 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { collectRemovableWithPair } from '../../history-edits.js'
+import { collectRemovableWithPair } from '../../message-trimming.js'
 import { BaseOffloadStrategy, offloadPlaceholder, type OffloadConditions } from './base.js'
 import type { OffloadTarget } from './target.js'
 

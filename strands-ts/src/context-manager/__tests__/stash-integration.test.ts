@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
-import { repairAlternation } from '../history-edits.js'
+import { repairAlternation } from '../message-trimming.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
