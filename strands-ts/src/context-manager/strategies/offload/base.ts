@@ -82,8 +82,11 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   readonly name: string
 
   protected readonly _method: OffloadMethod
+  protected readonly _target: OffloadTarget | undefined
   protected readonly _matcher: OffloadTargetMatcher
   protected readonly _conditions: ResolvedConditions
+  /** Whether the eager hook processes each message as it arrives. */
+  private readonly _runsEagerly: boolean
   protected _stash: Stash | undefined
   private _warnedUnconditional = false
 
@@ -97,8 +100,10 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   constructor(method: OffloadMethod, target?: OffloadTarget, conditions?: OffloadConditions) {
     this.name = `offload:${method}`
     this._method = method
+    this._target = target
     this._matcher = new OffloadTargetMatcher(target)
     this._conditions = new ResolvedConditions(conditions)
+    this._runsEagerly = target !== '*' && !this._conditions.defersArrival
     if (conditions) this._checkRunnable()
   }
 
@@ -116,25 +121,10 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /** Builds the same strategy, with the same target and config, under new conditions. */
   protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
 
-  /** The target this strategy was built with. */
-  protected get _target(): OffloadTarget | undefined {
-    return this._matcher.target
-  }
-
-  /** Whether this strategy acts on whole messages rather than individual blocks. */
-  protected get _actsOnMessages(): boolean {
-    return this._target === '*'
-  }
-
-  /** Whether the eager hook processes each message as it arrives. */
-  private get _runsEagerly(): boolean {
-    return !this._actsOnMessages && !this._conditions.defersArrival
-  }
-
   /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
   private _checkRunnable(): void {
     const method = this._method
-    if (this._actsOnMessages && this._conditions.isEmpty) {
+    if (this._target === '*' && this._conditions.isEmpty) {
       throw new Error(
         `Offload.${method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
       )
@@ -180,7 +170,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   async apply(context: ContextState): Promise<boolean> {
     if (context.stash) this._stash = context.stash
     if (!this._conditions.reached(context)) return false
-    if (!this._actsOnMessages) return this._applyPerBlock(context)
+    if (this._target !== '*') return this._applyPerBlock(context)
     const acted = await this._applyPerMessage(context)
     if (acted) repairAlternation(context.messages)
     return acted
