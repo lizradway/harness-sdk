@@ -20,16 +20,25 @@ import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool } from './retrieval-tool.js'
 
-const AUTO_TRUNCATE_THRESHOLD = 1_500
-const AGENTIC_TRUNCATE_THRESHOLD = 8_000
 const TRUNCATE_PREVIEW_TOKENS = 750
-const AUTO_SUMMARIZE_UTILIZATION = 0.85
 
 /** @internal */
 export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
 
 /** @internal */
 export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
+
+/** The strategy pipeline of each preset. `auto` is also the default for a config that names none. */
+const PRESET_STRATEGIES: Record<ContextManagerPreset, () => ContextStrategy[]> = {
+  auto: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ threshold: 1_500 }),
+    Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 4 }),
+  ],
+  agentic: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ threshold: 8_000 }),
+    Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),
+  ],
+}
 
 /**
  * Supported values for the `contextManager` parameter.
@@ -68,14 +77,7 @@ export class ContextManager implements Plugin {
   private _retrievalTool: Tool | undefined
 
   constructor(config?: ContextManagerConfig) {
-    const userStrategies = config?.strategies
-      ? resolveStrategies(config.strategies)
-      : [
-          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AUTO_TRUNCATE_THRESHOLD,
-          }),
-          Offload.summarize('*').when({ utilization: AUTO_SUMMARIZE_UTILIZATION, preserveRecent: 4 }),
-        ]
+    const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
     this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
     const stashConfig = config?.stash
     const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
@@ -92,23 +94,14 @@ export class ContextManager implements Plugin {
   static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
     if (strategy === false || strategy === undefined) return undefined
     if (strategy instanceof ContextManager) return strategy
-    if (strategy === 'auto') {
-      return new ContextManager()
-    }
-    if (strategy === 'agentic') {
-      return new ContextManager({
-        strategies: [
-          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AGENTIC_TRUNCATE_THRESHOLD,
-          }),
-          Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),
-        ],
-      })
-    }
     if (typeof strategy === 'string') {
-      throw new Error(
-        `Unknown contextManager preset: "${strategy}". Valid presets: ${CONTEXT_MANAGER_PRESETS.map((s) => `"${s}"`).join(', ')}`
-      )
+      const preset = PRESET_STRATEGIES[strategy] as (() => ContextStrategy[]) | undefined
+      if (!preset) {
+        throw new Error(
+          `Unknown contextManager preset: "${strategy}". Valid presets: ${CONTEXT_MANAGER_PRESETS.map((s) => `"${s}"`).join(', ')}`
+        )
+      }
+      return new ContextManager({ strategies: preset() })
     }
     return new ContextManager(strategy)
   }
