@@ -1,10 +1,12 @@
 /**
- * Base offload strategy and shared infrastructure.
+ * Base offload strategy: conditions, target routing, eager hooks, and the shared per-block and
+ * message-level execution paths.
  */
 
 import { logger } from '../../../logging/logger.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
 import {
+  isOffloaded,
   Message,
   TextBlock,
   ToolResultBlock,
@@ -13,82 +15,16 @@ import {
   ReasoningBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
-import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import { formatStashRefs, type Stash } from '../../stash.js'
+import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
+import { formatElided } from '../../methods/truncate.js'
+import { insertMarker, repairAlternation, spliceWithPairs, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
-
-/**
- * Target for offload operations. This union is intentionally extensible — new
- * string-literal members can be added freely as new content categories emerge.
- *
- * - `"toolResults"` — all successful tool result blocks
- * - `"toolResultErrors"` — all failed tool result blocks
- * - `"assistantText"` — text blocks in assistant messages
- * - `"userText"` — text blocks in user messages (excluding tool results)
- * - `"media"` — image, document, video, and audio blocks outside tool results
- * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) and, prefixed with `!`, tools
- *   to exclude. A list of only exclusions acts on every other tool.
- * - `"*"` — whole messages
- *
- * @experimental
- */
-export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | 'media' | string[]
-
-/**
- * A share of a whole, written as a percent string such as `'70%'` or `'12.5%'`.
- *
- * @experimental
- */
-export type Percent = `${number}%`
-
-/**
- * Conditions that determine when and how an offload strategy fires.
- *
- * - `contextUtilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of
- *   1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
- * - `blockThreshold` sets how large each block, or each message for target `'*'`, must be to act on. A whole number
- *   selects content larger than that many tokens; `'5%'` selects content larger than 5% of the context window (10,000
- *   tokens of a 200,000-token window).
- * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
- *   `'70%'` keeps the newest 70% of them.
- *
- * With no `contextUtilization`, the strategy runs before every model call, or on each message as it arrives when the
- * target isn't `'*'` and `preserveRecent` is unset.
- *
- * Granularity: target `'*'` acts on whole messages, and `blockThreshold` measures each message. Drop removes them,
- * summarize merges each contiguous run, and truncate elides the middle or, with a `blockThreshold`, shortens each one.
- * Any other target acts on each block, and `blockThreshold` measures each block. `contextUtilization` only gates when
- * the strategy fires, and `preserveRecent` only protects the newest matching messages.
- *
- * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
- * strategy's threshold and gets skipped.
- *
- * @experimental
- */
-export interface OffloadConditions {
-  /**
-   * Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or
-   * more for conversation tokens, at most the model's `contextWindowLimit`.
-   */
-  contextUtilization?: number | Percent
-
-  /**
-   * Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the
-   * context window. Unset, there is no size check. Media the token count can't measure always passes.
-   */
-  blockThreshold?: number | Percent
-
-  /**
-   * Newest matching messages never touched: a count, or `'70%'` of the matches, rounded up so a share above 0 keeps at
-   * least one.
-   */
-  preserveRecent?: number | Percent
-}
+import { ResolvedConditions, type OffloadConditions } from './conditions.js'
+import { buildToolNameMap, isMediaBlock, mediaKind, OffloadTargetMatcher, type OffloadTarget } from './target.js'
 
 /**
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
@@ -102,395 +38,81 @@ export interface OffloadStrategy extends ContextStrategy {
   when(conditions?: OffloadConditions): OffloadStrategy
 }
 
-// --- Condition parsing ---
-
-type ConditionName = keyof OffloadConditions
-
 /**
- * A parsed condition: a count in the condition's unit, or a share of the whole.
+ * The text block that stands in for offloaded content: the preview, followed by the stash reference
+ * when the original is retrievable, with both recorded in `metadata.offloaded`.
  *
+ * @param preview - Text that stands in for the original
+ * @param stashRef - Reference the original is retrievable under, or undefined when it was not stashed
+ * @param removedMessages - Number of whole messages the placeholder stands for, when it replaces messages
  * @internal
  */
-export interface ParsedCondition {
-  /** The count, or the share in `[0, 1]`. */
-  value: number
-
-  /** Whether `value` is a share of the whole rather than a count. */
-  isShare: boolean
-}
-
-const PERCENT_PATTERN = /^\d+(\.\d+)?%$/
-
-/** Smaller whole numbers are almost always a percent written without "%", like `contextUtilization: 80`. */
-const MIN_UTILIZATION_TOKENS = 1000
-
-/** Per condition: the accepted range for a `'N%'` value's N, the smallest whole count, and the accepted forms. */
-const CONDITION_RULES = {
-  contextUtilization: {
-    percentInRange: (percent: number): boolean => percent > 0 && percent <= 100,
-    minCount: MIN_UTILIZATION_TOKENS,
-    expected: `a "N%" string up to "100%" or a whole token count of at least ${MIN_UTILIZATION_TOKENS}`,
-  },
-  blockThreshold: {
-    percentInRange: (percent: number): boolean => percent > 0 && percent < 100,
-    minCount: 1,
-    expected: 'a "N%" string below "100%" or a whole token count above 0',
-  },
-  preserveRecent: {
-    percentInRange: (percent: number): boolean => percent >= 0 && percent < 100,
-    minCount: 0,
-    expected: 'a "N%" string below "100%" or a whole message count',
-  },
-} satisfies Record<ConditionName, object>
-
-/**
- * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
- *
- * @param name - The condition name
- * @param raw - The value as supplied, or undefined when unset
- * @returns The parsed condition, or undefined when unset
- * @throws Error when the value is not accepted for the condition
- * @internal
- */
-export function parseCondition(name: ConditionName, raw: unknown): ParsedCondition | undefined {
-  if (raw === undefined) return undefined
-  const rule = CONDITION_RULES[name]
-  if (typeof raw === 'string' && PERCENT_PATTERN.test(raw)) {
-    const percent = Number(raw.slice(0, -1))
-    if (rule.percentInRange(percent)) return { value: percent / 100, isShare: true }
+export function offloadPlaceholder(preview: string, stashRef: string | undefined, removedMessages?: number): TextBlock {
+  const offloaded = {
+    preview,
+    ...(stashRef !== undefined && { ref: stashRef }),
+    ...(removedMessages !== undefined && { removedMessages }),
   }
-  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return { value: raw, isShare: false }
-  throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
-}
-
-/** Suggests the `'N%'` spelling for a rejected number that reads as a share or a percent. */
-function percentHint(raw: unknown): string {
-  if (typeof raw !== 'number' || !(raw > 0 && raw <= 100)) return ''
-  const percent = raw <= 1 ? Number((raw * 100).toPrecision(6)) : raw
-  return `; for ${percent}%, write "${percent}%"`
-}
-
-function validateConditionNames(conditions: OffloadConditions | undefined): void {
-  for (const name of Object.keys(conditions ?? {})) {
-    if (!Object.hasOwn(CONDITION_RULES, name)) {
-      throw new Error(`unknown condition "${name}": expected contextUtilization, blockThreshold, or preserveRecent`)
-    }
-  }
-}
-
-function formatConditionValue(raw: unknown): string {
-  return typeof raw === 'string' ? `"${raw}"` : String(raw)
-}
-
-/** The model's context window limit, falling back to the default `estimateUtilization` uses. */
-function effectiveWindowLimit(agent: LocalAgent): number {
-  return agent.model.getConfig().contextWindowLimit || DEFAULT_CONTEXT_WINDOW_LIMIT
+  const text = stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`
+  return new TextBlock(text, { metadata: { offloaded } })
 }
 
 /**
- * Throws if an offload target matches nothing.
- *
- * @param target - The offload target
- * @throws Error when the target is an empty array or excludes every tool it includes
- * @internal
- */
-export function validateTarget(target: OffloadTarget | undefined): void {
-  if (!Array.isArray(target)) return
-  if (target.length === 0) {
-    throw new Error('Empty array target matches nothing — provide at least one target')
-  }
-  if (resolveToolFilter(target).include?.size === 0) {
-    throw new Error(`Tool target ${JSON.stringify(target)} excludes every tool it includes, so it matches nothing`)
-  }
-}
-
-// --- Shared helpers ---
-
-/**
- * Format an `[Offloaded]` marker naming the media kind, leaving out a size the token count could not measure.
+ * The `[Offloaded]` preview for a block, naming the media kind and leaving out a size the token count could not
+ * measure.
  *
  * @internal
  */
-export function formatOffloaded(block: ContentBlock, tokens: number, stashRefs: string[]): string {
-  const refs = formatStashRefs(stashRefs)
+export function offloadedPreview(block: ContentBlock, tokens: number): string {
   if (isMediaBlock(block)) {
     const size = tokens ? `, ~${tokens} tokens` : ''
-    return `[Offloaded: ${mediaKind(block)}${size}, removed from context after it was viewed]${refs}`
+    return `[Offloaded: ${mediaKind(block)}${size}, removed from context after it was viewed]`
   }
-  const size = tokens ? `: ~${tokens} tokens` : ''
-  return `[Offloaded${size}]${refs}`
+  return tokens ? `[Offloaded: ~${tokens} tokens]` : '[Offloaded]'
 }
 
 /**
- * Builds a toolUseId → toolName map from all assistant messages in the conversation.
- * Called once per apply() to avoid O(messages × toolResults) scanning.
- */
-export function buildToolNameMap(messages: Message[]): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue
-    for (const block of message.content) {
-      if (block instanceof ToolUseBlock) {
-        map.set(block.toolUseId, block.name)
-      }
-    }
-  }
-  return map
-}
-
-export function toolMatchesTarget(
-  block: ToolResultBlock,
-  target: OffloadTarget,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): boolean {
-  if (target === '*') return true
-  if (target === 'toolResults') return block.status === 'success'
-  if (target === 'toolResultErrors') return block.status === 'error'
-
-  const toolName = toolNameMap.get(block.toolUseId)
-  if (!toolName) return false
-
-  if (toolExcludeFilter) return !toolExcludeFilter.has(toolName)
-  if (toolIncludeFilter) return toolIncludeFilter.has(toolName)
-
-  return false
-}
-
-/**
- * Whether a block is an image, document, video, or audio block.
+ * Text for the placeholder left where messages were removed, given the removed messages, or null to keep them.
  *
  * @internal
  */
-export function isMediaBlock(block: ContentBlock): block is ImageBlock | DocumentBlock | VideoBlock | AudioBlock {
-  return (
-    block instanceof ImageBlock ||
-    block instanceof DocumentBlock ||
-    block instanceof VideoBlock ||
-    block instanceof AudioBlock
-  )
-}
+export type RemovalPreview = (removed: Message[]) => string | null | Promise<string | null>
 
 /**
- * The media kind of a block, such as `'image'`, for markers.
+ * Removes messages with their tool pairs, stashes them under one reference, and leaves a placeholder at the gap. A
+ * failed stash write leaves the placeholder without a reference. Callers restore alternation once they are done.
  *
- * @internal
+ * @returns Whether anything was removed
  */
-export function mediaKind(block: ImageBlock | DocumentBlock | VideoBlock | AudioBlock): string {
-  return block.type.replace(/Block$/, '')
-}
-
-export function targetMatchesMessage(target: OffloadTarget | undefined, message: Message): boolean {
-  if (target === undefined || target === '*') return true
-  if (target === 'assistantText')
-    return message.role === 'assistant' && message.content.some((b) => b instanceof TextBlock)
-  if (target === 'userText') return message.role === 'user' && message.content.some((b) => b instanceof TextBlock)
-  return false
-}
-
-export function messageMatchesTarget(
-  message: Message,
-  target: OffloadTarget | undefined,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): boolean {
-  if (targetMatchesMessage(target, message)) return true
-  if (!target) return false
-  if (target === 'media') return message.content.some(isMediaBlock)
-
-  // Tool result targets — must be a user message with a matching tool result
-  if (message.role !== 'user') return false
-  for (const block of message.content) {
-    if (block instanceof ToolResultBlock) {
-      if (toolMatchesTarget(block, target, toolNameMap, toolIncludeFilter, toolExcludeFilter)) return true
-    }
-  }
-  return false
-}
-
-/**
- * Returns target-matching messages excluding the most recent matches.
- * First filters to only messages that match the target, then removes the tail.
- *
- * @param preserveRecent - Integer (1 or above): absolute count. Decimal (between 0 and 1 exclusive): ratio of matches to keep.
- */
-export function getOldestMatches(
+async function removeMessages(
   messages: Message[],
-  target: OffloadTarget | undefined,
-  preserveRecent: number,
-  toolNameMap: Map<string, string>,
-  toolIncludeFilter: Set<string> | undefined,
-  toolExcludeFilter: Set<string> | undefined
-): Message[] {
-  const matching = messages.filter((message) =>
-    messageMatchesTarget(message, target, toolNameMap, toolIncludeFilter, toolExcludeFilter)
-  )
-  const count =
-    preserveRecent > 0 && preserveRecent < 1 ? Math.ceil(matching.length * preserveRecent) : Math.floor(preserveRecent)
-  if (count >= matching.length) return []
-  return matching.slice(0, -count)
+  toRemove: Message[],
+  preview: RemovalPreview,
+  stash: Stash | undefined,
+  strategyName: string
+): Promise<boolean> {
+  const removed = withPairs(messages, toRemove)
+  if (removed.length === 0) return false
+  const text = await preview(removed)
+  if (text === null) return false
+
+  const { lowestIndex } = spliceWithPairs(messages, removed)
+  let stashRef: string | undefined
+  try {
+    stashRef = await stash?.storeRemoved(removed)
+  } catch (error) {
+    logger.warn(`strategy=<${strategyName}>, error=<${error}> | failed to stash removed messages`)
+  }
+  insertMarker(messages, lowestIndex, offloadPlaceholder(text, stashRef, removed.length))
+  return true
 }
 
-/**
- * Collects a message and its paired partner (if any) for safe removal.
- * If removing a message would orphan a tool-use/tool-result pair, includes the partner
- * so the pair is removed together. Never collects message 0 or the last message, which the
- * next model call responds to.
- */
-export function collectRemovableWithPair(messages: Message[], index: number): Message[] {
-  const message = messages[index]
-  if (!message) return []
-  if (index === 0 || index === messages.length - 1) return []
-
-  const result: Message[] = [message]
-
-  const hasToolResult = message.content.some((block) => block instanceof ToolResultBlock)
-  if (hasToolResult) {
-    const prev = messages[index - 1]
-    if (prev && prev.content.some((block) => block instanceof ToolUseBlock)) {
-      if (index - 1 > 0) result.push(prev)
-      else return []
-    }
-  }
-
-  const hasToolUse = message.content.some((block) => block instanceof ToolUseBlock)
-  if (hasToolUse) {
-    const next = messages[index + 1]
-    if (next && next.content.some((block) => block instanceof ToolResultBlock)) {
-      if (index + 1 < messages.length - 1) result.push(next)
-      else return []
-    }
-  }
-
-  return result
-}
-
-/**
- * Collects removable messages (with their tool pairs), then splices them from the array.
- * Returns the number of messages removed and the lowest index that was removed.
- */
-export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: number; lowestIndex: number } {
-  const toSplice = new Set<Message>()
-  for (const message of toRemove) {
-    const index = messages.indexOf(message)
-    if (index === -1) continue
-    for (const removable of collectRemovableWithPair(messages, index)) {
-      toSplice.add(removable)
-    }
-  }
-
-  let removed = 0
-  let lowestIndex = messages.length
-  for (const message of toSplice) {
-    const index = messages.indexOf(message)
-    if (index === -1) continue
-    if (index < lowestIndex) lowestIndex = index
-    messages.splice(index, 1)
-    removed++
-  }
-  return { removed, lowestIndex }
-}
-
-/**
- * Adds a removal marker as assistant content at the gap left by removed messages.
- *
- * The marker is appended to an assistant message beside the gap, which keeps that message's
- * tracking id and block indices for stash refs, or becomes its own assistant message. It never
- * joins message 0, and the last message is never removed, so a new marker never ends the history.
- */
-export function insertMarker(messages: Message[], index: number, text: string): void {
-  index = Math.max(1, Math.min(index, messages.length))
-  const block = new TextBlock(text)
-  for (const neighbor of [index - 1, index]) {
-    const carrier = messages[neighbor]
-    if (neighbor > 0 && carrier?.role === 'assistant') {
-      messages[neighbor] = new Message({
-        role: 'assistant',
-        content: [...carrier.content, block],
-        trackingId: carrier.trackingId,
-        ...(carrier.metadata ? { metadata: carrier.metadata } : {}),
-      })
-      return
-    }
-  }
-  messages.splice(index, 0, new Message({ role: 'assistant', content: [block] }))
-}
-
-/**
- * Merges consecutive same-role messages to restore the user/assistant alternation
- * that Anthropic/Bedrock APIs require. Called after message-level operations that
- * may leave gaps. Constructs new Message objects for merges to avoid mutating
- * objects that may be referenced elsewhere (session storage, event payloads).
- */
-export function repairAlternation(messages: Message[]): void {
-  let writeIndex = 0
-  for (let readIndex = 0; readIndex < messages.length; readIndex++) {
-    const current = messages[readIndex]!
-    if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
-      const prev = messages[writeIndex - 1]!
-      const pinned = prev.metadata?.custom?.pinned === true || current.metadata?.custom?.pinned === true
-      messages[writeIndex - 1] = new Message({
-        role: prev.role,
-        content: [...prev.content, ...current.content],
-        trackingId: prev.trackingId,
-        ...(pinned ? { metadata: { custom: { pinned: true } } } : {}),
-      })
-    } else {
-      messages[writeIndex] = current
-      writeIndex++
-    }
-  }
-  messages.length = writeIndex
-}
-
-/**
- * Parses a string[] target into include/exclude filter sets.
- * Entries may be prefixed with `tool::` (e.g. `'tool::bash'`).
- * An additional `!` prefix excludes (e.g. `'!tool::bash'`); a list with includes keeps the includes minus the excludes.
- */
-export function resolveToolFilter(target: OffloadTarget | undefined): { include?: Set<string>; exclude?: Set<string> } {
-  if (!Array.isArray(target)) return {}
-
-  const TOOL_PREFIX = 'tool::'
-  const includes: string[] = []
-  const excludes: string[] = []
-
-  for (const entry of target) {
-    if (entry.startsWith('!')) {
-      const name = entry.slice(1)
-      excludes.push(name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name)
-    } else {
-      includes.push(entry.startsWith(TOOL_PREFIX) ? entry.slice(TOOL_PREFIX.length) : entry)
-    }
-  }
-
-  if (includes.length > 0) {
-    const excluded = new Set(excludes)
-    return { include: new Set(includes.filter((name) => !excluded.has(name))) }
-  }
-  if (excludes.length > 0) {
-    return { exclude: new Set(excludes) }
-  }
-
-  return {}
-}
-
-// --- Base strategy class ---
-
-const NO_PRESERVE: ParsedCondition = { value: 0, isShare: false }
-
-/** Shared offload logic: condition parsing, firing, granularity, eager hooks, preserveRecent. */
+/** Shared offload logic: conditions, firing, granularity, eager hooks, preserveRecent. */
 export abstract class BaseOffloadStrategy implements OffloadStrategy {
   readonly name: string
 
-  protected readonly _target: OffloadTarget | undefined
-  protected readonly _blockThreshold: ParsedCondition | undefined
-  protected readonly _contextUtilization: ParsedCondition | undefined
-  protected readonly _preserveRecent: ParsedCondition
-  protected readonly _includeFilter: Set<string> | undefined
-  protected readonly _excludeFilter: Set<string> | undefined
+  protected readonly _matcher: OffloadTargetMatcher
+  protected readonly _conditions: ResolvedConditions
   protected _stash: Stash | undefined
   private _warnedUnconditional = false
 
@@ -502,19 +124,9 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    *   conditions are given that leave the strategy unable to run (see {@link BaseOffloadStrategy.init})
    */
   constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
-    validateTarget(target)
-    validateConditionNames(conditions)
-
     this.name = name
-    this._target = target
-    this._contextUtilization = parseCondition('contextUtilization', conditions?.contextUtilization)
-    this._blockThreshold = parseCondition('blockThreshold', conditions?.blockThreshold)
-    this._preserveRecent = parseCondition('preserveRecent', conditions?.preserveRecent) ?? NO_PRESERVE
-
-    const resolved = resolveToolFilter(target)
-    this._includeFilter = resolved.include
-    this._excludeFilter = resolved.exclude
-
+    this._matcher = new OffloadTargetMatcher(target)
+    this._conditions = new ResolvedConditions(conditions)
     if (conditions) this._checkRunnable()
   }
 
@@ -532,31 +144,9 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /** Builds the same strategy, with the same target and config, under new conditions. */
   protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
 
-  /** The method name in `Offload.<method>()`. */
-  private get _method(): string {
-    return this.name.slice(this.name.indexOf(':') + 1)
-  }
-
-  /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
-  private _checkRunnable(): void {
-    if (this._actsOnMessages && this._isUnconditional) {
-      throw new Error(
-        `Offload.${this._method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
-      )
-    }
-    if (this._target === 'media' && this._runsEagerly) {
-      throw new Error(
-        `Offload.${this._method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
-      )
-    }
-  }
-
-  private _warnUnconditional(): void {
-    if (this._warnedUnconditional || !this._isUnconditional) return
-    this._warnedUnconditional = true
-    logger.warn(
-      `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
-    )
+  /** The target this strategy was built with. */
+  protected get _target(): OffloadTarget | undefined {
+    return this._matcher.target
   }
 
   /** Whether this strategy acts on whole messages rather than individual blocks. */
@@ -564,16 +154,32 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     return this._target === '*'
   }
 
-  /** Whether no condition narrows when or what the strategy acts on. */
-  private get _isUnconditional(): boolean {
-    return (
-      this._contextUtilization === undefined && this._blockThreshold === undefined && this._preserveRecent.value === 0
-    )
-  }
-
   /** Whether the eager hook processes each message as it arrives. */
   private get _runsEagerly(): boolean {
-    return this._contextUtilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
+    return !this._actsOnMessages && !this._conditions.defersArrival
+  }
+
+  /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
+  private _checkRunnable(): void {
+    const method = this.name.slice(this.name.indexOf(':') + 1)
+    if (this._actsOnMessages && this._conditions.isEmpty) {
+      throw new Error(
+        `Offload.${method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
+      )
+    }
+    if (this._target === 'media' && this._runsEagerly) {
+      throw new Error(
+        `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
+      )
+    }
+  }
+
+  private _warnUnconditional(): void {
+    if (this._warnedUnconditional || !this._conditions.isEmpty) return
+    this._warnedUnconditional = true
+    logger.warn(
+      `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
+    )
   }
 
   /**
@@ -588,117 +194,80 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
     this._checkRunnable()
-    this._checkUtilizationFits(agent)
+    this._conditions.checkFits(agent)
     if (!this._runsEagerly) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
-      const toolNameMap = buildToolNameMap(messages)
-      const threshold = this._resolveThreshold(event.agent)
-      await this._transformBlocks(event.message, messages, toolNameMap, threshold, event.agent)
+      const threshold = this._conditions.thresholdTokens(event.agent)
+      await this._transformBlocks(event.message, messages, buildToolNameMap(messages), threshold, event.agent)
     })
   }
 
   async apply(context: ContextState): Promise<boolean> {
     if (context.stash) this._stash = context.stash
-    if (!this._utilizationReached(context)) return false
-    return this._actsOnMessages ? this._applyPerMessage(context) : this._applyPerBlock(context)
-  }
-
-  private _checkUtilizationFits(agent: LocalAgent): void {
-    const utilization = this._contextUtilization
-    if (!utilization || utilization.isShare) return
-    const limit = agent.model.getConfig().contextWindowLimit
-    if (!limit) {
-      logger.warn(
-        `contextUtilization=<${utilization.value}> | contextWindowLimit is not set on the model, skipping the context window check | set contextWindowLimit in your model config`
-      )
-      return
-    }
-    if (utilization.value <= limit) return
-    throw new Error(
-      `contextUtilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
-    )
-  }
-
-  /** Whether the utilization gate (if any) is open: on overflow, or at or above the configured share. */
-  private _utilizationReached(context: ContextState): boolean {
-    const utilization = this._contextUtilization
-    if (!utilization || context.overflow) return true
-    const share = utilization.isShare ? utilization.value : utilization.value / effectiveWindowLimit(context.agent)
-    return context.utilization >= share
-  }
-
-  /** Tokens above which content is offloaded, or undefined when `blockThreshold` is unset so no size check applies. */
-  protected _resolveThreshold(agent: LocalAgent): number | undefined {
-    const threshold = this._blockThreshold
-    if (!threshold) return undefined
-    return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
-  }
-
-  /** Per-block execution: walk each message, transform individual blocks above threshold. */
-  private async _applyPerBlock(context: ContextState): Promise<boolean> {
-    const { messages, agent } = context
-    const invocationContext = context.invocationContext
-    const toolNameMap = buildToolNameMap(messages)
-    const threshold = this._resolveThreshold(agent)
-    const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : [...messages]
-    let acted = false
-
-    for (const message of eligible) {
-      // Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
-      if (!this._runsEagerly && (message === messages[0] || message === messages.at(-1))) continue
-      const index = messages.indexOf(message)
-      if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) {
-        acted = true
-      }
-    }
-
+    if (!this._conditions.reached(context)) return false
+    if (!this._actsOnMessages) return this._applyPerBlock(context)
+    const acted = await this._applyPerMessage(context)
+    if (acted) repairAlternation(context.messages)
     return acted
   }
 
-  /** Message-level execution: remove eligible messages with pair safety. */
-  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
+  /**
+   * Message-level execution for target `'*'`, on the messages {@link _getEligibleMessages} returns. `apply` restores
+   * alternation afterwards.
+   */
+  protected abstract _applyPerMessage(context: ContextState): Promise<boolean>
 
-    const eligible = await this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
-    if (removed === 0) return false
-
-    const marker = this._makeRemovalMarker(removed)
-    if (marker) {
-      insertMarker(messages, lowestIndex, marker)
+  /** Per-block execution: walk each message, transform individual blocks above threshold. */
+  private async _applyPerBlock(context: ContextState): Promise<boolean> {
+    const { messages, agent, invocationContext } = context
+    const toolNameMap = buildToolNameMap(messages)
+    const threshold = this._conditions.thresholdTokens(agent)
+    let acted = false
+    for (const message of this._candidates(messages, toolNameMap)) {
+      // Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
+      if (!this._runsEagerly && (message === messages[0] || message === messages.at(-1))) continue
+      if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) acted = true
     }
-
-    repairAlternation(messages)
-    return true
+    return acted
   }
 
-  /** Override to insert a marker when messages are removed. Return null for no marker. */
-  protected _makeRemovalMarker(_count: number): string | null {
-    return null
+  /** Matching messages outside `preserveRecent`, without pinned ones, in history order. */
+  private _candidates(messages: Message[], toolNameMap: Map<string, string>): Message[] {
+    const matching = messages.filter((message) => this._matcher.matchesMessage(message, toolNameMap))
+    return this._conditions
+      .withoutPreserved(matching)
+      .filter((message) => !isPinned(messages, messages.indexOf(message)))
   }
 
-  /** Whether a block is eligible for offload given the current target and filters. */
-  protected _blockMatchesTarget(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
-    if (block instanceof ToolUseBlock) return false
-    if (block instanceof CachePointBlock) return false
-    if (block instanceof ReasoningBlock) return false
-    if (block instanceof TextBlock) return block.text.trim() !== '' && targetMatchesMessage(this._target, message)
-    if (block instanceof ToolResultBlock) {
-      if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
-      return (
-        this._target === undefined ||
-        toolMatchesTarget(block, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
-      )
+  /** Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0 and pinned messages. */
+  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
+    const { messages, agent } = context
+    const eligible = this._candidates(messages, buildToolNameMap(messages)).filter((message) => message !== messages[0])
+    const threshold = this._conditions.thresholdTokens(agent)
+    if (threshold === undefined) return eligible
+
+    const sizes = await Promise.all(eligible.map((message) => agent.model.countTokens([message])))
+    return eligible.filter((_message, index) => sizes[index]! > threshold)
+  }
+
+  /** Removes messages with their tool pairs and leaves a placeholder at the gap; `apply` restores alternation. */
+  protected _removeMessages(messages: Message[], toRemove: Message[], preview: RemovalPreview): Promise<boolean> {
+    return removeMessages(messages, toRemove, preview, this._stash, this.name)
+  }
+
+  /** Whether a block in `message` is content this strategy may replace. */
+  private _isOffloadable(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
+    if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
+      return false
     }
-    if (this._target === '*' || this._target === undefined) return true
-    return this._target === 'media' && isMediaBlock(block)
+    if (isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === '')) return false
+    if (block instanceof ToolResultBlock && this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) {
+      return false
+    }
+    return this._matcher.matchesBlock(block, message, toolNameMap)
   }
 
   /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens, or every one if unset. */
@@ -713,14 +282,14 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
-      if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
+      if (!this._isOffloadable(block, message, toolNameMap)) continue
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
       if (threshold !== undefined && tokens <= threshold && !(tokens === 0 && isMediaBlock(block))) continue
 
-      const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
+      const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -731,42 +300,15 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /**
-   * Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0 and pinned messages, in
-   * history order.
+   * Transform a block. Return the replacement, or null to skip.
+   * `stashRef` is the reference the original is retrievable under, or `undefined` when there is no stash.
    */
-  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
-    const { messages, agent } = context
-    const candidates =
-      this._preserveRecent.value > 0 ? this._oldestMatches(messages, buildToolNameMap(messages)) : messages
-    const eligible = candidates.filter((message) => {
-      const index = messages.indexOf(message)
-      return index > 0 && !isPinned(messages, index)
-    })
-    const threshold = this._resolveThreshold(agent)
-    if (threshold === undefined) return eligible
-
-    const sizes = await Promise.all(eligible.map((message) => agent.model.countTokens([message])))
-    return eligible.filter((_message, index) => sizes[index]! > threshold)
-  }
-
-  private _oldestMatches(messages: Message[], toolNameMap: Map<string, string>): Message[] {
-    return getOldestMatches(
-      messages,
-      this._target,
-      this._preserveRecent.value,
-      toolNameMap,
-      this._includeFilter,
-      this._excludeFilter
-    )
-  }
-
-  /** Transform a block. Return the replacement, or null to skip. */
   protected abstract _replaceBlock(
     block: ContentBlock,
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
 }
@@ -779,58 +321,37 @@ const EMERGENCY_REMOVAL_RATIO = 0.2
  * Last-resort strategy that recomputes utilization and drops the oldest 20% of messages
  * when the context window is still overflowing after all user-configured strategies have run.
  * Appended internally by ContextManager — not part of the public builder API.
+ * Pins are ignored so an all-pinned overflow is still recoverable.
  *
  * TODO: add a ContextManagerConfig flag to disable this for users who want full control.
  *
  * @internal
  */
-export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
-  constructor() {
-    super('offload:emergency-truncate', '*')
-  }
+export class EmergencyTruncateStrategy implements ContextStrategy {
+  readonly name = 'offload:emergency-truncate'
 
-  override init(_agent: LocalAgent, stash?: Stash): void {
+  private _stash: Stash | undefined
+
+  init(_agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
   }
 
-  protected _withConditions(): EmergencyTruncateStrategy {
-    return new EmergencyTruncateStrategy()
-  }
-
-  override async apply(context: ContextState): Promise<boolean> {
-    if (context.messages.length <= 3) return false
-    if (!context.overflow) {
-      const tokens = await context.agent.model.countTokens(context.messages)
-      const utilization = context.agent.model.estimateUtilization(tokens)
-      if (utilization < 1.0) return false
-    }
-    return this._applyPerMessage(context)
-  }
-
-  /** Drop the oldest 20% of non-head messages each pass. */
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
+  async apply(context: ContextState): Promise<boolean> {
+    const { messages, agent } = context
     if (messages.length <= 3) return false
+    if (context.stash) this._stash = context.stash
+    if (!context.overflow && agent.model.estimateUtilization(await agent.model.countTokens(messages)) < 1.0) {
+      return false
+    }
 
-    const removable = messages.filter((_, index) => index > 0)
+    const removable = messages.slice(1)
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const toRemove = removable.slice(0, removeCount)
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
-    if (removed === 0) return false
-
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
+    const preview = (removed: Message[]): string => formatElided(removed.length)
+    if (!(await removeMessages(messages, removable.slice(0, removeCount), preview, this._stash, this.name)))
+      return false
     repairAlternation(messages)
     return true
-  }
-
-  protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
-  }
-
-  protected async _replaceBlock(): Promise<ContentBlock | null> {
-    return null
   }
 }

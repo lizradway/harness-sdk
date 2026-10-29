@@ -1,15 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import {
-  getOldestMatches,
-  buildToolNameMap,
-  collectRemovableWithPair,
-  insertMarker,
-  parseCondition,
-  resolveToolFilter,
-  EmergencyTruncateStrategy,
-} from '../offload/base.js'
-import type { OffloadConditions, OffloadTarget, Percent } from '../offload/base.js'
+import { EmergencyTruncateStrategy, offloadPlaceholder } from '../offload/base.js'
+import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
+import type { OffloadConditions, Percent } from '../offload/conditions.js'
+import { OffloadTargetMatcher } from '../offload/target.js'
+import type { OffloadTarget } from '../offload/target.js'
+import { collectRemovableWithPair, insertMarker } from '../../message-trimming.js'
 import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -658,7 +654,7 @@ describe('Offload with media target', () => {
       ).toBe(true)
       expect(message.content).toEqual([
         new TextBlock('look at this'),
-        new TextBlock('[Dropped: image, removed from context after it was viewed]'),
+        offloadPlaceholder('[Dropped: image, removed from context after it was viewed]', undefined),
         withImage().content[2],
       ])
     })
@@ -862,44 +858,16 @@ describe('overflow bypass', () => {
   })
 })
 
-describe('getOldestMatches with ratio preserveRecent', () => {
-  function makeMessages(count: number): Message[] {
-    return Array.from(
-      { length: count },
-      (_, index) =>
-        new Message({ role: index % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg-${index}`)] })
-    )
-  }
+describe('ResolvedConditions.withoutPreserved', () => {
+  const matches = (count: number): number[] => Array.from({ length: count }, (_, index) => index)
 
-  it('integer preserveRecent keeps absolute count', () => {
-    const messages = makeMessages(10)
-    const toolNameMap = buildToolNameMap(messages)
-    const result = getOldestMatches(messages, '*', 3, toolNameMap, undefined, undefined)
-    expect(result).toHaveLength(7)
-  })
-
-  it('decimal preserveRecent keeps ratio of matches', () => {
-    const messages = makeMessages(10)
-    const toolNameMap = buildToolNameMap(messages)
-    // 0.7 = keep 70% of 10 = ceil(7) = 7 preserved, 3 returned
-    const result = getOldestMatches(messages, '*', 0.7, toolNameMap, undefined, undefined)
-    expect(result).toHaveLength(3)
-  })
-
-  it('decimal preserveRecent rounds up', () => {
-    const messages = makeMessages(3)
-    const toolNameMap = buildToolNameMap(messages)
-    // 0.5 of 3 = ceil(1.5) = 2 preserved, 1 returned
-    const result = getOldestMatches(messages, '*', 0.5, toolNameMap, undefined, undefined)
-    expect(result).toHaveLength(1)
-  })
-
-  it('decimal preserveRecent of 0.99 preserves almost all', () => {
-    const messages = makeMessages(10)
-    const toolNameMap = buildToolNameMap(messages)
-    // 0.99 of 10 = ceil(9.9) = 10 preserved, 0 returned
-    const result = getOldestMatches(messages, '*', 0.99, toolNameMap, undefined, undefined)
-    expect(result).toHaveLength(0)
+  it.each([
+    [3, 10, 7],
+    ['70%', 10, 3],
+    ['50%', 3, 1],
+    ['99%', 10, 0],
+  ] as const)('preserveRecent=%j of %i matches leaves %i', (preserveRecent, count, left) => {
+    expect(new ResolvedConditions({ preserveRecent }).withoutPreserved(matches(count))).toEqual(matches(left))
   })
 })
 
@@ -934,7 +902,7 @@ describe('collectRemovableWithPair', () => {
 describe('insertMarker', () => {
   it('inserts an assistant message between user messages', () => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new TextBlock('marker'))
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(messages[1]!.content).toEqual([new TextBlock('marker')])
   })
@@ -947,7 +915,7 @@ describe('insertMarker', () => {
       metadata: { custom: { k: 'v' } },
     })
     const messages = [text('user', 'task'), original, text('user', 'u1')]
-    insertMarker(messages, 2, 'marker')
+    insertMarker(messages, 2, new TextBlock('marker'))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
     expect(messages[1]!.trackingId).toBe('msg-1')
@@ -957,7 +925,7 @@ describe('insertMarker', () => {
 
   it('appends to the assistant message after the gap', () => {
     const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new TextBlock('marker'))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
   })
@@ -967,7 +935,7 @@ describe('insertMarker', () => {
     [5, ['task', 'u1', 'marker']],
   ])('clamps index %i into the history after message 0', (index, expected) => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, index, 'marker')
+    insertMarker(messages, index, new TextBlock('marker'))
     expect(messages.map((message) => (message.content[0] as TextBlock).text)).toEqual(expected)
   })
 })
@@ -1336,9 +1304,16 @@ describe('media conditions', () => {
 
 describe('tool list targets', () => {
   it('subtracts excluded tools from included ones in a mixed list', () => {
-    expect(resolveToolFilter(['tool::bash', 'python', '!tool::python', '!grep'])).toStrictEqual({
-      include: new Set(['bash']),
-    })
+    const matcher = new OffloadTargetMatcher(['tool::bash', 'python', '!tool::python', '!grep'])
+    const toolNameMap = new Map([
+      ['tu-bash', 'bash'],
+      ['tu-python', 'python'],
+    ])
+    const resultOf = (toolUseId: string): ToolResultBlock =>
+      new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock('x')] })
+    const message = new Message({ role: 'user', content: [] })
+    expect(matcher.matchesBlock(resultOf('tu-bash'), message, toolNameMap)).toBe(true)
+    expect(matcher.matchesBlock(resultOf('tu-python'), message, toolNameMap)).toBe(false)
   })
 
   it('rejects a list that excludes every tool it includes', () => {
@@ -1392,6 +1367,22 @@ describe('truncate whole messages', () => {
       expect(textsOf(messages)).toEqual(expected.map((value) => [label(value)]))
     }
   )
+
+  it("elides a message carrying another strategy's marker for removed messages", async () => {
+    const messages = history()
+    messages[3] = new Message({ role: 'assistant', content: [offloadPlaceholder(pad('summary'), undefined, 3)] })
+    const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+
+    expect(textsOf(messages)).toEqual([
+      ['task'],
+      [pad('m1')],
+      [pad('m2')],
+      ['[... 7 messages elided ...]'],
+      [pad('m10')],
+    ])
+  })
 
   it('stops once only its own marker is left to elide', async () => {
     const messages = history()

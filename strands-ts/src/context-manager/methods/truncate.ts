@@ -4,10 +4,19 @@
  * Replaces content with a preview (head, tail, or head-tail).
  */
 
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
+
+/**
+ * The marker left where `count` messages were removed from the context window.
+ *
+ * @internal
+ */
+export function formatElided(count: number): string {
+  return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+}
 
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
@@ -87,16 +96,23 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
 }
 
 /**
- * Creates a replacement ToolResultBlock with textual content truncated.
- * Text and JSON blocks are serialized into a preview. Opaque blocks (images, video, documents)
- * are preserved untouched — their payloads cannot be meaningfully previewed as text.
+ * Splits a tool result into a preview of its textual content and the items kept as they are.
+ * Text and JSON blocks are serialized into the preview. Opaque blocks (images, video, documents)
+ * are kept untouched — their payloads cannot be meaningfully previewed as text.
+ *
+ * @returns The preview and the kept items, or `null` when nothing would be truncated.
  */
-export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): ToolResultBlock {
+export function truncateToolResultBlock(
+  block: ToolResultBlock,
+  config?: TruncateConfig
+): { preview: string; opaque: ToolResultContent[] } | null {
   const textual: string[] = []
   const opaque: ToolResultContent[] = []
 
   for (const content of block.content) {
-    if (content instanceof TextBlock) {
+    if (isOffloaded(content)) {
+      opaque.push(content)
+    } else if (content instanceof TextBlock) {
       textual.push(content.text)
     } else if (content instanceof JsonBlock) {
       textual.push(JSON.stringify(content.toJSON()))
@@ -106,21 +122,13 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   }
 
   if (textual.length === 0) {
-    return block
+    return null
   }
 
   const fullText = textual.join('\n')
   const preview = buildPreview(fullText, textual.length, config)
 
-  if (preview === fullText) {
-    return block
-  }
-
-  return new ToolResultBlock({
-    toolUseId: block.toolUseId,
-    status: block.status,
-    content: [new TextBlock(preview), ...opaque],
-  })
+  return preview === fullText ? null : { preview, opaque }
 }
 
 /**

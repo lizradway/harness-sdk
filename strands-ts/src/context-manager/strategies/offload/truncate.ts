@@ -5,29 +5,22 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { isOffloaded, Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import {
   PREVIEW_HEAD_SHARE,
-  TRUNCATED_PREFIX,
+  formatElided,
   resolvePreviewTokens,
   truncateToolResultBlock,
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
-import { formatStashRefs, type Stash } from '../../stash.js'
-import {
-  BaseOffloadStrategy,
-  buildToolNameMap,
-  formatOffloaded,
-  insertMarker,
-  repairAlternation,
-  spliceWithPairs,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+import type { Stash } from '../../stash.js'
+import { BaseOffloadStrategy, offloadedPreview, offloadPlaceholder } from './base.js'
+import type { OffloadConditions } from './conditions.js'
+import { buildToolNameMap, type OffloadTarget } from './target.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig
@@ -39,9 +32,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
     // A percent needs the context window, so init checks it.
-    if (this._blockThreshold && !this._blockThreshold.isShare) {
-      this._checkThresholdExceedsPreview(this._blockThreshold.value, String(this._blockThreshold.value))
-    }
+    const threshold = this._conditions.blockThreshold
+    if (threshold && !threshold.isShare) this._checkThresholdExceedsPreview(threshold.value, String(threshold.value))
   }
 
   protected _withConditions(conditions: OffloadConditions): TruncateStrategy {
@@ -57,8 +49,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
    *   base strategy's conditions can't run on this agent
    */
   override init(agent: LocalAgent, stash?: Stash): void {
-    if (this._blockThreshold?.isShare) {
-      const tokens = this._resolveThreshold(agent) ?? 0
+    if (this._conditions.blockThreshold?.isShare) {
+      const tokens = this._conditions.thresholdTokens(agent)!
       this._checkThresholdExceedsPreview(tokens, `${tokens} tokens of the context window`)
     }
     super.init(agent, stash)
@@ -75,22 +67,14 @@ export class TruncateStrategy extends BaseOffloadStrategy {
    * Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. With a
    * `blockThreshold`, shortens each eligible message in place instead.
    */
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
-    if (this._blockThreshold) return this._shortenEach(context)
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    if (this._conditions.blockThreshold) return this._shortenEach(context)
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
-    const eligible = (await this._getEligibleMessages(context)).filter((message) => !hasElisionMarker(message))
-    const middle = await this._selectMiddle(eligible, context.agent)
-    if (middle.length === 0) return false
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, middle)
-    if (removed === 0) return false
-
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
-    repairAlternation(messages)
-    return true
+    const eligible = (await this._getEligibleMessages(context)).filter((message) => !carriesElisionMarker(message))
+    return this._removeMessages(context.messages, await this._selectMiddle(eligible, context.agent), ({ length }) =>
+      formatElided(length)
+    )
   }
 
   /** Previews each block over `previewTokens` in the eligible messages, leaving the newest message alone. */
@@ -105,42 +89,27 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     return acted
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
-  }
-
-  /** Skips blocks that already hold a truncation preview, so previews are never re-truncated. */
-  protected override _blockMatchesTarget(
-    block: ContentBlock,
-    message: Message,
-    toolNameMap: Map<string, string>
-  ): boolean {
-    return !isTruncated(block) && super._blockMatchesTarget(block, message, toolNameMap)
-  }
-
   protected async _replaceBlock(
     block: ContentBlock,
     tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRefs: string[]
+    stashRef: string | undefined
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
-      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
-      if (truncated !== block) {
-        return appendStashRefs(truncated, stashRefs)
-      }
-      return truncated
+      if (!truncated) return null
+      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
+      return block.withContent([offloadPlaceholder(truncated.preview, stashRef), ...truncated.opaque])
     }
     if (block instanceof TextBlock) {
-      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
       const truncated = truncateTextBlock(block, this._truncateConfig)
-      const refs = formatStashRefs(stashRefs)
-      return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
+      if (truncated === block) return null
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
+      return offloadPlaceholder(truncated.text, stashRef)
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(formatOffloaded(block, tokens, stashRefs))
+    return offloadPlaceholder(offloadedPreview(block, tokens), stashRef)
   }
 
   /** The eligible messages between the head and tail kept within the preview token budget. */
@@ -153,6 +122,15 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 }
 
+/** Whether a message carries a marker this strategy left where it elided messages; other strategies' markers don't count. */
+function carriesElisionMarker(message: Message): boolean {
+  return message.content.some((block) => {
+    if (!isOffloaded(block)) return false
+    const { preview, removedMessages } = block.metadata.offloaded
+    return removedMessages !== undefined && preview === formatElided(removedMessages)
+  })
+}
+
 /** How many leading messages fit within `budget` tokens. */
 async function countWithinBudget(messages: Message[], budget: number, agent: LocalAgent): Promise<number> {
   let total = 0
@@ -163,37 +141,4 @@ async function countWithinBudget(messages: Message[], budget: number, agent: Loc
     count++
   }
   return count
-}
-
-const ELISION_MARKER = /^\[\.\.\. \d+ messages? elided \.\.\.\]$/
-
-function hasElisionMarker(message: Message): boolean {
-  return message.content.some((block) => block instanceof TextBlock && ELISION_MARKER.test(block.text))
-}
-
-/** Matches on the text prefix, so content that genuinely starts with it is also treated as truncated. */
-function isTruncated(block: ContentBlock): boolean {
-  if (block instanceof TextBlock) return block.text.startsWith(TRUNCATED_PREFIX)
-  if (!(block instanceof ToolResultBlock)) return false
-  const firstText = block.content.find((content) => content instanceof TextBlock)
-  return firstText?.text.startsWith(TRUNCATED_PREFIX) ?? false
-}
-
-function appendStashRefs(block: ToolResultBlock, stashRefs: string[]): ToolResultBlock {
-  const refs = formatStashRefs(stashRefs)
-  if (!refs) return block
-
-  const content = [...block.content]
-  for (let index = 0; index < content.length; index++) {
-    const item = content[index]!
-    if (item instanceof TextBlock) {
-      content[index] = new TextBlock(`${item.text}\n\n[Stashed]${refs}`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content,
-      })
-    }
-  }
-  return block
 }

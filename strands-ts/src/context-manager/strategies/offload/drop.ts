@@ -5,12 +5,13 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import { formatStashRefs } from '../../stash.js'
-import { BaseOffloadStrategy, isMediaBlock, mediaKind } from './base.js'
-import type { OffloadConditions, OffloadTarget } from './base.js'
+import type { ContextState } from '../../types.js'
+import { BaseOffloadStrategy, offloadPlaceholder } from './base.js'
+import type { OffloadConditions } from './conditions.js'
+import { isMediaBlock, mediaKind, type OffloadTarget } from './target.js'
 
 export const DROPPED_MARKER = '[Dropped]'
 
@@ -23,8 +24,13 @@ export class DropStrategy extends BaseOffloadStrategy {
     return new DropStrategy(this._target, conditions)
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    const eligible = await this._getEligibleMessages(context)
+    return this._removeMessages(
+      context.messages,
+      eligible,
+      ({ length }) => `[Dropped: ${length} ${length === 1 ? 'message' : 'messages'}]`
+    )
   }
 
   protected async _replaceBlock(
@@ -32,25 +38,18 @@ export class DropStrategy extends BaseOffloadStrategy {
     _tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRefs: string[]
+    stashRef: string | undefined
   ): Promise<ContentBlock | null> {
-    const refs = formatStashRefs(stashRefs)
-    const marker = `${DROPPED_MARKER}${refs}`
-
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [new TextBlock(marker)],
-      })
+      return block.withContent([offloadPlaceholder(DROPPED_MARKER, stashRef)])
     }
     if (isMediaBlock(block)) {
       logger.debug(`trackingId=<${message.trackingId}> | dropped media block from context window`)
       // A bare marker reads to the model as media that never arrived, so it doubts what it saw.
-      return new TextBlock(`[Dropped: ${mediaKind(block)}, removed from context after it was viewed]${refs}`)
+      return offloadPlaceholder(`[Dropped: ${mediaKind(block)}, removed from context after it was viewed]`, stashRef)
     }
     logger.debug(`trackingId=<${message.trackingId}> | dropped block from context window`)
-    return new TextBlock(marker)
+    return offloadPlaceholder(DROPPED_MARKER, stashRef)
   }
 }

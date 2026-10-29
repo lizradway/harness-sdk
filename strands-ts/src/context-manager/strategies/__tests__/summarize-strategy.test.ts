@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { summarizeContent } from '../../methods/summarize.js'
+import { offloadPlaceholder } from '../offload/base.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
@@ -222,7 +223,9 @@ describe('Offload.summarize', () => {
         new ToolResultBlock({
           toolUseId: 'tool-123',
           status: 'success',
-          content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
+          content: [
+            offloadPlaceholder('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output', undefined),
+          ],
         }),
       ])
       expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })

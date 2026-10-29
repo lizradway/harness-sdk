@@ -60,6 +60,8 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
+  TextBlockMetadata,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
@@ -192,18 +194,28 @@ export {
 
 // Model provider types
 export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 
 // Decision models
-export { DecisionModel, defineQuestions, LLMDecisionModel, Uncertain } from './decisions/index.js'
+export {
+  DecisionModel,
+  DecisionsAPIDecisionModel,
+  defineQuestions,
+  LLMDecisionModel,
+  TypeSafeDecisionModel,
+  Uncertain,
+} from './decisions/index.js'
 export type {
   AnswerOf,
   AskOptions,
   DecisionInput,
   DecisionResult,
+  DecisionsAPIDecisionModelOptions,
   LLMDecisionModelOptions,
   Question,
+  TypeSafeDecisionModelOptions,
 } from './decisions/index.js'
 
 // Model routing

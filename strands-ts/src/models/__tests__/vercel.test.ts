@@ -638,6 +638,29 @@ describe('VercelModel', () => {
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
       })
 
+      it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+        const { collect, callArgs } = setupCaptureTest()
+        const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+          metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } },
+        })
+        await collect([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+
+        const [user, assistant, tool] = callArgs().prompt as any[]
+        expect(user.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(assistant.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(tool.content[0].output).toEqual({
+          type: 'content',
+          value: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }],
+        })
+      })
+
       it('formats image blocks with bytes and URL sources', async () => {
         const { collect, callArgs } = setupCaptureTest()
         await collect([
@@ -1538,8 +1561,31 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toBeUndefined()
         expect(warnOnce).toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('does not support automatic caching')
+          expect.stringContaining('is not known to support automatic caching')
         )
+      })
+
+      it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {
+        const config = { cacheConfig: {}, modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(bedrockSystemCachePoint(callArgs())).toBeDefined()
+      })
+
+      it('reads cache points for Claude from the shared model info, whatever the wrapping provider', () => {
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'amazon-bedrock', CACHING_MODEL_ID).model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBe('cachePoints')
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'amazon-bedrock', UNSUPPORTED_MODEL_ID).model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBeUndefined()
+        expect(
+          setupCaptureTest(minimalParts, undefined, 'anthropic', 'claude-sonnet-4-6').model.modelInfo.capabilities
+            ?.promptCaching
+        ).toBe('cachePoints')
       })
 
       it('caches on an unsupported model when the anthropic strategy is explicit', async () => {
@@ -1548,6 +1594,44 @@ describe('VercelModel', () => {
         await collect(userMessages)
 
         expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('describes the configured model id over the wrapped one, for gateways and inference profiles', async () => {
+        const arn = 'arn:aws:bedrock:us-west-2:123:application-inference-profile/abc123'
+        const config = { modelId: CACHING_MODEL_ID, cacheConfig: { messagesTTL: '1h' as const } }
+        const { model, collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', arn)
+
+        expect(model.modelId).toBe(CACHING_MODEL_ID)
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+        await collect(userMessages)
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default', ttl: '1h' })
+      })
+    })
+
+    describe('modelInfo override says unsupported', () => {
+      const unsupported = { modelInfo: { capabilities: { promptCaching: 'unsupported' as const } } }
+
+      it.each(['anthropic', 'openai'])('under auto, adds no markers for %s', async (provider) => {
+        const config = { cacheConfig: { ttl: '1h' as const, cacheKey: 'k' }, ...unsupported }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, provider, 'claude-sonnet-4-6')
+        await collect(userMessages, { toolSpecs })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toBeUndefined()
+        expect(messageCacheControl(args)).toBeUndefined()
+        expect(args.providerOptions?.openai).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support prompt caching')
+        )
+      })
+
+      it('still caches when the strategy is explicit', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const, messagesTTL: '1h' as const }, ...unsupported }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic', 'claude-sonnet-4-6')
+        await collect(userMessages)
+
+        expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral', ttl: '1h' })
       })
     })
 

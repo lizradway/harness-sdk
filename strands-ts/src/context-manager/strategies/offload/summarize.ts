@@ -20,16 +20,10 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { formatStashRefs } from '../../stash.js'
-import {
-  BaseOffloadStrategy,
-  collectRemovableWithPair,
-  formatOffloaded,
-  insertMarker,
-  repairAlternation,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+import { withPairs } from '../../message-trimming.js'
+import { BaseOffloadStrategy, offloadedPreview, offloadPlaceholder } from './base.js'
+import type { OffloadConditions } from './conditions.js'
+import type { OffloadTarget } from './target.js'
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
   private readonly _config: SummarizeConfig
@@ -52,45 +46,39 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /** Summarizes each contiguous run of eligible messages into its own summary, last run first. */
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
     if (!model) return false
 
-    const { messages } = context
-    if (messages.length <= 1) return false
-
-    const runs = splitIntoRuns(indicesWithPairs(messages, await this._getEligibleMessages(context)))
+    const { messages, invocationContext } = context
+    const runs = splitIntoRuns(messages, withPairs(messages, await this._getEligibleMessages(context)))
     let acted = false
     for (const run of runs.reverse()) {
-      if (await this._summarizeRun(messages, run, model, context.invocationContext)) acted = true
+      const summarize = (removed: Message[]): Promise<string | null> =>
+        this._summarizeRun(removed, model, invocationContext)
+      if (await this._removeMessages(messages, run, summarize)) acted = true
     }
-    if (acted) repairAlternation(messages)
     return acted
   }
 
-  /** Replaces the messages at `run` (contiguous indices) with one summary marker; a failure leaves the run intact. */
+  /** The summary marker text for a run of messages; a failure is logged and keeps the run. */
   private async _summarizeRun(
-    messages: Message[],
-    run: number[],
+    run: Message[],
     model: Model,
     invocationContext?: InvocationContext
-  ): Promise<boolean> {
-    const start = run[0]!
-    const runMessages = messages.slice(start, start + run.length)
+  ): Promise<string | null> {
     let summary: string | null
     try {
-      summary = await summarizeContent(flattenMessagesToContent(runMessages), model, this._config, invocationContext)
+      summary = await summarizeContent(flattenMessagesToContent(run), model, this._config, invocationContext)
     } catch (error) {
       logger.warn(`runLength=<${run.length}>, error=<${normalizeError(error).message}> | run summarization failed`)
-      return false
+      return null
     }
-    if (!summary) return false
+    if (!summary) return null
 
-    const totalTokens = await model.countTokens(runMessages)
-    messages.splice(start, runMessages.length)
-    insertMarker(messages, start, formatSummarized(`${runMessages.length} messages`, totalTokens, summary))
-    logger.debug(`summarized=<${runMessages.length}>, tokens=<${totalTokens}> | summarized message run`)
-    return true
+    const totalTokens = await model.countTokens(run)
+    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized message run`)
+    return formatSummarized(`${run.length} messages`, totalTokens, summary)
   }
 
   protected async _replaceBlock(
@@ -98,7 +86,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
@@ -114,11 +102,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [new TextBlock(`${formatSummarized('tool result', tokens, summary)}${formatStashRefs(stashRefs)}`)],
-      })
+      return block.withContent([offloadPlaceholder(formatSummarized('tool result', tokens, summary), stashRef)])
     }
 
     if (block instanceof TextBlock) {
@@ -126,19 +110,19 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return new TextBlock(`${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`)
+      return offloadPlaceholder(formatSummarized('text block', tokens, summary), stashRef)
     }
 
     if (block instanceof ImageBlock || block instanceof DocumentBlock) {
       const summary = await this._trySummarize([block], model, message, invocationContext)
       if (summary) {
         logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
-        return new TextBlock(`${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`)
+        return offloadPlaceholder(formatSummarized('media block', tokens, summary), stashRef)
       }
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(formatOffloaded(block, tokens, stashRefs))
+    return offloadPlaceholder(offloadedPreview(block, tokens), stashRef)
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
@@ -163,24 +147,15 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 }
 
-/** Sorted indices of `eligible` plus the tool-pair partners that must be removed with them. */
-function indicesWithPairs(messages: Message[], eligible: Message[]): number[] {
-  const indices = new Set<number>()
-  for (const message of eligible) {
-    for (const removable of collectRemovableWithPair(messages, messages.indexOf(message))) {
-      indices.add(messages.indexOf(removable))
-    }
-  }
-  return [...indices].sort((left, right) => left - right)
-}
-
-/** Splits sorted indices into runs of consecutive indices. */
-function splitIntoRuns(indices: number[]): number[][] {
-  const runs: number[][] = []
-  for (const index of indices) {
-    const run = runs.at(-1)
-    if (run && run.at(-1) === index - 1) run.push(index)
-    else runs.push([index])
+/** Splits `selected`, in conversation order, into runs of messages adjacent in `messages`. */
+function splitIntoRuns(messages: Message[], selected: Message[]): Message[][] {
+  const runs: Message[][] = []
+  let previousIndex = -2
+  for (const message of selected) {
+    const index = messages.indexOf(message)
+    if (index === previousIndex + 1) runs.at(-1)!.push(message)
+    else runs.push([message])
+    previousIndex = index
   }
   return runs
 }

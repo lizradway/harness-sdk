@@ -102,6 +102,14 @@ describe('adapters', () => {
       ])
     })
 
+    it('converts an offloaded block to the text the model receives', () => {
+      const blocks: ContentBlock[] = [
+        new TextBlock('[Dropped] [ref: tu-1]', { metadata: { offloaded: { ref: 'tu-1', preview: '[Dropped]' } } }),
+      ]
+
+      expect(contentBlocksToParts(blocks)).toStrictEqual([{ kind: 'text', text: '[Dropped] [ref: tu-1]' }])
+    })
+
     it.each([
       {
         desc: 'ImageBlock with bytes',
