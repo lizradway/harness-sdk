@@ -13,6 +13,7 @@ import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import { CitationsBlock } from '../types/citations.js'
 import {
   contentBlockFromData,
+  isOffloaded,
   JsonBlock,
   Message,
   TextBlock,
@@ -82,6 +83,9 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
     callback: async (input) => {
       const entries = await resolveReference(stash, input.reference)
       if (entries.length === 0) return `Error: reference not found: ${input.reference}`
+      if (entries.some(isOffloaded)) {
+        return `Error: original content for reference ${input.reference} is no longer available`
+      }
       if (!input.pattern && !input.line_range) return fullContent(entries, maxChars)
       return searchEntries(entries, input, maxChars)
     },
@@ -112,20 +116,26 @@ function isToolResultContent(entry: StashEntry): entry is ToolResultContent {
   )
 }
 
-/** Cuts the items' text to `maxChars` in total, in order; media passes through untouched. */
+/**
+ * Cuts the items' text to `maxChars` in total, in order: the item that exhausts the budget is cut and
+ * marked, later textual items are left out, and media passes through untouched.
+ */
 function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultContent[] {
   let budget = maxChars
-  return blocks.map((block) => {
+  const kept: ToolResultContent[] = []
+  for (const block of blocks) {
     const text = blockText(block)
-    if (text === null) return block
-    if (text.length <= budget) {
+    if (text === null) {
+      kept.push(block)
+    } else if (text.length <= budget) {
       budget -= text.length
-      return block
+      kept.push(block)
+    } else if (budget > 0) {
+      kept.push(new TextBlock(`${text.slice(0, budget)}\n\n[truncated]`))
+      budget = 0
     }
-    const clipped = new TextBlock(`${text.slice(0, budget)}\n\n[truncated]`)
-    budget = 0
-    return clipped
-  })
+  }
+  return kept
 }
 
 /** The lines of the entries' text that match `pattern` or fall in `line_range`. */
@@ -144,19 +154,21 @@ function searchEntries(
 }
 
 /**
- * Resolves a reference to its stored entries. An exact key resolves to one entry; an id (a tool
- * result's `toolUseId`, or `removed-<trackingId>`) resolves to every entry keyed under it, in index order.
+ * Resolves a reference to its stored entries. An id (a tool result's `toolUseId`, or
+ * `removed-<trackingId>`) resolves to every entry keyed under it, in index order; otherwise the
+ * reference is an exact key and resolves to that entry. Ids take precedence because a placeholder
+ * references a tool result by id, and an id may itself end like a key (`tool_1`).
  */
 async function resolveReference(stash: Stash, reference: string): Promise<StashEntry[]> {
-  const exact = await stash.retrieve(reference)
-  if (exact) return entriesFrom([exact])
-
   const keys = (await stash.list(`${reference}_`))
     .map((key) => ({ key, parsed: parseStashKey(key) }))
     .filter(({ parsed }) => parsed?.id === reference)
     .sort((left, right) => left.parsed!.index - right.parsed!.index)
     .map(({ key }) => key)
-  return entriesFrom(await Promise.all(keys.map((key) => stash.retrieve(key))))
+  if (keys.length > 0) return entriesFrom(await Promise.all(keys.map((key) => stash.retrieve(key))))
+
+  const exact = await stash.retrieve(reference)
+  return exact ? entriesFrom([exact]) : []
 }
 
 function entriesFrom(results: ReadonlyArray<{ data: unknown } | null>): StashEntry[] {

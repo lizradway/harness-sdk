@@ -91,6 +91,19 @@ describe('retrieval tool', () => {
       ])
     })
 
+    it('leaves out the textual items after the one that exhausts the budget', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('tool-1', 0, encodeJSON({ text: 'a'.repeat(30) }))
+      await stash.store('tool-1', 1, encodeJSON({ text: 'b'.repeat(30) }))
+      await stash.store('tool-1', 2, encodeJSON({ text: 'c'.repeat(5) }))
+      const retrievalTool = createRetrievalTool(stash, 10)
+
+      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual([
+        new TextBlock('a'.repeat(30)),
+        new TextBlock(`${'b'.repeat(10)}\n\n[truncated]`),
+      ])
+    })
+
     it('returns media as media and cuts only the text to the result budget', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       await stash.store('tool-1', 0, encodeJSON({ image: { format: 'png', source: { bytes: 'iVBORw0KGgo=' } } }))
@@ -118,6 +131,35 @@ describe('retrieval tool', () => {
       const retrievalTool = createRetrievalTool(stash)
 
       expect(await invoke(retrievalTool, { reference: 'tool-1' })).toEqual(new TextBlock('only'))
+    })
+
+    it('resolves an id before an exact key whose stem is another id', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('tool', 0, encodeJSON({ text: 'tool item 0' }))
+      await stash.store('tool', 1, encodeJSON({ text: 'tool item 1' }))
+      await stash.store('tool_1', 0, encodeJSON({ text: 'tool_1 item 0' }))
+      await stash.store('tool_1', 1, encodeJSON({ text: 'tool_1 item 1' }))
+      const retrievalTool = createRetrievalTool(stash)
+
+      expect(await invoke(retrievalTool, { reference: 'tool_1' })).toEqual([
+        new TextBlock('tool_1 item 0'),
+        new TextBlock('tool_1 item 1'),
+      ])
+      expect(await invoke(retrievalTool, { reference: 'tool_1_1' })).toEqual(new TextBlock('tool_1 item 1'))
+    })
+
+    it('refuses to serve a stored placeholder as the original', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store(
+        'tool-1',
+        0,
+        encodeJSON({ text: '[Dropped] [ref: tool-1]', offloaded: { preview: '[Dropped]', ref: 'tool-1' } })
+      )
+      const retrievalTool = createRetrievalTool(stash)
+
+      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toBe(
+        'Error: original content for reference tool-1 is no longer available'
+      )
     })
 
     it('matches the id exactly when ids contain underscores and digits', async () => {

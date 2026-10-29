@@ -135,6 +135,8 @@ export class Stash {
    */
   async ensureStashed(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
     if (block instanceof ToolResultBlock) {
+      // A result that already holds a placeholder is not the original; its items were stored before it was offloaded.
+      if (block.content.some(isOffloaded)) return block.toolUseId
       const stored = (await this.list(`${block.toolUseId}_`)).filter(
         (key) => parseStashKey(key)?.id === block.toolUseId
       )

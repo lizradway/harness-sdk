@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
+import { offloadPlaceholder } from '../strategies/offload/base.js'
 import { repairAlternation } from '../message-trimming.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
@@ -118,6 +119,32 @@ describe('Offload strategies with stash', () => {
       expect(placeholder.offloaded!.ref).toBe('tool-123')
       expect(placeholder.offloaded!.preview).toMatch(/^\[Truncated: /)
       expect(placeholder.text).toBe(`${placeholder.offloaded!.preview} [ref: tool-123]`)
+    })
+
+    it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const seeded = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tool-123',
+            status: 'success',
+            content: [offloadPlaceholder('[Truncated: 1 block, ~7,500 tokens] preview', 'tool-123')],
+          }),
+        ],
+      })
+      const messages = [seeded]
+      await stashAll(stash, messages)
+
+      await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
+
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
+        offloadPlaceholder('[Dropped]', 'tool-123'),
+      ])
+      expect(await stash.list()).toStrictEqual([])
+      expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toBe(
+        'Error: reference not found: tool-123'
+      )
     })
 
     it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
