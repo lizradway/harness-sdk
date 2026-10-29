@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { summarizeContent } from '../../methods/summarize.js'
-import { offloadPlaceholder } from '../offload/base.js'
+import { formatOffloaded, formatSummarized, offloadPlaceholder } from '../../placeholder.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 
@@ -110,7 +111,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = messages[0]!.content[0] as ToolResultBlock
-      expect((block.content[0] as TextBlock).text).toContain('[Summarized:')
+      expect((block.content[0] as TextBlock).text).toContain('Summary of multimodal content')
     })
 
     it('summarizes with agent.auxModel when the strategy has no model', async () => {
@@ -144,7 +145,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = message.content[0] as TextBlock
-      expect(block.text).toContain('[Summarized:')
+      expect(block.text).toContain('Summary of multimodal content')
     })
 
     it('summarizes user text blocks', async () => {
@@ -161,7 +162,7 @@ describe('Offload.summarize', () => {
 
       expect(result).toBe(true)
       const block = message.content[0] as TextBlock
-      expect(block.text).toContain('[Summarized:')
+      expect(block.text).toContain('Summary of multimodal content')
     })
 
     it('skips when utilization is below threshold', async () => {
@@ -224,7 +225,11 @@ describe('Offload.summarize', () => {
           toolUseId: 'tool-123',
           status: 'success',
           content: [
-            offloadPlaceholder('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output', undefined),
+            offloadPlaceholder(
+              'summarize',
+              '[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output',
+              undefined
+            ),
           ],
         }),
       ])
@@ -290,7 +295,9 @@ describe('summarizer errors', () => {
 
     expect(result).toBe(true)
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toBe(largeText)
-    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain('[Summarized:')
+    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain(
+      'Summary of multimodal content'
+    )
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<rejected>'))
     warnSpy.mockRestore()
   })
@@ -310,14 +317,12 @@ describe('summarizer errors', () => {
       blockThreshold: 10,
     })
 
+    const tokens = heuristicCountTokens([messages[1]!])
+
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[1]!.content).toEqual([
-      expect.objectContaining({
-        text: expect.stringMatching(/^\[Offloaded: video, ~\d+ tokens, removed from context after it was viewed\]/),
-      }),
-    ])
+    expect(messages[1]!.content).toEqual([offloadPlaceholder('summarize', formatOffloaded(tokens, 'video'), undefined)])
     expect(summarizeContent).not.toHaveBeenCalled()
   })
 
@@ -337,14 +342,12 @@ describe('summarizer errors', () => {
       blockThreshold: 10,
     })
 
+    const tokens = heuristicCountTokens([messages[1]!])
+
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[1]!.content).toEqual([
-      expect.objectContaining({
-        text: expect.stringMatching(/^\[Offloaded: image, ~\d+ tokens, removed from context after it was viewed\]/),
-      }),
-    ])
+    expect(messages[1]!.content).toEqual([offloadPlaceholder('summarize', formatOffloaded(tokens, 'image'), undefined)])
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<images unsupported>'))
     warnSpy.mockRestore()
   })
@@ -370,10 +373,7 @@ describe('repeated summarization', () => {
     }
     expect(messages[0]!.content).toEqual(task().content)
     expect(messages[0]!.metadata).toEqual(task().metadata)
-    const summaries = messages
-      .flatMap((message) => message.content)
-      .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
-    expect(summaries).toHaveLength(1)
+    expect(placeholdersIn(messages)).toEqual([expect.objectContaining({ method: 'summarize' })])
   })
 })
 
@@ -433,6 +433,6 @@ describe('summarizing whole messages', () => {
 
     const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
     expect(texts.slice(0, 5)).toEqual([['task'], ['a1'], ['u2'], ['a3'], ['u4']])
-    expect(texts[5]).toContain('[Summarized: 2 messages, ~2 tokens]\n\nlate run')
+    expect(texts[5]).toContain(formatSummarized('2 messages', 2, 'late run'))
   })
 })

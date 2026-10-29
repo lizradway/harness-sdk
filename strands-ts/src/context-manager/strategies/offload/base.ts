@@ -9,6 +9,7 @@ import {
   isOffloaded,
   Message,
   TextBlock,
+  type OffloadMethod,
   ToolResultBlock,
   ToolUseBlock,
   CachePointBlock,
@@ -20,11 +21,11 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
-import { formatElided } from '../../methods/truncate.js'
+import { formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { insertMarker, repairAlternation, spliceWithPairs, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
-import { buildToolNameMap, isMediaBlock, mediaKind, OffloadTargetMatcher, type OffloadTarget } from './target.js'
+import { buildToolNameMap, isMediaBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
 
 /**
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
@@ -39,44 +40,18 @@ export interface OffloadStrategy extends ContextStrategy {
 }
 
 /**
- * The text block that stands in for offloaded content: the preview, followed by the stash reference
- * when the original is retrievable, with both recorded in `metadata.offloaded`.
- *
- * @param preview - Text that stands in for the original
- * @param stashRef - Reference the original is retrievable under, or undefined when it was not stashed
- * @param removedMessages - Number of whole messages the placeholder stands for, when it replaces messages
- * @internal
- */
-export function offloadPlaceholder(preview: string, stashRef: string | undefined, removedMessages?: number): TextBlock {
-  const offloaded = {
-    preview,
-    ...(stashRef !== undefined && { ref: stashRef }),
-    ...(removedMessages !== undefined && { removedMessages }),
-  }
-  const text = stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`
-  return new TextBlock(text, { metadata: { offloaded } })
-}
-
-/**
- * The `[Offloaded]` preview for a block, naming the media kind and leaving out a size the token count could not
- * measure.
- *
- * @internal
- */
-export function offloadedPreview(block: ContentBlock, tokens: number): string {
-  if (isMediaBlock(block)) {
-    const size = tokens ? `, ~${tokens} tokens` : ''
-    return `[Offloaded: ${mediaKind(block)}${size}, removed from context after it was viewed]`
-  }
-  return tokens ? `[Offloaded: ~${tokens} tokens]` : '[Offloaded]'
-}
-
-/**
  * Text for the placeholder left where messages were removed, given the removed messages, or null to keep them.
  *
  * @internal
  */
 export type RemovalPreview = (removed: Message[]) => string | null | Promise<string | null>
+
+/** The strategy removing messages: its name for logs, its method for the placeholder, and its stash. */
+interface Remover {
+  name: string
+  method: OffloadMethod
+  stash: Stash | undefined
+}
 
 /**
  * Removes messages with their tool pairs, stashes them under one reference, and leaves a placeholder at the gap. A
@@ -88,8 +63,7 @@ async function removeMessages(
   messages: Message[],
   toRemove: Message[],
   preview: RemovalPreview,
-  stash: Stash | undefined,
-  strategyName: string
+  { name, method, stash }: Remover
 ): Promise<boolean> {
   const removed = withPairs(messages, toRemove)
   if (removed.length === 0) return false
@@ -101,9 +75,9 @@ async function removeMessages(
   try {
     stashRef = await stash?.storeRemoved(removed)
   } catch (error) {
-    logger.warn(`strategy=<${strategyName}>, error=<${error}> | failed to stash removed messages`)
+    logger.warn(`strategy=<${name}>, error=<${error}> | failed to stash removed messages`)
   }
-  insertMarker(messages, lowestIndex, offloadPlaceholder(text, stashRef, removed.length))
+  insertMarker(messages, lowestIndex, offloadPlaceholder(method, text, stashRef, removed.length))
   return true
 }
 
@@ -111,20 +85,22 @@ async function removeMessages(
 export abstract class BaseOffloadStrategy implements OffloadStrategy {
   readonly name: string
 
+  protected readonly _method: OffloadMethod
   protected readonly _matcher: OffloadTargetMatcher
   protected readonly _conditions: ResolvedConditions
   protected _stash: Stash | undefined
   private _warnedUnconditional = false
 
   /**
-   * @param name - Strategy name, `offload:<method>`
+   * @param method - Offload method; the strategy is named `offload:<method>`
    * @param target - Content the strategy acts on
    * @param conditions - When and how the strategy fires; omitted, it acts on each matching block as it arrives
    * @throws Error when the target is empty or excludes every tool it includes, a condition value is invalid, or
    *   conditions are given that leave the strategy unable to run (see {@link BaseOffloadStrategy.init})
    */
-  constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
-    this.name = name
+  constructor(method: OffloadMethod, target?: OffloadTarget, conditions?: OffloadConditions) {
+    this.name = `offload:${method}`
+    this._method = method
     this._matcher = new OffloadTargetMatcher(target)
     this._conditions = new ResolvedConditions(conditions)
     if (conditions) this._checkRunnable()
@@ -161,7 +137,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 
   /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
   private _checkRunnable(): void {
-    const method = this.name.slice(this.name.indexOf(':') + 1)
+    const method = this._method
     if (this._actsOnMessages && this._conditions.isEmpty) {
       throw new Error(
         `Offload.${method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
@@ -255,7 +231,12 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 
   /** Removes messages with their tool pairs and leaves a placeholder at the gap; `apply` restores alternation. */
   protected _removeMessages(messages: Message[], toRemove: Message[], preview: RemovalPreview): Promise<boolean> {
-    return removeMessages(messages, toRemove, preview, this._stash, this.name)
+    return removeMessages(messages, toRemove, preview, { name: this.name, method: this._method, stash: this._stash })
+  }
+
+  /** The placeholder this strategy leaves for a block it replaced. */
+  protected _placeholder(preview: string, stashRef: string | undefined): TextBlock {
+    return offloadPlaceholder(this._method, preview, stashRef)
   }
 
   /** Whether a block in `message` is content this strategy may replace. */
@@ -349,8 +330,8 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const preview = (removed: Message[]): string => formatElided(removed.length)
-    if (!(await removeMessages(messages, removable.slice(0, removeCount), preview, this._stash, this.name)))
-      return false
+    const remover = { name: this.name, method: 'truncate' as const, stash: this._stash }
+    if (!(await removeMessages(messages, removable.slice(0, removeCount), preview, remover))) return false
     repairAlternation(messages)
     return true
   }

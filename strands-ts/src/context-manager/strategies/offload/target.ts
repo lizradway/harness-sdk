@@ -25,6 +25,13 @@ export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistan
 
 type MediaBlock = ImageBlock | DocumentBlock | VideoBlock | AudioBlock
 
+const MEDIA_KINDS: Partial<Record<ContentBlock['type'], string>> = {
+  imageBlock: 'image',
+  documentBlock: 'document',
+  videoBlock: 'video',
+  audioBlock: 'audio',
+}
+
 const TOOL_PREFIX = 'tool::'
 
 /**
@@ -42,12 +49,12 @@ export function isMediaBlock(block: ContentBlock): block is MediaBlock {
 }
 
 /**
- * The media kind of a block, such as `'image'`, for markers.
+ * The media kind of a block, such as `'image'`, for markers, or undefined when it is not media.
  *
  * @internal
  */
-export function mediaKind(block: MediaBlock): string {
-  return block.type.replace(/Block$/, '')
+export function mediaKind(block: ContentBlock): string | undefined {
+  return MEDIA_KINDS[block.type]
 }
 
 /**

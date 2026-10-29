@@ -11,23 +11,23 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import {
   PREVIEW_HEAD_SHARE,
-  formatElided,
   resolvePreviewTokens,
   truncateToolResultBlock,
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
 import type { Stash } from '../../stash.js'
-import { BaseOffloadStrategy, offloadedPreview, offloadPlaceholder } from './base.js'
+import { formatElided, formatOffloaded } from '../../placeholder.js'
+import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
-import { buildToolNameMap, type OffloadTarget } from './target.js'
+import { buildToolNameMap, mediaKind, type OffloadTarget } from './target.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig
   private readonly _previewTokens: number
 
   constructor(target?: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
-    super('offload:truncate', target, conditions)
+    super('truncate', target, conditions)
     this._truncateConfig = config ?? {}
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
@@ -100,16 +100,16 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
       if (!truncated) return null
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return block.withContent([offloadPlaceholder(truncated.preview, stashRef), ...truncated.opaque])
+      return block.withContent([this._placeholder(truncated.preview, stashRef), ...truncated.opaque])
     }
     if (block instanceof TextBlock) {
       const truncated = truncateTextBlock(block, this._truncateConfig)
       if (truncated === block) return null
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
-      return offloadPlaceholder(truncated.text, stashRef)
+      return this._placeholder(truncated.text, stashRef)
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return offloadPlaceholder(offloadedPreview(block, tokens), stashRef)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef)
   }
 
   /** The eligible messages between the head and tail kept within the preview token budget. */
@@ -122,12 +122,12 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 }
 
-/** Whether a message carries a marker this strategy left where it elided messages; other strategies' markers don't count. */
+/** Whether a message carries a placeholder truncate left where it elided messages; other methods' don't count. */
 function carriesElisionMarker(message: Message): boolean {
   return message.content.some((block) => {
     if (!isOffloaded(block)) return false
-    const { preview, removedMessages } = block.metadata.offloaded
-    return removedMessages !== undefined && preview === formatElided(removedMessages)
+    const { method, removedMessages } = block.metadata.offloaded
+    return method === 'truncate' && removedMessages !== undefined
   })
 }
 

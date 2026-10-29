@@ -227,9 +227,19 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
+ * Offload method that replaced content with a placeholder.
+ */
+export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
+
+/**
  * What a text block stands in for when the context manager offloaded the original.
  */
 export interface OffloadedBlockData {
+  /**
+   * Offload method that left the placeholder.
+   */
+  method: OffloadMethod
+
   /**
    * Text that stands in for the original in the context window.
    */

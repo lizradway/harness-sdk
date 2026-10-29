@@ -1924,8 +1924,10 @@ describe('Agent', () => {
           toolUseId: 'tool-1',
           status: 'success',
           content: [
-            new TextBlock(expect.stringContaining('[Truncated:'), {
-              metadata: { offloaded: { preview: expect.stringContaining('[Truncated:'), ref: 'tool-1' } },
+            new TextBlock(expect.any(String), {
+              metadata: {
+                offloaded: { method: 'truncate', preview: expect.any(String), ref: 'tool-1' },
+              },
             }),
           ],
         }),

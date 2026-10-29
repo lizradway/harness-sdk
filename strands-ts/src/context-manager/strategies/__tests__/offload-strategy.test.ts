@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { EmergencyTruncateStrategy, offloadPlaceholder } from '../offload/base.js'
+import { EmergencyTruncateStrategy } from '../offload/base.js'
+import { formatDroppedMessages, formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
 import type { OffloadTarget } from '../offload/target.js'
 import { collectRemovableWithPair, insertMarker } from '../../message-trimming.js'
-import { TRUNCATED_PREFIX } from '../../methods/truncate.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
@@ -17,6 +17,7 @@ import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
+import { offloadedBy, placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
 
 vi.mock('../../methods/summarize.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>
@@ -122,7 +123,7 @@ describe('Offload.truncate', () => {
     expect(content).toBeInstanceOf(ToolResultBlock)
     const block = content as ToolResultBlock
     expect(block.content[0]).toBeInstanceOf(TextBlock)
-    expect((block.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect(offloadedBy(block.content[0])).toBe('truncate')
   })
 
   it('does not truncate results below threshold', async () => {
@@ -203,7 +204,7 @@ describe('Offload.truncate', () => {
 
     expect(result).toBe(true)
     const block = message.content[0] as TextBlock
-    expect(block.text).toContain('[Truncated:')
+    expect(offloadedBy(block)).toBe('truncate')
   })
 
   it('truncates user text blocks with userText target', async () => {
@@ -219,7 +220,7 @@ describe('Offload.truncate', () => {
 
     expect(result).toBe(true)
     const block = message.content[0] as TextBlock
-    expect(block.text).toContain('[Truncated:')
+    expect(offloadedBy(block)).toBe('truncate')
   })
 
   it('does not truncate user messages with assistantText target', async () => {
@@ -348,7 +349,7 @@ describe('Offload builder', () => {
 
     expect(result).toBe(true)
     const block = userMsg.content[0] as ToolResultBlock
-    expect((block.content[0] as TextBlock).text).toContain('[Truncated:')
+    expect(offloadedBy(block.content[0])).toBe('truncate')
   })
 
   it('Offload.truncate with string[] target skips non-matching tools', async () => {
@@ -415,7 +416,7 @@ describe('Offload builder', () => {
 
     expect(await strategy.apply(makeContext(messages))).toBe(true)
 
-    expect(resultTexts(messages).map((text) => text.startsWith(TRUNCATED_PREFIX))).toStrictEqual([true, true, false])
+    expect(resultMethods(messages)).toStrictEqual(['truncate', 'truncate', undefined])
   })
 
   it.each([
@@ -459,8 +460,7 @@ describe('Offload message-level with role alternation', () => {
       expect(messages).toHaveLength(8)
       for (const [index, message] of messages.entries()) {
         const dropped = message.role === role && index > 0 && index < messages.length - 1
-        const expected = dropped ? '[Dropped]' : expect.not.stringContaining('[Dropped]')
-        expect((message.content[0] as TextBlock).text).toEqual(expected)
+        expect(offloadedBy(message.content[0])).toBe(dropped ? 'drop' : undefined)
       }
     }
   )
@@ -575,7 +575,7 @@ describe('Offload with * target and threshold (acts on messages larger than thre
     expect(await Offload.truncate('*').when({ blockThreshold: 2500 }).apply(makeContext(messages))).toBe(true)
 
     expect(messages).toHaveLength(4)
-    expect((messages[1]!.content[0] as TextBlock).text.startsWith(TRUNCATED_PREFIX)).toBe(true)
+    expect(offloadedBy(messages[1]!.content[0])).toBe('truncate')
     expect((messages[2]!.content[0] as TextBlock).text).toBe('small question')
     expect((messages[3]!.content[0] as TextBlock).text).toBe(LARGE)
   })
@@ -654,7 +654,7 @@ describe('Offload with media target', () => {
       ).toBe(true)
       expect(message.content).toEqual([
         new TextBlock('look at this'),
-        offloadPlaceholder('[Dropped: image, removed from context after it was viewed]', undefined),
+        offloadPlaceholder('drop', '[Dropped: image, removed from context after it was viewed]', undefined),
         withImage().content[2],
       ])
     })
@@ -704,12 +704,10 @@ describe('Message-level drop vs truncate markers', () => {
 
     await strategy.apply(context)
 
-    const allText = messages.flatMap((m) =>
-      m.content.filter((b) => b instanceof TextBlock).map((b) => (b as TextBlock).text)
-    )
-    const markerText = allText.find((t) => t.includes('[Dropped:'))
-    expect(markerText).toBeDefined()
-    expect(markerText).toMatch(/\[Dropped: \d+ messages?\]/)
+    const [placeholder, ...others] = placeholdersIn(messages)
+    expect(others).toEqual([])
+    expect(placeholder).toMatchObject({ method: 'drop', removedMessages: expect.any(Number) })
+    expect(placeholder!.preview).toBe(formatDroppedMessages(placeholder!.removedMessages!))
   })
 
   it('truncate leaves [... N messages elided ...] marker', async () => {
@@ -728,12 +726,10 @@ describe('Message-level drop vs truncate markers', () => {
 
     await strategy.apply(context)
 
-    const allText = messages.flatMap((m) =>
-      m.content.filter((b) => b instanceof TextBlock).map((b) => (b as TextBlock).text)
-    )
-    const markerText = allText.find((t) => t.includes('elided'))
-    expect(markerText).toBeDefined()
-    expect(markerText).toMatch(/\[\.\.\. \d+ messages? elided \.\.\.\]/)
+    const [placeholder, ...others] = placeholdersIn(messages)
+    expect(others).toEqual([])
+    expect(placeholder).toMatchObject({ method: 'truncate', removedMessages: expect.any(Number) })
+    expect(placeholder!.preview).toBe(formatElided(placeholder!.removedMessages!))
   })
 })
 
@@ -1020,6 +1016,14 @@ function resultTexts(messages: Message[]): string[] {
   )
 }
 
+function resultMethods(messages: Message[]): (string | undefined)[] {
+  return messages.flatMap((message) =>
+    message.content
+      .filter((block): block is ToolResultBlock => block instanceof ToolResultBlock)
+      .map((block) => offloadedBy(block.content[0]))
+  )
+}
+
 describe('parseCondition', () => {
   const EXPECTED_FORMS = {
     contextUtilization: 'a "N%" string up to "100%" or a whole token count of at least 1000',
@@ -1132,8 +1136,6 @@ describe('condition resolution', () => {
 
 describe('granularity', () => {
   const BIG = 'x'.repeat(4000)
-  const MESSAGE_MARKERS = { drop: '[Dropped: ', truncate: 'elided', summarize: '[Summarized: ' }
-  const BLOCK_PREFIXES = { drop: '[Dropped]', truncate: TRUNCATED_PREFIX, summarize: '[Summarized: ' }
   const BUILDERS = {
     drop: (target: OffloadTarget) => Offload.drop(target),
     truncate: (target: OffloadTarget) => Offload.truncate(target, { previewTokens: 100 }),
@@ -1175,15 +1177,17 @@ describe('granularity', () => {
         expect(acted).toBe(true)
         if (outcome === 'messages' || outcome === 'large messages') {
           expect(messages.length).toBeLessThan(history().length)
-          expect(textsOf(messages).flat().join('\n')).toContain(MESSAGE_MARKERS[method])
+          expect(placeholdersIn(messages)).toContainEqual(
+            expect.objectContaining({ method, removedMessages: expect.any(Number) })
+          )
           if (outcome === 'large messages') expect(textsOf(messages).flat()).toContain('end')
           return
         }
         expect(messages).toHaveLength(history().length)
         for (const index of [1, 2, 3, 4]) {
-          const blockText = (messages[index]!.content[0] as TextBlock).text
-          if (outcome.includes(index)) expect(blockText.startsWith(BLOCK_PREFIXES[method])).toBe(true)
-          else expect(blockText).toBe(BIG)
+          const block = messages[index]!.content[0]
+          if (outcome.includes(index)) expect(offloadedBy(block)).toBe(method)
+          else expect((block as TextBlock).text).toBe(BIG)
         }
       }
     )
@@ -1195,7 +1199,7 @@ describe('granularity', () => {
         await BUILDERS[method]('userText').when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))
       ).toBe(true)
 
-      expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
+      expect(offloadedBy(messages[2]!.content[0])).toBe(method)
       expect((messages.at(-1)!.content[0] as TextBlock).text).toBe(BIG)
     })
 
@@ -1207,7 +1211,7 @@ describe('granularity', () => {
       ).toBe(true)
 
       expect((messages[0]!.content[0] as TextBlock).text).toBe(BIG)
-      expect((messages[2]!.content[0] as TextBlock).text.startsWith(BLOCK_PREFIXES[method])).toBe(true)
+      expect(offloadedBy(messages[2]!.content[0])).toBe(method)
     })
   })
 })
@@ -1331,7 +1335,7 @@ describe('truncate block threshold', () => {
     expect(await strategy.apply(makeContext(messages, 0))).toBe(true)
     const firstPass = resultTexts(messages)
     expect(firstPass[0]).toBe('x'.repeat(400))
-    expect(firstPass[1]!.startsWith(TRUNCATED_PREFIX)).toBe(true)
+    expect(resultMethods(messages)).toStrictEqual([undefined, 'truncate'])
     expect(Math.ceil(firstPass[1]!.length / 4)).toBeGreaterThan(100)
 
     expect(await strategy.apply(makeContext(messages, 0))).toBe(false)
@@ -1370,7 +1374,10 @@ describe('truncate whole messages', () => {
 
   it("elides a message carrying another strategy's marker for removed messages", async () => {
     const messages = history()
-    messages[3] = new Message({ role: 'assistant', content: [offloadPlaceholder(pad('summary'), undefined, 3)] })
+    messages[3] = new Message({
+      role: 'assistant',
+      content: [offloadPlaceholder('summarize', pad('summary'), undefined, 3)],
+    })
     const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
 
     expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)

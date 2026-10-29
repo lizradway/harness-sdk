@@ -6,17 +6,7 @@
 
 import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
-
-export const TRUNCATED_PREFIX = '[Truncated:'
-
-/**
- * The marker left where `count` messages were removed from the context window.
- *
- * @internal
- */
-export function formatElided(count: number): string {
-  return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
-}
+import { formatTruncated } from '../placeholder.js'
 
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
@@ -84,9 +74,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
   const marker = `[... ${elided.toLocaleString('en-US')} chars elided ...]`
   const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
-  const result =
-    `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')} tokens]\n\n` +
-    preview
+  const result = formatTruncated(blockCount, Math.ceil(totalChars / CHARS_PER_TOKEN), preview)
 
   if (result.length >= totalChars) {
     return fullText

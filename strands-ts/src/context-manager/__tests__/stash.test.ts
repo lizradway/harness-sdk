@@ -157,14 +157,20 @@ describe('Stash', () => {
         role: 'user',
         content: [
           new TextBlock('[Dropped] [ref: track-0_0]', {
-            metadata: { offloaded: { ref: 'track-0_0', preview: '[Dropped]' } },
+            metadata: { offloaded: { method: 'drop', ref: 'track-0_0', preview: '[Dropped]' } },
           }),
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
             content: [
               new TextBlock('[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]', {
-                metadata: { offloaded: { ref: 'tu-1', preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1' } },
+                metadata: {
+                  offloaded: {
+                    method: 'truncate',
+                    ref: 'tu-1',
+                    preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1',
+                  },
+                },
               }),
               new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
             ],

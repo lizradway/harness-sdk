@@ -46,7 +46,7 @@ describe.each([openaiResponses, openai, bedrock, anthropic])(
         expect(streamSpy).toHaveBeenCalledTimes(1)
         const summaries = agent.messages
           .flatMap((message) => message.content)
-          .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized: 2 messages'))
+          .filter((block) => block instanceof TextBlock && block.metadata?.offloaded?.removedMessages === 2)
         expect(summaries).toHaveLength(1)
         expect((summaries[0] as TextBlock).text).toMatch(/lookup_order|ORD-48213/)
       },

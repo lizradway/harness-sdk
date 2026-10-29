@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
-import { offloadPlaceholder } from '../strategies/offload/base.js'
+import { offloadPlaceholder } from '../placeholder.js'
 import { repairAlternation } from '../message-trimming.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
@@ -115,10 +115,8 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const placeholder = block.content[0] as TextBlock
-      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
-      expect(placeholder.metadata!.offloaded!.ref).toBe('tool-123')
-      expect(placeholder.metadata!.offloaded!.preview).toMatch(/^\[Truncated: /)
-      expect(placeholder.text).toBe(`${placeholder.metadata!.offloaded!.preview} [ref: tool-123]`)
+      const { preview } = placeholder.metadata!.offloaded!
+      expect(placeholder).toEqual(offloadPlaceholder('truncate', preview, 'tool-123'))
     })
 
     it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
@@ -129,7 +127,7 @@ describe('Offload strategies with stash', () => {
           new ToolResultBlock({
             toolUseId: 'tool-123',
             status: 'success',
-            content: [offloadPlaceholder('[Truncated: 1 block, ~7,500 tokens] preview', 'tool-123')],
+            content: [offloadPlaceholder('truncate', '[Truncated: 1 block, ~7,500 tokens] preview', 'tool-123')],
           }),
         ],
       })
@@ -139,7 +137,7 @@ describe('Offload strategies with stash', () => {
       await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
 
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
-        offloadPlaceholder('[Dropped]', 'tool-123'),
+        offloadPlaceholder('drop', '[Dropped]', 'tool-123'),
       ])
       expect(await stash.list()).toStrictEqual([])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toBe(
@@ -160,7 +158,7 @@ describe('Offload strategies with stash', () => {
       expect(actedAgain).toBe(true)
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
         new TextBlock('[Dropped] [ref: tool-123]', {
-          metadata: { offloaded: { ref: 'tool-123', preview: '[Dropped]' } },
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped]' } },
         }),
       ])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
@@ -216,7 +214,7 @@ describe('Offload strategies with stash', () => {
       const block = messages[0]!.content[0] as ToolResultBlock
       expect(block.content).toEqual([
         new TextBlock('[Dropped] [ref: tool-123]', {
-          metadata: { offloaded: { ref: 'tool-123', preview: '[Dropped]' } },
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped]' } },
         }),
       ])
       expect((block.content[0] as TextBlock).text).toBe('[Dropped] [ref: tool-123]')
@@ -236,7 +234,9 @@ describe('Offload strategies with stash', () => {
 
       expect(acted).toBe(true)
       const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
-        metadata: { offloaded: { ref: 'removed-m1', preview: '[Dropped: 2 messages]', removedMessages: 2 } },
+        metadata: {
+          offloaded: { method: 'drop', ref: 'removed-m1', preview: '[Dropped: 2 messages]', removedMessages: 2 },
+        },
       })
       expect(messages.map((message) => message.content)).toEqual([
         [new TextBlock('start')],
@@ -267,7 +267,7 @@ describe('Offload strategies with stash', () => {
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
         new TextBlock('[Dropped: 2 messages]', {
-          metadata: { offloaded: { preview: '[Dropped: 2 messages]', removedMessages: 2 } },
+          metadata: { offloaded: { method: 'drop', preview: '[Dropped: 2 messages]', removedMessages: 2 } },
         }),
       ])
     })

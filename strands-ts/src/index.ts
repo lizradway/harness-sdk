@@ -68,6 +68,7 @@ export type {
   StopReason,
   TextBlockData,
   OffloadedBlockData,
+  OffloadMethod,
   TextBlockMetadata,
   ToolUseBlockData,
   ToolResultBlockData,

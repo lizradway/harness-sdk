@@ -3,7 +3,8 @@
  * {@link ContextState} over a mock agent.
  */
 
-import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { isOffloaded, Message, TextBlock, ToolResultBlock } from '../types/messages.js'
+import type { OffloadedBlockData, OffloadMethod } from '../types/messages.js'
 import type { Agent } from '../agent/agent.js'
 import type { ContextState } from '../context-manager/types.js'
 import type { Stash } from '../context-manager/stash.js'
@@ -15,6 +16,20 @@ export function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Mes
     role: 'user',
     content: [new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock(text)] })],
   })
+}
+
+/** The offload method that left `block` as a placeholder, or undefined when it is not one. */
+export function offloadedBy(block: unknown): OffloadMethod | undefined {
+  return isOffloaded(block) ? block.metadata.offloaded.method : undefined
+}
+
+/** The metadata of every placeholder in `messages`, including those inside tool results, in history order. */
+export function placeholdersIn(messages: Message[]): OffloadedBlockData[] {
+  return messages
+    .flatMap((message) => message.content)
+    .flatMap((block): unknown[] => (block instanceof ToolResultBlock ? block.content : [block]))
+    .filter(isOffloaded)
+    .map((block) => block.metadata.offloaded)
 }
 
 /** Counts text at four characters per token and everything else at two characters per token of its JSON. */

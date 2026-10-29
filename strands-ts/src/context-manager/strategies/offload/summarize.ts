@@ -15,21 +15,21 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import {
   flattenMessagesToContent,
-  formatSummarized,
   summarizeContent,
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
 import { withPairs } from '../../message-trimming.js'
-import { BaseOffloadStrategy, offloadedPreview, offloadPlaceholder } from './base.js'
+import { formatOffloaded, formatSummarized } from '../../placeholder.js'
+import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
-import type { OffloadTarget } from './target.js'
+import { mediaKind, type OffloadTarget } from './target.js'
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
   private readonly _config: SummarizeConfig
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
-    super('offload:summarize', target, conditions)
+    super('summarize', target, conditions)
     this._config = config ?? {}
   }
 
@@ -102,7 +102,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
-      return block.withContent([offloadPlaceholder(formatSummarized('tool result', tokens, summary), stashRef)])
+      return block.withContent([this._placeholder(formatSummarized('tool result', tokens, summary), stashRef)])
     }
 
     if (block instanceof TextBlock) {
@@ -110,19 +110,19 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return offloadPlaceholder(formatSummarized('text block', tokens, summary), stashRef)
+      return this._placeholder(formatSummarized('text block', tokens, summary), stashRef)
     }
 
     if (block instanceof ImageBlock || block instanceof DocumentBlock) {
       const summary = await this._trySummarize([block], model, message, invocationContext)
       if (summary) {
         logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
-        return offloadPlaceholder(formatSummarized('media block', tokens, summary), stashRef)
+        return this._placeholder(formatSummarized('media block', tokens, summary), stashRef)
       }
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return offloadPlaceholder(offloadedPreview(block, tokens), stashRef)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef)
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
