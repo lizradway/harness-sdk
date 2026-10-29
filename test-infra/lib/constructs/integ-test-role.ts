@@ -263,8 +263,21 @@ export class IntegTestRole extends Construct {
       }),
     );
 
-    // S3VectorSearchStrategy integration tests create and tear down their own vector bucket
-    // and index, scoped to the test's bucket-name prefix.
+    // S3VectorSearchStrategy integration tests create and tear down their own S3 bucket, vector
+    // bucket and index, scoped to the test's bucket-name prefix.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          's3:CreateBucket',
+          's3:DeleteBucket',
+          's3:ListBucket',
+          's3:PutObject',
+          's3:GetObject',
+          's3:DeleteObject',
+        ],
+        resources: ['arn:aws:s3:::test-strands-s3v-*'],
+      }),
+    );
     this.role.addToPolicy(
       new iam.PolicyStatement({
         actions: [
