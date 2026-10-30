@@ -76,6 +76,11 @@ class TestBedrockEmbedder:
         assert config.read_timeout == 5
         assert config.user_agent_extra == "strands-agents"
 
+    def test_keeps_a_caller_supplied_user_agent(self, session):
+        BedrockEmbedder(boto_session=session, boto_client_config=Config(user_agent_extra="my-app"))
+
+        assert session.client.call_args.kwargs["config"].user_agent_extra == "my-app"
+
     def test_raises_when_both_region_and_session_are_provided(self, session):
         with pytest.raises(StorageError, match="Cannot specify both region_name and boto_session"):
             BedrockEmbedder(region_name="us-east-1", boto_session=session)

@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.config import Config
 
 from strands.storage import S3Storage
 from strands.storage.search import Embedder, S3VectorSearchStrategy
@@ -285,3 +286,19 @@ class TestDefaults:
         session.client.assert_called_once()
         assert session.client.call_args.args == ("s3vectors",)
         assert session.client.call_args.kwargs["config"].user_agent_extra == "strands-agents"
+
+    @pytest.mark.asyncio
+    async def test_adds_the_user_agent_to_a_caller_config(self, session, embedder, storage):
+        strategy = make_strategy(session, embedder, boto_client_config=Config(read_timeout=5))
+        await strategy.search(storage, "a")
+
+        config = session.client.call_args.kwargs["config"]
+        assert config.read_timeout == 5
+        assert config.user_agent_extra == "strands-agents"
+
+    @pytest.mark.asyncio
+    async def test_keeps_a_caller_supplied_user_agent(self, session, embedder, storage):
+        strategy = make_strategy(session, embedder, boto_client_config=Config(user_agent_extra="my-app"))
+        await strategy.search(storage, "a")
+
+        assert session.client.call_args.kwargs["config"].user_agent_extra == "my-app"
