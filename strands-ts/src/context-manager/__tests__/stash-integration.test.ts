@@ -141,7 +141,7 @@ describe('Offload strategies with stash', () => {
       ])
       expect(await stash.list()).toStrictEqual([])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toBe(
-        'Error: reference not found: tool-123'
+        'Error: reference not found: tool-123. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
       )
     })
 

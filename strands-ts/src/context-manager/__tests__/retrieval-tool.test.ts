@@ -65,8 +65,17 @@ describe('retrieval tool', () => {
     const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
     const retrievalTool = createRetrievalTool(stash)
 
-    const result = (await invoke(retrievalTool, { reference: 'nonexistent' })) as string
-    expect(result).toContain('Error: reference not found')
+    const result = (await invoke(retrievalTool, { reference: '[ref: nonexistent]' })) as string
+    expect(result).toBe(
+      'Error: reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
+    )
+  })
+
+  it('ignores whitespace around the reference', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    await stash.store('tool-1', 0, encodeJSON({ text: 'original' }))
+
+    expect(await invoke(createRetrievalTool(stash), { reference: ' tool-1 ' })).toEqual(new TextBlock('original'))
   })
 
   describe('a tool result referenced by its toolUseId', () => {

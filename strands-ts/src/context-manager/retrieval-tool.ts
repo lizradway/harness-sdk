@@ -40,7 +40,7 @@ const DEFAULT_MAX_RESULT_TOKENS = 10_000
 const CHARS_PER_TOKEN = 4
 
 const retrievalInputSchema = z.object({
-  reference: z.string().describe('The reference key from the offload placeholder.'),
+  reference: z.string().describe('The <id> from the "[ref: <id>]" at the end of the offload placeholder.'),
   pattern: z.string().optional().describe('Regex or keyword to grep for. Returns matching lines with context.'),
   line_range: z
     .object({
@@ -69,8 +69,8 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
     description:
       'Retrieve content that was offloaded from context.\n\n' +
       'When content is offloaded (truncated, dropped, or summarized), the original is ' +
-      'persisted and a reference key is left in its place. Use this tool with that ' +
-      'reference to access the original content.\n\n' +
+      'persisted and the placeholder left in its place ends in "[ref: <id>]". Pass that ' +
+      '<id> as the reference to access the original content.\n\n' +
       'Options:\n' +
       '  - pattern: regex/keyword to find matching lines with context\n' +
       '  - line_range: { start, end } to read a specific span\n' +
@@ -81,10 +81,13 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       '  { reference: "toolu_abc" }',
     inputSchema: retrievalInputSchema,
     callback: async (input) => {
-      const entries = await resolveReference(stash, input.reference)
-      if (entries.length === 0) return `Error: reference not found: ${input.reference}`
+      const reference = input.reference.trim()
+      const entries = await resolveReference(stash, reference)
+      if (entries.length === 0) {
+        return `Error: reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]".`
+      }
       if (entries.some(isOffloaded)) {
-        return `Error: original content for reference ${input.reference} is no longer available`
+        return `Error: original content for reference ${reference} is no longer available`
       }
       if (!input.pattern && !input.line_range) return fullContent(entries, maxChars)
       return searchEntries(entries, input, maxChars)
