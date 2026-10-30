@@ -5,7 +5,7 @@
 import { TextBlock, type OffloadMethod } from '../types/messages.js'
 
 /** A bare marker reads to the model as media that never arrived, so it doubts what it saw. */
-const AFTER_VIEWING = 'removed from context after it was viewed'
+const AFTER_RECEIVING = 'removed from context after it was received'
 
 /**
  * The text block that stands in for offloaded content: the preview, followed by the stash reference
@@ -39,7 +39,7 @@ export function offloadPlaceholder(
  * @internal
  */
 export function formatDropped(mediaKind?: string): string {
-  return marker('Dropped', mediaKind, mediaKind && AFTER_VIEWING)
+  return marker('Dropped', mediaKind, mediaKind && AFTER_RECEIVING)
 }
 
 /**
@@ -57,7 +57,7 @@ export function formatDroppedMessages(count: number): string {
  * @internal
  */
 export function formatOffloaded(tokens: number, mediaKind?: string): string {
-  return marker('Offloaded', mediaKind, approxTokens(tokens), mediaKind && AFTER_VIEWING)
+  return marker('Offloaded', mediaKind, approxTokens(tokens), mediaKind && AFTER_RECEIVING)
 }
 
 /**

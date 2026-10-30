@@ -514,7 +514,7 @@ describe('Offload with media target', () => {
 
     expect(result).toBe(true)
     expect(message.content[0]).toEqual(new TextBlock('look at this'))
-    expect((message.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was viewed]')
+    expect((message.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was received]')
     expect(message.content[2]).toEqual(withImage().content[2])
   })
 
@@ -525,7 +525,7 @@ describe('Offload with media target', () => {
 
     await Offload.drop('media').when({ preserveRecent: 1 }).apply(makeContext(messages))
 
-    expect((older.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was viewed]')
+    expect((older.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was received]')
     expect(newer.content[1]).toBeInstanceOf(ImageBlock)
   })
 
@@ -551,7 +551,7 @@ describe('Offload with media target', () => {
       ).toBe(true)
       expect(message.content).toEqual([
         new TextBlock('look at this'),
-        offloadPlaceholder('drop', '[Dropped: image, removed from context after it was viewed]', undefined),
+        offloadPlaceholder('drop', '[Dropped: image, removed from context after it was received]', undefined),
         withImage().content[2],
       ])
     })
@@ -565,7 +565,7 @@ describe('Offload with media target', () => {
           .apply(withHeuristicModel([text('user', 'task'), message, text('assistant', 'b')]))
       ).toBe(true)
       expect((message.content[1] as TextBlock).text).toBe(
-        '[Offloaded: image, removed from context after it was viewed]'
+        '[Offloaded: image, removed from context after it was received]'
       )
     })
   })

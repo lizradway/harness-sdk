@@ -31,7 +31,7 @@ describe('offloadPlaceholder', () => {
 describe('markers', () => {
   it.each([
     ['a dropped block', formatDropped(), '[Dropped]'],
-    ['dropped media', formatDropped('image'), '[Dropped: image, removed from context after it was viewed]'],
+    ['dropped media', formatDropped('image'), '[Dropped: image, removed from context after it was received]'],
     ['one dropped message', formatDroppedMessages(1), '[Dropped: 1 message]'],
     ['dropped messages', formatDroppedMessages(3), '[Dropped: 3 messages]'],
     ['an offloaded block', formatOffloaded(2525), '[Offloaded: ~2,525 tokens]'],
@@ -39,9 +39,9 @@ describe('markers', () => {
     [
       'offloaded media',
       formatOffloaded(2525, 'document'),
-      '[Offloaded: document, ~2,525 tokens, removed from context after it was viewed]',
+      '[Offloaded: document, ~2,525 tokens, removed from context after it was received]',
     ],
-    ['unmeasured media', formatOffloaded(0, 'image'), '[Offloaded: image, removed from context after it was viewed]'],
+    ['unmeasured media', formatOffloaded(0, 'image'), '[Offloaded: image, removed from context after it was received]'],
     ['a summary', formatSummarized('tool result', 2525, 'short'), '[Summarized: tool result, ~2,525 tokens]\n\nshort'],
     [
       'an unmeasured summary',
