@@ -320,9 +320,12 @@ describe('Offload builder', () => {
     expect(resultMethods(messages)).toStrictEqual(['truncate', 'truncate', undefined])
   })
 
-  it('rejects on init a bare * strategy that cannot run without conditions', () => {
-    const strategy = Offload.drop('*')
-    expect(() => strategy.init!(createMockAgent())).toThrow('("*") would act on every message')
+  it.each([
+    ['*', '("*") would act on every message'],
+    ['media', '("media") would remove media'],
+  ] as const)('rejects on init a bare %s strategy that cannot run without conditions', (target, error) => {
+    const strategy = Offload.drop(target)
+    expect(() => strategy.init!(createMockAgent())).toThrow(error)
   })
 
   it('throws on empty array target', () => {
@@ -1148,6 +1151,30 @@ describe('whole-message conditions', () => {
     )
 
     it.each([{ contextUtilization: '50%' }, { preserveRecent: 1 }, { blockThreshold: 2500 }] as OffloadConditions[])(
+      'accepts %j',
+      (conditions) => {
+        expect(() => builder().when(conditions)).not.toThrow()
+      }
+    )
+  })
+})
+
+describe('media conditions', () => {
+  describe.each([
+    ['drop', () => Offload.drop('media')],
+    ['truncate', () => Offload.truncate('media')],
+    ['summarize', () => Offload.summarize('media')],
+  ] as const)('Offload.%s("media")', (method, builder) => {
+    it.each([{}, { blockThreshold: 100 }, { preserveRecent: '0%' }] as OffloadConditions[])(
+      'rejects %j',
+      (conditions) => {
+        expect(() => builder().when(conditions)).toThrow(
+          `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
+        )
+      }
+    )
+
+    it.each([{ contextUtilization: '80%' }, { preserveRecent: 1 }] as OffloadConditions[])(
       'accepts %j',
       (conditions) => {
         expect(() => builder().when(conditions)).not.toThrow()

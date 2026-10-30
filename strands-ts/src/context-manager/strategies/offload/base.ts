@@ -29,7 +29,7 @@ import { buildToolNameMap, isMediaBlock, OffloadTargetMatcher, type OffloadTarge
 
 /**
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
- * arrives, including the one the model answers next; target `'*'` needs conditions from `.when()`. A
+ * arrives, including the one the model answers next; targets `'*'` and `'media'` need conditions from `.when()`. A
  * strategy keeps per-agent state, so give each agent its own.
  *
  * @experimental
@@ -123,11 +123,17 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /** Builds the same strategy, with the same target and config, under new conditions. */
   protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
 
-  /** Throws if the conditions leave the strategy acting on every message. */
+  /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
   private _checkRunnable(): void {
+    const method = this._method
     if (this._target === '*' && this._conditions.isEmpty) {
       throw new Error(
-        `Offload.${this._method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
+        `Offload.${method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
+      )
+    }
+    if (this._target === 'media' && this._runsEagerly) {
+      throw new Error(
+        `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
       )
     }
   }
@@ -138,7 +144,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
    * @throws Error when a whole-message strategy has none of `contextUtilization`, `blockThreshold`, or
-   *   `preserveRecent`, or `contextUtilization` is a token count larger than the model's `contextWindowLimit`
+   *   `preserveRecent`, a `'media'` strategy has neither `contextUtilization` nor `preserveRecent`, or
+   *   `contextUtilization` is a token count larger than the model's `contextWindowLimit`
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash

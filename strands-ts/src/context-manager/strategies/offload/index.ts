@@ -39,8 +39,9 @@ interface OffloadNamespace {
  * Offload strategies — reduce content in the context window.
  *
  * Target `'*'` acts on whole messages; any other target acts on each block. `blockThreshold` measures whichever the
- * target acts on, and `contextUtilization` only gates when the strategy fires. Target `'*'` needs conditions from
- * `.when()`; any other target without them acts on each matching block as it arrives, before the model reads it.
+ * target acts on, and `contextUtilization` only gates when the strategy fires. Targets `'*'` and `'media'` need
+ * conditions from `.when()`; any other target without them acts on each matching block as it arrives, before the model
+ * reads it.
  *
  * @example
  * ```typescript
