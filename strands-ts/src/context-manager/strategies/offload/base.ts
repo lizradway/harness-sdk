@@ -29,7 +29,7 @@ import { buildToolNameMap, isMediaBlock, OffloadTargetMatcher, type OffloadTarge
 
 /**
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
- * arrives, including the one the model answers next; targets `'*'` and `'media'` need conditions from `.when()`. A
+ * arrives, including the one the model answers next; target `'*'` needs conditions from `.when()`. A
  * strategy keeps per-agent state, so give each agent its own.
  *
  * @experimental
@@ -39,13 +39,23 @@ export interface OffloadStrategy extends ContextStrategy {
   when(conditions?: OffloadConditions): OffloadStrategy
 }
 
-/** Placeholder text for the messages about to be removed, with their tool pairs, or null to keep them. */
+/**
+ * Writes the placeholder text for messages about to be removed, such as `[Dropped: 3 messages]` or a summary of them.
+ * It gets the messages with their tool pairs added, so its count or summary covers everything that leaves. Returning
+ * null keeps the messages, as summarize does when its model call fails.
+ */
 type PlaceholderText = (removed: Message[]) => Promise<string | null>
 
-/** The strategy removing messages: its name for logs, its method for the placeholder, and its stash. */
+/**
+ * What {@link removeMessages} needs from the strategy calling it. It is a function rather than a method so that
+ * {@link EmergencyTruncateStrategy}, which is not a {@link BaseOffloadStrategy}, can share it.
+ */
 interface Remover {
+  /** Strategy name, logged when the stash write fails. */
   name: string
+  /** Method recorded in the placeholder's `metadata.offloaded`. */
   method: OffloadMethod
+  /** Where the removed messages are stored for retrieval, or undefined when there is no stash. */
   stash: Stash | undefined
 }
 
@@ -121,17 +131,11 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /** Builds the same strategy, with the same target and config, under new conditions. */
   protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
 
-  /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
+  /** Throws if the conditions leave the strategy acting on every message. */
   private _checkRunnable(): void {
-    const method = this._method
     if (this._target === '*' && this._conditions.isEmpty) {
       throw new Error(
-        `Offload.${method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
-      )
-    }
-    if (this._target === 'media' && this._runsEagerly) {
-      throw new Error(
-        `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
+        `Offload.${this._method}("*") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0`
       )
     }
   }
@@ -150,8 +154,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * @param agent - The agent this strategy is attached to
    * @param stash - The stash offloaded content is stored in
    * @throws Error when a whole-message strategy has none of `contextUtilization`, `blockThreshold`, or
-   *   `preserveRecent`, a `'media'` strategy has neither `contextUtilization` nor `preserveRecent`, or
-   *   `contextUtilization` is a token count larger than the model's `contextWindowLimit`
+   *   `preserveRecent`, or `contextUtilization` is a token count larger than the model's `contextWindowLimit`
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
