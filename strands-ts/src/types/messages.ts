@@ -228,11 +228,15 @@ export type ContentBlock =
 
 /**
  * Offload method that replaced content with a placeholder.
+ *
+ * @experimental
  */
 export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
 
 /**
  * What a text block stands in for when the context manager offloaded the original.
+ *
+ * @experimental
  */
 export interface OffloadedBlockData {
   /**
@@ -258,6 +262,8 @@ export interface OffloadedBlockData {
 
 /**
  * Metadata attached to a text block. Not sent to model providers.
+ *
+ * @experimental
  */
 export interface TextBlockMetadata {
   /**

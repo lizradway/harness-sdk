@@ -39,8 +39,8 @@ interface OffloadNamespace {
  * Offload strategies — reduce content in the context window.
  *
  * Target `'*'` acts on whole messages; any other target acts on each block. `blockThreshold` measures whichever the
- * target acts on, and `contextUtilization` only gates when the strategy fires. Targets `'*'` and `'media'` need
- * conditions from `.when()`; without them, a strategy acts on each matching block as it arrives.
+ * target acts on, and `contextUtilization` only gates when the strategy fires. Target `'*'` needs conditions from
+ * `.when()`; any other target without them acts on each matching block as it arrives, before the model reads it.
  *
  * @example
  * ```typescript
@@ -52,9 +52,9 @@ interface OffloadNamespace {
  * Offload.summarize("*").when({ contextUtilization: "70%", preserveRecent: 4 })
  * // Per-block, eager: with no conditions, drop each failed tool result as it arrives
  * Offload.drop("toolResultErrors")
- * // Per-block, gated: at 80% context utilization, drop older tool results, keeping the newest 5
+ * // Per-block, gated: at 80% context utilization, drop tool results outside the newest 5 messages that hold one
  * Offload.drop("toolResults").when({ contextUtilization: "80%", preserveRecent: 5 })
- * // Per-block, gated: at 80% context utilization, drop older images, documents, video, and audio, keeping the newest
+ * // Per-block, gated: at 80% context utilization, drop media outside the newest message that holds any
  * Offload.drop("media").when({ contextUtilization: "80%", preserveRecent: 1 })
  * // Messages: once the window is full, drop the oldest messages, keeping the newest 70%
  * Offload.drop("*").when({ contextUtilization: "100%", preserveRecent: "70%" })

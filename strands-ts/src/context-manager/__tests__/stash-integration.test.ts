@@ -137,7 +137,7 @@ describe('Offload strategies with stash', () => {
       await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
 
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
-        offloadPlaceholder('drop', '[Dropped]', 'tool-123'),
+        offloadPlaceholder('drop', '[Dropped: ~15 tokens]', 'tool-123'),
       ])
       expect(await stash.list()).toStrictEqual([])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toBe(
@@ -157,8 +157,8 @@ describe('Offload strategies with stash', () => {
 
       expect(actedAgain).toBe(true)
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
-        new TextBlock('[Dropped] [ref: tool-123]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped]' } },
+        new TextBlock('[Dropped: ~32 tokens] [ref: tool-123]', {
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~32 tokens]' } },
         }),
       ])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
@@ -213,11 +213,11 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       expect(block.content).toEqual([
-        new TextBlock('[Dropped] [ref: tool-123]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped]' } },
+        new TextBlock('[Dropped: ~5,000 tokens] [ref: tool-123]', {
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~5,000 tokens]' } },
         }),
       ])
-      expect((block.content[0] as TextBlock).text).toBe('[Dropped] [ref: tool-123]')
+      expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~5,000 tokens] [ref: tool-123]')
     })
 
     it('marks removed messages with an OffloadedBlock that retrieves them', async () => {

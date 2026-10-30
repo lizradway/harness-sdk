@@ -18,6 +18,7 @@ import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 import { offloadedBy, placeholdersIn } from '../../../__fixtures__/context-manager-helpers.js'
+import { summarizeContent } from '../../methods/summarize.js'
 
 vi.mock('../../methods/summarize.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>
@@ -244,7 +245,7 @@ describe('Offload builder', () => {
 
     expect(result).toBe(true)
     const block = messages[0]!.content[0] as ToolResultBlock
-    expect((block.content[0] as TextBlock).text).toBe('[Dropped]')
+    expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~25 tokens]')
   })
 
   it('Offload.truncate with string[] target matches tool by name from assistant message', async () => {
@@ -514,7 +515,9 @@ describe('Offload with media target', () => {
 
     expect(result).toBe(true)
     expect(message.content[0]).toEqual(new TextBlock('look at this'))
-    expect((message.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was received]')
+    expect((message.content[1] as TextBlock).text).toBe(
+      '[Dropped: image, ~2,692 tokens, removed from context after it was received]'
+    )
     expect(message.content[2]).toEqual(withImage().content[2])
   })
 
@@ -525,7 +528,9 @@ describe('Offload with media target', () => {
 
     await Offload.drop('media').when({ preserveRecent: 1 }).apply(makeContext(messages))
 
-    expect((older.content[1] as TextBlock).text).toBe('[Dropped: image, removed from context after it was received]')
+    expect((older.content[1] as TextBlock).text).toBe(
+      '[Dropped: image, ~2,692 tokens, removed from context after it was received]'
+    )
     expect(newer.content[1]).toBeInstanceOf(ImageBlock)
   })
 
@@ -981,7 +986,42 @@ describe('condition resolution', () => {
 
     expect(await strategy.apply(makeContext(messages, 0, false, 10_000))).toBe(true)
 
-    expect(resultTexts(messages)).toEqual(['x'.repeat(400), '[Dropped]'])
+    expect(resultTexts(messages)).toEqual(['x'.repeat(400), '[Dropped: ~101 tokens]'])
+  })
+})
+
+describe('tool results that already hold a placeholder', () => {
+  it.each([
+    ['drop', () => Offload.drop('toolResults')],
+    ['truncate', () => Offload.truncate('toolResults', { previewTokens: 100 })],
+    ['summarize', () => Offload.summarize('toolResults')],
+  ] as const)('%s leaves them alone on a second pass', async (method, builder) => {
+    const messages = [...toolHistory([1000, 1000]), text('user', 'next')]
+    const strategy = builder().when({ contextUtilization: '50%' })
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+    const offloaded = resultTexts(messages)
+    vi.mocked(summarizeContent).mockClear()
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(false)
+
+    expect(resultMethods(messages)).toEqual([method, method])
+    expect(resultTexts(messages)).toEqual(offloaded)
+    expect(summarizeContent).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['truncate', () => Offload.truncate('toolResults', { previewTokens: 100 })],
+    ['summarize', () => Offload.summarize('toolResults')],
+  ] as const)('%s leaves a dropped result alone', async (_method, builder) => {
+    const messages = [...toolHistory([1000, 1000]), text('user', 'next')]
+    await Offload.drop('toolResults').when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))
+    vi.mocked(summarizeContent).mockClear()
+
+    expect(await builder().when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(false)
+
+    expect(resultMethods(messages)).toEqual(['drop', 'drop'])
+    expect(summarizeContent).not.toHaveBeenCalled()
   })
 })
 
@@ -1068,45 +1108,28 @@ describe('granularity', () => {
 })
 
 describe('unconditioned strategy warning', () => {
-  const assistantText = (value: string): Message => new Message({ role: 'assistant', content: [new TextBlock(value)] })
-
-  it('warns once when an unconditioned strategy acts', async () => {
+  it('warns on init for an unconditioned strategy that acts on arrival', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const strategy = Offload.drop('assistantText')
 
-    expect(await strategy.apply(makeContext([assistantText('hello')]))).toBe(true)
-    expect(await strategy.apply(makeContext([assistantText('again')]))).toBe(true)
+    Offload.drop('assistantText').init!(createMockAgent())
 
-    expect(warnSpy).toHaveBeenCalledOnce()
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
       'strategy=<offload:drop>, target=<"assistantText"> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent'
     )
     warnSpy.mockRestore()
   })
 
-  it.each([{ blockThreshold: 1 }, { contextUtilization: '50%' }] as OffloadConditions[])(
+  it.each([{ blockThreshold: 1 }, { contextUtilization: '50%' }, { preserveRecent: 1 }] as OffloadConditions[])(
     'does not warn for a strategy with %j',
-    async (conditions) => {
+    (conditions) => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-      const strategy = Offload.drop('assistantText').when(conditions)
-      const messages = [text('user', 'task'), assistantText('hello'), text('user', 'next')]
 
-      expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+      Offload.drop('assistantText').when(conditions).init!(createMockAgent())
 
       expect(warnSpy).not.toHaveBeenCalled()
       warnSpy.mockRestore()
     }
   )
-
-  it('does not warn before the strategy acts', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const strategy = Offload.drop('assistantText')
-
-    expect(await strategy.apply(makeContext([assistantText(' ')]))).toBe(false)
-
-    expect(warnSpy).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
-  })
 })
 
 describe('whole-message conditions', () => {

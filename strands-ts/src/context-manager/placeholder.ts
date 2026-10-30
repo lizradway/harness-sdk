@@ -38,8 +38,8 @@ export function offloadPlaceholder(
  *
  * @internal
  */
-export function formatDropped(mediaKind?: string): string {
-  return marker('Dropped', mediaKind, mediaKind && AFTER_RECEIVING)
+export function formatDropped(tokens: number, mediaKind?: string): string {
+  return marker('Dropped', mediaKind, approxTokens(tokens), mediaKind && AFTER_RECEIVING)
 }
 
 /**

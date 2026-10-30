@@ -30,13 +30,13 @@ export class DropStrategy extends BaseOffloadStrategy {
 
   protected async _replaceBlock(
     block: ContentBlock,
-    _tokens: number,
+    tokens: number,
     message: Message,
     _agent: LocalAgent,
     stashRef: string | undefined
   ): Promise<ContentBlock | null> {
     logger.debug(`trackingId=<${message.trackingId}>, block=<${block.type}> | dropped block from context window`)
-    const placeholder = this._placeholder(formatDropped(mediaKind(block)), stashRef)
+    const placeholder = this._placeholder(formatDropped(tokens, mediaKind(block)), stashRef)
     return block instanceof ToolResultBlock ? block.withContent([placeholder]) : placeholder
   }
 }

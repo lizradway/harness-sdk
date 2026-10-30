@@ -30,8 +30,18 @@ describe('offloadPlaceholder', () => {
 
 describe('markers', () => {
   it.each([
-    ['a dropped block', formatDropped(), '[Dropped]'],
-    ['dropped media', formatDropped('image'), '[Dropped: image, removed from context after it was received]'],
+    ['a dropped block', formatDropped(2525), '[Dropped: ~2,525 tokens]'],
+    ['an unmeasured dropped block', formatDropped(0), '[Dropped]'],
+    [
+      'dropped media',
+      formatDropped(2525, 'image'),
+      '[Dropped: image, ~2,525 tokens, removed from context after it was received]',
+    ],
+    [
+      'unmeasured dropped media',
+      formatDropped(0, 'image'),
+      '[Dropped: image, removed from context after it was received]',
+    ],
     ['one dropped message', formatDroppedMessages(1), '[Dropped: 1 message]'],
     ['dropped messages', formatDroppedMessages(3), '[Dropped: 3 messages]'],
     ['an offloaded block', formatOffloaded(2525), '[Offloaded: ~2,525 tokens]'],

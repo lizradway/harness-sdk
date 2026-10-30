@@ -91,7 +91,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /** Whether the eager hook processes each message as it arrives. */
   private readonly _runsEagerly: boolean
   protected _stash: Stash | undefined
-  private _warnedUnconditional = false
 
   /**
    * @param method - Offload method; the strategy is named `offload:<method>`
@@ -133,14 +132,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     }
   }
 
-  private _warnUnconditional(): void {
-    if (this._warnedUnconditional || !this._conditions.isEmpty) return
-    this._warnedUnconditional = true
-    logger.warn(
-      `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
-    )
-  }
-
   /**
    * Checks the conditions can run on this agent, then registers the eager hook if this runs eagerly.
    *
@@ -154,6 +145,11 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     this._checkRunnable()
     this._conditions.checkFits(agent)
     if (!this._runsEagerly) return
+    if (this._conditions.isEmpty) {
+      logger.warn(
+        `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
+      )
+    }
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
@@ -227,10 +223,20 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       return false
     }
     if (isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === '')) return false
+    if (block instanceof ToolResultBlock && this._isReduced(block)) return false
     if (block instanceof ToolResultBlock && this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) {
       return false
     }
     return this._matcher.matchesBlock(block, message, toolNameMap)
+  }
+
+  /**
+   * Whether a tool result already holds a placeholder this strategy shouldn't replace. Only drop goes further, since
+   * truncate and summarize would read the placeholder as the content.
+   */
+  private _isReduced(block: ToolResultBlock): boolean {
+    const placeholder = block.content.find(isOffloaded)
+    return placeholder !== undefined && (this._method !== 'drop' || placeholder.metadata.offloaded.method === 'drop')
   }
 
   /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens, or every one if unset. */
@@ -258,7 +264,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
         acted = true
       }
     }
-    if (acted) this._warnUnconditional()
     return acted
   }
 
