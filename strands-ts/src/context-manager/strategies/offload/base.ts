@@ -40,22 +40,15 @@ export interface OffloadStrategy extends ContextStrategy {
 }
 
 /**
- * Writes the placeholder text for messages about to be removed, such as `[Dropped: 3 messages]` or a summary of them.
- * It gets the messages with their tool pairs added, so its count or summary covers everything that leaves. Returning
- * null keeps the messages, as summarize does when its model call fails.
+ * Writes the placeholder text, such as `[Dropped: 3 messages]` or a summary, for messages about to be removed with
+ * their tool pairs. Returning null keeps them, as summarize does when its model call fails.
  */
 type PlaceholderText = (removed: Message[]) => Promise<string | null>
 
-/**
- * What {@link removeMessages} needs from the strategy calling it. It is a function rather than a method so that
- * {@link EmergencyTruncateStrategy}, which is not a {@link BaseOffloadStrategy}, can share it.
- */
+/** The strategy calling {@link removeMessages}, a function so {@link EmergencyTruncateStrategy} can share it. */
 interface Remover {
-  /** Strategy name, logged when the stash write fails. */
   name: string
-  /** Method recorded in the placeholder's `metadata.offloaded`. */
   method: OffloadMethod
-  /** Where the removed messages are stored for retrieval, or undefined when there is no stash. */
   stash: Stash | undefined
 }
 
