@@ -161,14 +161,17 @@ def _media_kind(block: ContentBlock) -> str | None:
     return next((key for key in _MEDIA_KEYS if key in block), None)
 
 
-def _format_offloaded(block: ContentBlock, tokens: int, refs: str) -> str:
-    """Format an ``[Offloaded]`` marker naming the media kind, leaving out a size the token count could not measure."""
+def _format_marker(label: str, block: ContentBlock, tokens: int, refs: str) -> str:
+    """Format a ``[Dropped]`` or ``[Offloaded]`` marker naming the media kind and leaving out an unmeasured size.
+
+    A bare marker reads to the model as media that never arrived, so it doubts what it saw.
+    """
     kind = _media_kind(block)
+    parts = [part for part in (kind, f"~{tokens:,} tokens" if tokens else None) if part]
     if kind:
-        size = f", ~{tokens} tokens" if tokens else ""
-        return f"[Offloaded: {kind}{size}, removed from context after it was viewed]{refs}"
-    size = f": ~{tokens} tokens" if tokens else ""
-    return f"[Offloaded{size}]{refs}"
+        parts.append("removed from context after it was received")
+    body = f": {', '.join(parts)}" if parts else ""
+    return f"[{label}{body}]{refs}"
 
 
 def _build_tool_name_map(messages: Messages) -> dict[str, str]:
@@ -572,6 +575,7 @@ class BaseOffloadStrategy(ABC):
 
         if not self._runs_eagerly:
             return
+        self._warn_unconditional()
 
         async def _eager_hook(event: MessageAddedEvent) -> None:
             try:
@@ -709,9 +713,6 @@ class BaseOffloadStrategy(ABC):
             if replacement is not None and replacement is not block:
                 content[block_index] = replacement
                 acted = True
-
-        if acted:
-            self._warn_unconditional()
         return acted
 
     async def _get_eligible_messages(self, context: ContextState) -> list[Message]:

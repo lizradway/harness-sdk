@@ -9,7 +9,6 @@ import pytest
 from strands._context_manager.retrieval_tool import _create_retrieval_tool
 from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.types import ContextState
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
@@ -123,7 +122,7 @@ class TestDropWithStash:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)
         assert await strategy.apply(context) is True
         text = messages[1]["content"][0]["text"]
-        assert DROPPED_MARKER in text
+        assert "[Dropped: ~5,000 tokens]" in text
         assert "ref:" in text
 
     @pytest.mark.asyncio
@@ -155,7 +154,7 @@ class TestDropWithStash:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)
         assert await strategy.apply(context) is True
         result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
-        assert DROPPED_MARKER in result_text
+        assert "[Dropped: ~5,000 tokens]" in result_text
         assert "ref:" in result_text
 
 

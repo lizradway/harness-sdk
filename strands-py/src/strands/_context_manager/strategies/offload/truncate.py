@@ -22,7 +22,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_tool_name_map,
-    _format_offloaded,
+    _format_marker,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -171,7 +171,7 @@ class TruncateStrategy(BaseOffloadStrategy):
                 result = ContentBlock(text=result["text"] + f"\n\n[Stashed]{refs}")
             return result
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=_format_offloaded(block, tokens, refs))
+        return ContentBlock(text=_format_marker("Offloaded", block, tokens, refs))
 
 
 async def _count_within_budget(messages: list[Message], budget: int, agent: Agent) -> int:

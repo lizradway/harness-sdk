@@ -18,7 +18,6 @@ from strands._context_manager.strategies.offload.base import (
     _target_matches_message,
     _tool_matches_target,
 )
-from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands._context_manager.types import ContextState
 from strands.hooks.events import MessageAddedEvent
@@ -628,7 +627,7 @@ class TestDropStrategy:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         acted = await strategy.apply(context)
         assert acted is True
-        assert messages[1]["content"][0]["toolResult"]["content"][0]["text"] == DROPPED_MARKER
+        assert messages[1]["content"][0]["toolResult"]["content"][0]["text"] == "[Dropped: ~5,000 tokens]"
 
     @pytest.mark.asyncio
     async def test_replaces_text_with_marker(self, mock_agent):
@@ -641,7 +640,7 @@ class TestDropStrategy:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         acted = await strategy.apply(context)
         assert acted is True
-        assert messages[1]["content"][0]["text"] == DROPPED_MARKER
+        assert messages[1]["content"][0]["text"] == "[Dropped: ~5,000 tokens]"
 
     @pytest.mark.asyncio
     async def test_skips_below_threshold(self, mock_agent):
@@ -890,7 +889,7 @@ class TestEagerHookRegistration:
         event = MessageAddedEvent(agent=agent, message=message)
         callbacks = agent.hooks._registered_callbacks[MessageAddedEvent]
         await callbacks[0].callback(event)
-        assert message["content"][0]["text"] == DROPPED_MARKER
+        assert message["content"][0]["text"] == "[Dropped: ~5,000 tokens]"
 
 
 class TestBlockMatchesTarget:
@@ -948,7 +947,10 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Dropped: image, removed from context after it was viewed]"
+        assert (
+            message["content"][0]["text"]
+            == "[Dropped: image, ~5,000 tokens, removed from context after it was received]"
+        )
 
     @pytest.mark.asyncio
     async def test_drop_document_block(self, mock_agent):
@@ -956,7 +958,9 @@ class TestTransformBlocks:
         doc_block = ContentBlock(document={"format": "pdf", "name": "doc", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[doc_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Dropped: document, removed from context after it was viewed]"
+        assert message["content"][0]["text"] == (
+            "[Dropped: document, ~5,000 tokens, removed from context after it was received]"
+        )
 
     @pytest.mark.asyncio
     async def test_truncate_image_block(self, mock_agent):
@@ -966,7 +970,7 @@ class TestTransformBlocks:
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
         assert (
             message["content"][0]["text"]
-            == "[Offloaded: image, ~5000 tokens, removed from context after it was viewed]"
+            == "[Offloaded: image, ~5,000 tokens, removed from context after it was received]"
         )
 
     @pytest.mark.asyncio
@@ -980,7 +984,7 @@ class TestTransformBlocks:
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
         assert message["content"] == [
             ContentBlock(text="what color?"),
-            ContentBlock(text="[Dropped: image, removed from context after it was viewed]"),
+            ContentBlock(text="[Dropped: image, removed from context after it was received]"),
         ]
 
     @pytest.mark.asyncio
@@ -990,7 +994,7 @@ class TestTransformBlocks:
         image_block = ContentBlock(image={"format": "png", "source": {"bytes": b"fake"}})
         message = Message(role="user", content=[image_block])
         assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert message["content"][0]["text"] == "[Offloaded: image, removed from context after it was viewed]"
+        assert message["content"][0]["text"] == "[Offloaded: image, removed from context after it was received]"
 
     @pytest.mark.asyncio
     async def test_without_threshold_skips_empty_text_blocks(self, mock_agent):
@@ -1017,33 +1021,22 @@ class TestTransformBlocks:
 
 
 class TestUnconditionalWarning:
-    """An unconditioned strategy warns when it first offloads something."""
+    """An unconditioned strategy warns when it's attached to an agent."""
 
-    @pytest.mark.asyncio
-    async def test_warns_when_an_unconditioned_strategy_acts(self, mock_agent):
-        strategy = Offload.drop("assistant_text")
-        message = Message(role="assistant", content=[ContentBlock(text="hello")])
+    def test_warns_on_init_for_an_unconditioned_strategy(self, mock_agent):
         with pytest.warns(UserWarning, match=r"Offload\.drop\('assistant_text'\) has no conditions"):
-            assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
+            Offload.drop("assistant_text").init(mock_agent)
 
     @pytest.mark.parametrize(
         "strategy",
         [
             Offload.drop("assistant_text").when(block_threshold=1),
+            Offload.drop("assistant_text").when(context_utilization="50%"),
             Offload.drop("assistant_text").when(preserve_recent=1),
         ],
     )
-    @pytest.mark.asyncio
-    async def test_conditioned_strategy_does_not_warn(self, mock_agent, strategy, recwarn):
-        message = Message(role="assistant", content=[ContentBlock(text="hello")])
-        assert await strategy._transform_blocks(message, [message], {}, mock_agent) is True
-        assert not [warning for warning in recwarn if "has no conditions" in str(warning.message)]
-
-    @pytest.mark.asyncio
-    async def test_does_not_warn_before_acting(self, mock_agent, recwarn):
-        strategy = Offload.drop("assistant_text")
-        message = Message(role="assistant", content=[ContentBlock(text=" ")])
-        assert await strategy._transform_blocks(message, [message], {}, mock_agent) is False
+    def test_conditioned_strategy_does_not_warn(self, mock_agent, strategy, recwarn):
+        strategy.init(mock_agent)
         assert not [warning for warning in recwarn if "has no conditions" in str(warning.message)]
 
 
@@ -1157,7 +1150,7 @@ class TestGranularity:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
         assert len(messages) == 4
-        assert messages[1]["content"][0]["text"] == DROPPED_MARKER
+        assert messages[1]["content"][0]["text"] == "[Dropped: ~5,000 tokens]"
 
     @pytest.mark.asyncio
     async def test_gated_block_strategy_leaves_the_last_message(self, mock_agent):
@@ -1167,7 +1160,7 @@ class TestGranularity:
         messages: Messages = [_text("user", "pin"), old_use, old_result, live_use, live_result]
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is True
-        assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == DROPPED_MARKER
+        assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == "[Dropped: ~5,000 tokens]"
         assert messages[4]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
 
     @pytest.mark.asyncio
@@ -1179,7 +1172,7 @@ class TestGranularity:
         assert [msg["content"][0]["text"] for msg in messages] == [
             "pin",
             "old answer",
-            DROPPED_MARKER,
+            "[Dropped: ~5,000 tokens]",
             "recent answer",
             "live question",
         ]
