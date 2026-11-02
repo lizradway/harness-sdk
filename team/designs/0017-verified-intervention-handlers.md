@@ -515,6 +515,8 @@ Budget constraints mined and enforcing after round 1 (3 successes + 2 failures i
 
 Announced vs denial-only: p = 0.005, d = −2.7. Trajectory-gated hints vs denial-only: not significant, about 10% more tokens. The baseline agent reads once and emits five Edits in one turn; the first Edit invalidates the Read and the rest fail. Only the standing announcement prevents the batch. All 42 trials completed the task, so the gain is in wasted calls, not task success.
 
+With Bedrock prompt caching on (same task, 6 trials), the announced rule also cuts cost: raw tokens −18% and cost −23% vs baseline (p ≤ 0.002, cost in input-token equivalents at cache-read 0.1×, cache-write 1.25×, output 5×), with no extra turns. Placement matters: the announcement must live in the **system prompt**, which the cached prefix covers. Injecting it into the latest user message on each call changes that message on the next call, defeats the cache, and raised cost 2.6× instead. Per-call content (failure context, trajectory-gated hints) belongs at the end of the last user message, counted as dynamic trailing blocks so the provider's cache point stays ahead of it.
+
 </details>
 
 ---
