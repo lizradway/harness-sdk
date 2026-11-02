@@ -179,6 +179,8 @@ The agent sees "deploy requires health_check" and routes around it. If it still 
 
 Why this matters: a `deny()` that fires is expensive — a wasted tool call, a recovery turn, context spent on the error. Surfacing constraints upfront turns denial from the expected learning mechanism into an anomaly signal.
 
+The surfacing has to be unconditional, not gated on whether the constraint currently applies. An agent often creates the violation inside a single turn (a batch of parallel calls where the first invalidates the precondition of the rest), and a check of the trajectory *between* turns is correctly satisfied right before that batch. Announcing the rule every turn is what changes the agent's plan; evaluating it against the current state only tells you it does not yet apply. Measured on the config-repair benchmark below: announced rules eliminated wasted calls (0.0 per trial with the gate, 0.3 without), while state-gated hints matched plain denial (3.3 vs 3.0).
+
 ### Self-correction
 
 Mined constraints can be wrong. Trellis handles this through **override tracking and automatic demotion**:
@@ -498,6 +500,20 @@ Evidence at discovery: `failures=3, successes=1`. Constraint: `{ type: 'requires
 | 2–4 | 4 | 1 |
 
 Budget constraints mined and enforcing after round 1 (3 successes + 2 failures in one batch provides immediate evidence).
+
+**Constraint surfacing** (config-repair task, one mined rule — *Edit requires a fresh Read since the last successful Edit* — 6 trials per condition). Every condition carries the same rule; they differ in when the agent hears it and whether the gate also denies. Wasted calls are tool calls that failed or were denied.
+
+| Agent hears the rule... | Gate denies | Wasted calls / trial | Trials that batched 5 Edits |
+|---|---|---|---|
+| never | no | 4.5 | 5/6 |
+| after a failure | no | 4.0 | 6/6 |
+| in the denial | yes | 3.0 (all denials) | 4/6 |
+| before a turn, only when the trajectory says the next call would be denied | yes | 3.3 | 5/6 |
+| same, without the gate | no | 3.3 | 5/6 |
+| every turn, as a standing rule | yes | **0.0** | 0/6 |
+| same, without the gate | no | **0.3** | 0/6 |
+
+Announced vs denial-only: p = 0.005, d = −2.7. Trajectory-gated hints vs denial-only: not significant, about 10% more tokens. The baseline agent reads once and emits five Edits in one turn; the first Edit invalidates the Read and the rest fail. Only the standing announcement prevents the batch. All 42 trials completed the task, so the gain is in wasted calls, not task success.
 
 </details>
 
