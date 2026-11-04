@@ -30,15 +30,17 @@ ENDED_MARKERS = ("###STOP###", "Conversation has already ended", "Conversation a
 @dataclass(frozen=True)
 class Rule:
     kind: str  # requires | terminal | advice
-    tool: str | None
-    requires: str | None
+    tools: tuple[str, ...]  # targets; empty for terminal/advice
+    requires: tuple[str, ...]  # any one of these satisfies the prerequisite
     field: str | None
     explanation: str
+    announce: bool
 
-    def describe(self) -> str:
+    def describe(self, tool: str | None = None) -> str:
         if self.kind == "requires":
             scope = f" for the same {self.field}" if self.field else ""
-            return f"{self.tool} requires a successful {self.requires}{scope} first. {self.explanation}".strip()
+            subject = tool if tool is not None else " / ".join(self.tools)
+            return f"{subject} requires a successful {' or '.join(self.requires)}{scope} first. {self.explanation}".strip()
         return self.explanation
 
 
@@ -49,10 +51,13 @@ class Trellis:
     enforce: bool = True
 
     def announcement(self) -> str | None:
-        if not self.announce or not self.rules:
+        # A termination rule is never announced: telling the model when the conversation
+        # is over changes how it converses. It enforces silently.
+        announced = [r for r in self.rules if r.announce and r.kind != "terminal"]
+        if not self.announce or not announced:
             return None
         lines = ["<policy-rules>", "  Rules enforced on your tool calls:"]
-        lines.extend(f"  - {rule.describe()}" for rule in self.rules)
+        lines.extend(f"  - {rule.describe()}" for rule in announced)
         lines.append("</policy-rules>")
         return "\n".join(lines)
 
@@ -64,7 +69,10 @@ def load_trellis(folder: str) -> Trellis:
     if os.path.exists(rules_path):
         with open(rules_path) as f:
             for raw in json.load(f):
-                rules.append(Rule(raw.get("kind", "requires"), raw.get("tool"), raw.get("requires"), raw.get("field"), raw.get("explanation", "")))
+                tools = raw.get("tools") or ([raw["tool"]] if raw.get("tool") else [])
+                requires = raw.get("requires_any") or ([raw["requires"]] if raw.get("requires") else [])
+                rules.append(Rule(raw.get("kind", "requires"), tuple(tools), tuple(requires), raw.get("field"),
+                                  raw.get("explanation", ""), bool(raw.get("announce", raw.get("kind", "requires") != "terminal"))))
     config: dict[str, Any] = {}
     if os.path.exists(config_path):
         with open(config_path) as f:
@@ -95,10 +103,10 @@ class TrellisHook(HookProvider):
             event.cancel_tool = f"blocked by policy: {self._terminal.describe()}"
             return
         for rule in self._rules:
-            if rule.kind != "requires" or rule.tool != name or self._satisfied(rule, inputs):
+            if rule.kind != "requires" or name not in rule.tools or self._satisfied(rule, inputs):
                 continue
             self.denials += 1
-            event.cancel_tool = f"blocked by policy: {rule.describe()}"
+            event.cancel_tool = f"blocked by policy: {rule.describe(name)}"
             return
 
     def _after(self, event: AfterToolCallEvent) -> None:
@@ -113,8 +121,7 @@ class TrellisHook(HookProvider):
         self._succeeded.setdefault(name, []).append(inputs)
 
     def _satisfied(self, rule: Rule, inputs: dict[str, Any]) -> bool:
-        assert rule.requires is not None
-        prior = self._succeeded.get(rule.requires)
+        prior = [call for tool in rule.requires for call in self._succeeded.get(tool, [])]
         if not prior:
             return False
         if rule.field is None or rule.field not in inputs:
