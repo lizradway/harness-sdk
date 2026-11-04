@@ -1,1 +1,37 @@
-[]
+[
+  {
+    "kind": "terminal",
+    "explanation": "The conversation is over once the user's message contains ###STOP### or a tool reports that the conversation has already ended. After that, make no further tool calls of any kind, including end_conversation: every one of them fails. Just stop.",
+    "evidence": {
+      "source": "baseline run --trellis-baseline-20261102, 150 traces",
+      "calls_after_end": 107,
+      "failed": 104,
+      "succeeded": 3,
+      "trials_affected": 104
+    }
+  },
+  {
+    "kind": "advice",
+    "explanation": "In programmatic_tool_caller code, import every module you use explicitly (json, asyncio, re, ...): the execution environment pre-imports nothing, and NameError is the most common code failure.",
+    "evidence": {
+      "source": "baseline traces",
+      "errors": 40,
+      "kinds": {
+        "json": 23,
+        "asyncio": 10,
+        "re": 7
+      }
+    }
+  },
+  {
+    "kind": "advice",
+    "explanation": "Tool responses inside programmatic_tool_caller are wrapped in an envelope: read fields from response['result'], not from the top level, and check the key exists before indexing.",
+    "evidence": {
+      "source": "baseline traces",
+      "errors": 8,
+      "kinds": {
+        "KeyError": 8
+      }
+    }
+  }
+]
