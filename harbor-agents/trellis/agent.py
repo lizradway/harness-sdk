@@ -15,7 +15,7 @@ from strands import Agent
 from strands.tools.executors import SequentialToolExecutor
 from strands_harness import create_harness
 
-from trellis_hook import TrellisHook, load_trellis
+from trellis_hook import TrellisHook, attach_trace_to_output, load_trellis
 
 _MANTLE_ROUTE_PREFIX = "openai."
 _MANTLE_OPENAI_VENDOR_PREFIX = "openai.gpt"
@@ -203,11 +203,16 @@ class MyAgent:
             **({"builtin_tools": dict(_MANTLE_ANTHROPIC_BUILTIN_TOOLS)} if _on_mantle_anthropic_endpoint() else {}),
             "instructions": instructions,
             "tools": _mcp_tools(),
-            **({"hooks": [TrellisHook(trellis)]} if trellis.enforce and trellis.rules else {}),
         }
+        hook = TrellisHook(trellis) if (trellis.enforce and trellis.rules) or trellis.trace_in_output else None
+        if hook is not None:
+            kwargs["hooks"] = [hook]
         # Knob overrides win over the derived defaults above, except the MCP tools the
         # benchmark declares and the task instructions, which are the benchmark's, not the knob's.
         overrides.pop("tools", None)
         overrides.pop("instructions", None)
         kwargs.update(overrides)
-        return create_harness(**kwargs)
+        agent = create_harness(**kwargs)
+        if hook is not None and trellis.trace_in_output:
+            attach_trace_to_output(agent, hook)
+        return agent

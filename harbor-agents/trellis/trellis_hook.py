@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,50 @@ from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookProvider,
 
 
 ENDED_MARKERS = ("###STOP###", "Conversation has already ended", "Conversation already ended")
+
+# ALFWorld exposes one free-text `step(action)` tool. Rules name the verb inside it
+# (`go_to`, `take`, `put`, ...) and bind on `object` / `receptacle`; a "Nothing happens."
+# result is a failed step even though the tool itself did not error.
+ALFWORLD_ACTION = re.compile(r"^\s*(go to|open|close|take|put|clean|heat|cool|use|examine|look|inventory)\b\s*(.*)$", re.I)
+ALFWORLD_FAILED = re.compile(r"^\s*(Nothing happens|Episode already finished|Episode not started)")
+
+
+def parse_alfworld_action(action: str) -> tuple[str, dict[str, Any]] | None:
+    m = ALFWORLD_ACTION.match(action)
+    if not m:
+        return None
+    verb = m.group(1).lower().replace(" ", "_")
+    rest = m.group(2).strip().lower()
+    inputs: dict[str, Any] = {}
+
+    def split(sep: str) -> None:
+        parts = re.split(sep, rest, maxsplit=1)
+        if parts and parts[0]:
+            inputs["object"] = parts[0].strip()
+        if len(parts) > 1 and parts[1]:
+            inputs["receptacle"] = parts[1].strip()
+
+    if verb in ("go_to", "open", "close", "examine"):
+        if rest:
+            inputs["receptacle"] = rest
+    elif verb == "take":
+        split(r"\s+from\s+")
+    elif verb == "put":
+        split(r"\s+in/on\s+|\s+in\s+|\s+on\s+")
+    elif verb in ("clean", "heat", "cool"):
+        split(r"\s+with\s+")
+    elif verb == "use" and rest:
+        inputs["object"] = rest
+    return verb, inputs
+
+
+def _effective_call(name: str, inputs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """The call a rule sees: ALFWorld's `step` unfolds to its verb; everything else is itself."""
+    if name == "step" and isinstance(inputs.get("action"), str):
+        parsed = parse_alfworld_action(inputs["action"])
+        if parsed:
+            return parsed
+    return name, inputs
 
 
 @dataclass(frozen=True)
@@ -49,6 +94,11 @@ class Trellis:
     rules: list[Rule] = field(default_factory=list)
     announce: bool = True
     enforce: bool = True
+    # Append a compact record of every tool call to the agent's final message, inside
+    # <trellis-trace>...</trellis-trace>. Harbor stores that message in its results database,
+    # which makes the trace readable without the budget-gated trace analysis. The appendix is
+    # added after the episode has ended, so it cannot affect the task outcome.
+    trace_in_output: bool = False
 
     def announcement(self) -> str | None:
         # A termination rule is never announced: telling the model when the conversation
@@ -77,7 +127,8 @@ def load_trellis(folder: str) -> Trellis:
     if os.path.exists(config_path):
         with open(config_path) as f:
             config = json.load(f)
-    return Trellis(rules=rules, announce=config.get("announce", True), enforce=config.get("enforce", True))
+    return Trellis(rules=rules, announce=config.get("announce", True), enforce=config.get("enforce", True),
+                   trace_in_output=bool(config.get("trace_in_output", False)))
 
 
 class TrellisHook(HookProvider):
@@ -90,35 +141,50 @@ class TrellisHook(HookProvider):
         self._succeeded: dict[str, list[dict[str, Any]]] = {}
         self.ended = False
         self.denials = 0
+        # [tool, argument summary, ok, denied] per call, in order.
+        self.trace: list[list[Any]] = []
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         registry.add_callback(BeforeToolCallEvent, self._before)
         registry.add_callback(AfterToolCallEvent, self._after)
 
     def _before(self, event: BeforeToolCallEvent) -> None:
-        name = event.tool_use["name"]
-        inputs = event.tool_use.get("input") or {}
+        name, inputs = _effective_call(event.tool_use["name"], event.tool_use.get("input") or {})
         if self.ended and self._terminal is not None:
             self.denials += 1
+            self.trace.append([name, _summary(event.tool_use.get("input") or {}), 0, 1])
             event.cancel_tool = f"blocked by policy: {self._terminal.describe()}"
             return
         for rule in self._rules:
             if rule.kind != "requires" or name not in rule.tools or self._satisfied(rule, inputs):
                 continue
             self.denials += 1
+            self.trace.append([name, _summary(event.tool_use.get("input") or {}), 0, 1])
             event.cancel_tool = f"blocked by policy: {rule.describe(name)}"
             return
 
     def _after(self, event: AfterToolCallEvent) -> None:
-        if event.cancel_message or event.exception is not None:
+        if event.cancel_message:
+            return  # recorded as a denial in _before
+        raw_name = event.tool_use["name"]
+        raw_input = dict(event.tool_use.get("input") or {})
+        text = _result_text(event.result) if event.exception is None else str(event.exception)
+        ok = event.exception is None and event.result.get("status") == "success"
+        if raw_name == "step" and ALFWORLD_FAILED.match(text):
+            ok = False  # the environment rejected the action: not a success for prerequisite purposes
+        self.trace.append([raw_name, _summary(raw_input), 1 if ok else 0, 0])
+        if event.exception is not None:
             return
-        if self._terminal is not None and any(m in _result_text(event.result) for m in ENDED_MARKERS):
+        if self._terminal is not None and any(m in text for m in ENDED_MARKERS):
             self.ended = True
-        if event.result.get("status") != "success":
+        if not ok:
             return
-        name = event.tool_use["name"]
-        inputs = dict(event.tool_use.get("input") or {})
-        self._succeeded.setdefault(name, []).append(inputs)
+        name, inputs = _effective_call(raw_name, raw_input)
+        self._succeeded.setdefault(name, []).append(dict(inputs))
+
+    def trace_block(self) -> str:
+        """The recorded calls as a tagged JSON appendix for the final message."""
+        return "\n\n<trellis-trace>" + json.dumps(self.trace, separators=(",", ":")) + "</trellis-trace>"
 
     def _satisfied(self, rule: Rule, inputs: dict[str, Any]) -> bool:
         prior = [call for tool in rule.requires for call in self._succeeded.get(tool, [])]
@@ -127,6 +193,30 @@ class TrellisHook(HookProvider):
         if rule.field is None or rule.field not in inputs:
             return True
         return any(call.get(rule.field) == inputs[rule.field] for call in prior)
+
+
+def _summary(inputs: dict[str, Any]) -> Any:
+    """A tool call's arguments, kept short: ALFWorld's action string as-is, otherwise scalar fields."""
+    if isinstance(inputs.get("action"), str) and len(inputs) == 1:
+        return inputs["action"][:80]
+    return {k: (v[:60] if isinstance(v, str) else v) for k, v in inputs.items() if isinstance(v, (str, int, float, bool))}
+
+
+def attach_trace_to_output(agent: Any, hook: "TrellisHook") -> None:
+    """Make the agent's final message carry the hook's trace. Wraps invoke_async in place."""
+    original = agent.invoke_async
+
+    async def invoke_async(*args: Any, **kwargs: Any) -> Any:
+        result = await original(*args, **kwargs)
+        try:
+            content = result.message.get("content")
+            if isinstance(content, list):
+                content.append({"text": hook.trace_block()})
+        except Exception:  # noqa: BLE001 - a missing trace must never fail the trial
+            pass
+        return result
+
+    agent.invoke_async = invoke_async
 
 
 def _result_text(result: Any) -> str:
