@@ -30,7 +30,7 @@ ENDED_MARKERS = ("###STOP###", "Conversation has already ended", "Conversation a
 # ALFWorld exposes one free-text `step(action)` tool. Rules name the verb inside it
 # (`go_to`, `take`, `put`, ...) and bind on `object` / `receptacle`; a "Nothing happens."
 # result is a failed step even though the tool itself did not error.
-ALFWORLD_ACTION = re.compile(r"^\s*(go to|open|close|take|put|clean|heat|cool|use|examine|look|inventory)\b\s*(.*)$", re.I)
+ALFWORLD_ACTION = re.compile(r"^\s*(go to|open|close|take|put|move|clean|heat|cool|use|examine|look|inventory)\b\s*(.*)$", re.I)
 ALFWORLD_FAILED = re.compile(r"^\s*(Nothing happens|Episode already finished|Episode not started)")
 
 
@@ -56,6 +56,8 @@ def parse_alfworld_action(action: str) -> tuple[str, dict[str, Any]] | None:
         split(r"\s+from\s+")
     elif verb == "put":
         split(r"\s+in/on\s+|\s+in\s+|\s+on\s+")
+    elif verb == "move":
+        split(r"\s+to\s+")
     elif verb in ("clean", "heat", "cool"):
         split(r"\s+with\s+")
     elif verb == "use" and rest:
@@ -64,22 +66,30 @@ def parse_alfworld_action(action: str) -> tuple[str, dict[str, Any]] | None:
 
 
 def _effective_call(name: str, inputs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """The call a rule sees: ALFWorld's `step` unfolds to its verb; everything else is itself."""
+    """The call a rule sees: ALFWorld's `step` unfolds to its verb; everything else is itself.
+
+    A verb outside the known grammar (`drop`, `place`, ...) still becomes the verb, with no
+    parsed arguments, so a format rule can name it.
+    """
     if name == "step" and isinstance(inputs.get("action"), str):
         parsed = parse_alfworld_action(inputs["action"])
         if parsed:
             return parsed
+        first = inputs["action"].strip().split(" ", 1)[0].lower()
+        if first:
+            return first, {}
     return name, inputs
 
 
 @dataclass(frozen=True)
 class Rule:
-    kind: str  # requires | terminal | advice
+    kind: str  # requires | terminal | format | advice
     tools: tuple[str, ...]  # targets; empty for terminal/advice
     requires: tuple[str, ...]  # any one of these satisfies the prerequisite
     field: str | None
     explanation: str
     announce: bool
+    pattern: str | None = None  # format: regex the call text must match (ALFWorld: the action string)
 
     def describe(self, tool: str | None = None) -> str:
         if self.kind == "requires":
@@ -122,7 +132,8 @@ def load_trellis(folder: str) -> Trellis:
                 tools = raw.get("tools") or ([raw["tool"]] if raw.get("tool") else [])
                 requires = raw.get("requires_any") or ([raw["requires"]] if raw.get("requires") else [])
                 rules.append(Rule(raw.get("kind", "requires"), tuple(tools), tuple(requires), raw.get("field"),
-                                  raw.get("explanation", ""), bool(raw.get("announce", raw.get("kind", "requires") != "terminal"))))
+                                  raw.get("explanation", ""), bool(raw.get("announce", raw.get("kind", "requires") != "terminal")),
+                                  raw.get("pattern")))
     config: dict[str, Any] = {}
     if os.path.exists(config_path):
         with open(config_path) as f:
@@ -156,7 +167,13 @@ class TrellisHook(HookProvider):
             event.cancel_tool = f"blocked by policy: {self._terminal.describe()}"
             return
         for rule in self._rules:
-            if rule.kind != "requires" or name not in rule.tools or self._satisfied(rule, inputs):
+            if name not in rule.tools:
+                continue
+            if rule.kind == "format":
+                text = _call_text(event.tool_use["name"], event.tool_use.get("input") or {})
+                if rule.pattern is not None and re.search(rule.pattern, text, re.I):
+                    continue
+            elif rule.kind != "requires" or self._satisfied(rule, inputs):
                 continue
             self.denials += 1
             self.trace.append([name, _summary(event.tool_use.get("input") or {}), 0, 1])
@@ -193,6 +210,13 @@ class TrellisHook(HookProvider):
         if rule.field is None or rule.field not in inputs:
             return True
         return any(call.get(rule.field) == inputs[rule.field] for call in prior)
+
+
+def _call_text(name: str, inputs: dict[str, Any]) -> str:
+    """What a format rule matches against: ALFWorld's action string, else the JSON of the inputs."""
+    if name == "step" and isinstance(inputs.get("action"), str):
+        return inputs["action"]
+    return json.dumps(inputs, sort_keys=True)
 
 
 def _summary(inputs: dict[str, Any]) -> Any:
