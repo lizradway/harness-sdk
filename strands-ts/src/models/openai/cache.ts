@@ -29,10 +29,12 @@ export const CACHE_LIFETIMES: ReadonlySet<string> = new Set(['30m', '12h'])
  * The `CacheConfig`-derived fields both OpenAI request shapes share.
  */
 interface CacheableRequest {
-  prompt_cache_key?: string
+  // Both nullable in the openai typings: a caller's `params` may set either to null to opt out.
+  prompt_cache_key?: string | null
   prompt_cache_retention?: RetentionLiteral | null
-  // Not yet in the openai typings; written only for models that take cache points.
-  prompt_cache_options?: Record<string, unknown>
+  // Written only for models that take cache points. Wider than the openai typings, which accept a
+  // `ttl` of `'30m'` alone while the API already takes `'12h'`.
+  prompt_cache_options?: { mode?: string; ttl?: string }
 }
 
 /**
