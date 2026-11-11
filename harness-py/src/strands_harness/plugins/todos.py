@@ -17,19 +17,48 @@ invocation, not only at the start of the next user turn.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 from strands.plugins import Plugin
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 from strands.vended_plugins.context_injector import ContextInjector, InjectionContext
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 if TYPE_CHECKING:
     from strands import Agent
 
+logger = logging.getLogger(__name__)
+
 _STATE_KEY = "todos"
 _DEFAULT_NAME = "strands:todos"
+
+# Repeated as a literal in the @deprecated decorator below, because PEP 702 checkers only honor
+# @deprecated when its argument is a literal. The test pins the two copies to each other, and the
+# text matches the TypeScript notice word for word so one grep finds both.
+_DEPRECATION_MESSAGE = (
+    "The todos plugin is deprecated in the harness and is moving to the Strands SDK's vended "
+    "plugins. Comment on https://github.com/strands-agents/harness-sdk/issues/6058 if you depend "
+    "on the harness built-in."
+)
+
+_deprecation_logged = False
+
+
+def _log_deprecation_once() -> None:
+    """Log the notice once per process.
+
+    ``DeprecationWarning`` is filtered out by default, so the notice also goes through the logger
+    to reach the people who opted in. That has to be deduped: every ``create_harness`` call builds
+    a fresh ``Todos``, and the subagent builder re-runs ``create_harness`` for each delegation, so
+    an un-guarded warning would log once per spawned subagent.
+    """
+    global _deprecation_logged
+    if _deprecation_logged:
+        return
+    logger.warning(_DEPRECATION_MESSAGE)
+    _deprecation_logged = True
 
 
 class TodoItem(TypedDict):
@@ -50,8 +79,16 @@ def _render_list(todos: list[TodoItem]) -> str:
     return "\n".join(_todo_line(t) for t in todos)
 
 
+@deprecated(
+    "The todos plugin is deprecated in the harness and is moving to the Strands SDK's vended "
+    "plugins. Comment on https://github.com/strands-agents/harness-sdk/issues/6058 if you depend "
+    "on the harness built-in."
+)
 class Todos(Plugin):
     """Gives the agent a ``todo_write`` tool and keeps the current list in view.
+
+    Deprecated in the harness; the plugin is moving to the Strands SDK's vended plugins. See
+    https://github.com/strands-agents/harness-sdk/issues/6058.
 
     The tool persists the list to ``agent.state`` under ``state_key``; before each model call
     the plugin re-surfaces the list as a ``<system-reminder>`` (ephemeral, never written to
@@ -63,6 +100,7 @@ class Todos(Plugin):
     """
 
     def __init__(self, *, name: str = _DEFAULT_NAME, state_key: str = _STATE_KEY) -> None:
+        _log_deprecation_once()
         self._name = name
         self._state_key = state_key
         super().__init__()

@@ -375,7 +375,9 @@ def create_harness(
             ``["environment"]``, which injects the platform, date, working directory, and the
             project's ``AGENTS.md`` (plus links to nearby ``AGENTS.md``/``README.md`` files) before
             each user turn. ``todos`` is opt-in: it adds a ``todo_write`` tool that tracks multi-step
-            work and re-surfaces the list before each step. Pass ``[]`` to disable them all.
+            work and re-surfaces the list before each step. It is deprecated here and moving to the
+            SDK's vended plugins (https://github.com/strands-agents/harness-sdk/issues/6058). Pass
+            ``[]`` to disable them all.
         interventions: Gate tool calls behind approval or a policy; defaults to ``None`` (off —
             every call runs). Accepts a preset (``"ask"`` approves every call, ``"smart"`` lets the
             SDK's LLM risk classifier flag risky ones), a natural-language policy used as that

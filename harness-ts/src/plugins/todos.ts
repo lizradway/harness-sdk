@@ -19,8 +19,16 @@ import { tool, type LocalAgent, type Plugin, type Tool } from '@strands-agents/s
 import { ContextInjector, type InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
 import { z } from 'zod'
 
+import { warnOnce } from '../logging.js'
+
 const STATE_KEY = 'todos'
 const DEFAULT_NAME = 'strands:todos'
+
+// Matches the Python notice word for word so one grep finds both.
+const DEPRECATION_MESSAGE =
+  "The todos plugin is deprecated in the harness and is moving to the Strands SDK's vended " +
+  'plugins. Comment on https://github.com/strands-agents/harness-sdk/issues/6058 if you depend ' +
+  'on the harness built-in.'
 
 const todoItemSchema = z.object({
   content: z.string().describe('The task, imperative: "Run tests".'),
@@ -53,12 +61,17 @@ export interface TodosConfig {
  * The tool persists the list to `agent.appState` under `stateKey`; before each model call the
  * plugin re-surfaces the list as a `<system-reminder>`, and the model sees only the latest one.
  * Sharing one instance across agents is safe: state is per-agent.
+ *
+ * @deprecated Deprecated in the harness; the plugin is moving to the Strands SDK's vended plugins.
+ * Comment on https://github.com/strands-agents/harness-sdk/issues/6058 if you depend on the
+ * harness built-in.
  */
 export class Todos implements Plugin {
   readonly name: string
   private readonly _stateKey: string
 
   constructor(config: TodosConfig = {}) {
+    warnOnce(DEPRECATION_MESSAGE)
     this.name = config.name ?? DEFAULT_NAME
     this._stateKey = config.stateKey ?? STATE_KEY
   }

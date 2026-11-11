@@ -190,8 +190,9 @@ export interface HarnessAgentOptions extends Omit<
    * Names of the built-in feature plugins to enable. Defaults to `['environment']`, which injects
    * the platform, date, working directory, and the project's `AGENTS.md` (plus links to nearby
    * `AGENTS.md`/`README.md` files) before each user turn. `todos` is opt-in: it adds a `todo_write`
-   * tool that tracks multi-step work and re-surfaces the list before each step. Pass `[]` to
-   * disable them all.
+   * tool that tracks multi-step work and re-surfaces the list before each step. It is deprecated
+   * here and moving to the SDK's vended plugins
+   * (https://github.com/strands-agents/harness-sdk/issues/6058). Pass `[]` to disable them all.
    */
   builtinPlugins?: readonly BuiltinPluginName[]
   /**

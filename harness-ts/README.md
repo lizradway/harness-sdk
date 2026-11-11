@@ -447,7 +447,9 @@ The harness ships two built-in feature plugins. `environment` is on by default; 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
   Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
-  without explicit cache points — enable it where the task tracking earns that.
+  without explicit cache points — enable it where the task tracking earns that. **Deprecated**: the
+  plugin is moving to the SDK's vended plugins
+  ([#6058](https://github.com/strands-agents/harness-sdk/issues/6058)).
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read

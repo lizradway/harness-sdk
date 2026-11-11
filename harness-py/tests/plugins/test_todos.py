@@ -1,7 +1,10 @@
+import logging
+
 import pytest
 
 from strands_harness import create_harness
 from strands_harness.plugins import Todos
+from strands_harness.plugins import todos as todos_module
 from strands_harness.plugins.todos import Todos as TodosClass
 
 
@@ -75,6 +78,20 @@ def test_todos_not_in_defaults():
     agent = create_harness()
     assert not any(isinstance(p, TodosClass) for p in agent._plugin_registry._plugins.values())
     assert "todo_write" not in agent.tool_registry.registry
+
+
+def test_todos_logs_the_deprecation_notice_once(caplog, monkeypatch):
+    monkeypatch.setattr(todos_module, "_deprecation_logged", False)
+    with pytest.deprecated_call(match="moving to the Strands SDK"):
+        Todos()
+        Todos()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == [todos_module._DEPRECATION_MESSAGE]
+
+
+def test_deprecation_message_matches_the_pep_702_literal():
+    # The decorator takes a literal, so the constant is a second copy; keep them identical.
+    assert TodosClass.__deprecated__ == todos_module._DEPRECATION_MESSAGE
 
 
 def test_todos_disabled_when_not_selected():

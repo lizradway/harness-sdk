@@ -14,6 +14,15 @@ Two of Strands harness's built-ins are plugins rather than tools: `environment` 
 being things the model calls the way it calls `shell` or `read`. `environment` is on by
 default; `todos` is opt-in.
 
+:::caution[Deprecated: todos]
+`todos` is deprecated in the harness and is moving to the Strands Harness SDK's vended
+plugins. Constructing `Todos` emits a `DeprecationWarning` and logs the notice once in
+Python; the class is marked `@deprecated` in TypeScript. Nothing changes for now — the
+plugin keeps working where it is until the move lands.
+[Track the move](https://github.com/strands-agents/harness-sdk/issues/6058), and comment
+there if you depend on the harness built-in.
+:::
+
 ## todos
 
 The `todos` plugin gives the agent a `todo_write` tool and keeps the current task list in
