@@ -15,7 +15,7 @@ import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import { isProtocolBlock } from './strategies/offload/target.js'
 import { isOffloaded } from './placeholder.js'
-import { parseWindowKey, windowsOf } from './query-search.js'
+import { clipToScope, narrowToSpan, parseWindowKey, windowsOf } from './query-search.js'
 import type { LineWindow } from './query-search.js'
 
 /** @internal */
@@ -234,24 +234,28 @@ export class Stash {
   }
 
   /**
-   * Ranks the line windows of `reference` against `query` using the configured storage's own search.
+   * Ranks the parts of `reference` against `query` using the configured storage's own search.
    *
-   * Windows are written under `windows/<reference>/<start>-<end>` the first time a reference is
-   * queried and then kept, so the index costs one pass per queried reference — not one per query,
-   * and nothing at all for content that is never queried. Writing them to the caller's storage is
-   * the point: it is what lets the search strategy configured on that storage do the ranking. A
-   * strategy bound to its backend (an on-disk full-text index, a vector index) can only rank
-   * entries that live in that backend.
+   * A `SearchStrategy` ranks whole entries, so the content is materialized as overlapping windows
+   * under `windows/<reference>/<start>-<end>` — one key per window, which is what makes a part of
+   * the content separately rankable. They are written on the first query for a reference and then
+   * kept, so the index costs one pass per queried reference, not one per query, and nothing for
+   * content that is never queried. Writing them to the caller's storage is the point: it is what
+   * lets the strategy configured on that storage do the ranking, and a strategy bound to its
+   * backend can only rank entries that live there.
    *
-   * The index spans the whole content, so one index serves every `line_range` a later query scopes
-   * to; results outside the scope are dropped rather than re-indexed.
+   * A strategy that reports which part of an entry matched, through `byteRange`, narrows its window
+   * to that span — the window stays the unit of ranking, and becomes the bound on the answer rather
+   * than the answer itself.
+   *
+   * The index spans the whole content, so one index serves every `line_range` a later query scopes to.
    *
    * @param reference - The stash key whose content is being ranked
    * @param lines - The reference's full text, split into lines
    * @param query - Natural-language query
    * @param scopeStart - First line of the scope, 0-indexed inclusive
    * @param scopeEnd - Last line of the scope, 0-indexed inclusive
-   * @returns The scope's windows best-first, or `null` when the backend has no `search()` and the
+   * @returns The scope's best-first sections, or `null` when the backend has no `search()` and the
    *   caller should rank in memory instead
    */
   async rankWindows(
@@ -264,17 +268,13 @@ export class Stash {
     const index = this._windowIndex(reference)
     if (!index.search) return null
 
-    const windows = windowsOf(lines, 0, lines.length - 1)
-    await this._ensureWindowIndex(index, lines, windows)
-
+    await this._ensureWindowIndex(index, lines, windowsOf(lines, 0, lines.length - 1))
     const results = await index.search(query)
-    return results.flatMap((result) => {
+    const ranked = results.flatMap((result) => {
       const window = parseWindowKey(result.key)
-      // Clipped to the scope rather than dropped unless fully inside it: the index spans the whole
-      // content, so a window straddling the scope edge is the only one covering those lines.
-      if (!window || window.end < scopeStart || window.start > scopeEnd) return []
-      return [{ start: Math.max(window.start, scopeStart), end: Math.min(window.end, scopeEnd) }]
+      return window ? [narrowToSpan(window, lines, result.byteRange)] : []
     })
+    return clipToScope(ranked, scopeStart, scopeEnd)
   }
 
   /**

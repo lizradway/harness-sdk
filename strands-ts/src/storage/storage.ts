@@ -81,6 +81,19 @@ export interface StorageSearchResult {
   score: number
   /** Stored bytes, present only when the backend includes them. */
   data?: Uint8Array
+
+  /**
+   * The part of the entry that matched, as byte offsets into the stored bytes: `start` inclusive,
+   * `end` exclusive. Omit when the whole entry is the match.
+   *
+   * Set only by a strategy that indexes an entry in pieces — a chunk-level vector index, a
+   * full-text index that records positions — so it can rank a span of one entry rather than the
+   * entry as a whole. A consumer looking for the relevant part of a large entry uses this when
+   * present; omitting it is not a lesser result, it means the strategy ranks whole entries.
+   *
+   * Offsets are into bytes rather than characters or lines because an entry is opaque bytes.
+   */
+  byteRange?: { start: number; end: number }
 }
 
 /**

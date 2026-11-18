@@ -85,6 +85,42 @@ export function parseWindowKey(key: string): LineWindow | null {
 }
 
 /**
+ * The part of `window` a strategy reported as the match, or the whole window when it reported none.
+ *
+ * `range` is relative to the window's own bytes, since the window is the entry the strategy ranked.
+ * A strategy that ranks whole entries reports no range, which is not a lesser result — the window is
+ * already the unit the ranking is about.
+ *
+ * @internal
+ */
+export function narrowToSpan(
+  window: LineWindow,
+  lines: string[],
+  range: { start: number; end: number } | undefined
+): LineWindow {
+  if (!range) return window
+
+  const within = lineLocator(lines.slice(window.start, window.end + 1))(range)
+  if (!within) return window
+  return { start: window.start + within.start, end: window.start + within.end }
+}
+
+/**
+ * The windows that reach into `[scopeStart, scopeEnd]`, each cut back to it, in the given order.
+ *
+ * Cut rather than dropped unless wholly outside: a ranker indexes the whole content, so a window
+ * straddling the scope edge is the only one covering those lines.
+ *
+ * @internal
+ */
+export function clipToScope(windows: LineWindow[], scopeStart: number, scopeEnd: number): LineWindow[] {
+  return windows.flatMap((window) => {
+    if (window.end < scopeStart || window.start > scopeEnd) return []
+    return [{ start: Math.max(window.start, scopeStart), end: Math.min(window.end, scopeEnd) }]
+  })
+}
+
+/**
  * Answers `query` with the content's best-ranked line windows, within `maxChars`.
  *
  * `maxChars` decides how many windows fit, and they are taken in rank order, so the budget drops
@@ -171,6 +207,33 @@ export async function rankWindowsInMemory(
     const window = windows.get(result.key)
     return window ? [window] : []
   })
+}
+
+/**
+ * A mapper from byte offsets in `lines` joined by `\n` back to the lines they fall on.
+ *
+ * Returned as a mapper rather than a plain function so the per-line offsets are measured once and
+ * reused across every range resolved against the same lines.
+ */
+function lineLocator(lines: string[]): (range: { start: number; end: number }) => LineWindow | null {
+  const encoder = new TextEncoder()
+  const starts: number[] = []
+  let offset = 0
+  for (const line of lines) {
+    starts.push(offset)
+    // The separator the lines were joined by; the last line has none, past which nothing resolves.
+    offset += encoder.encode(line).length + 1
+  }
+
+  const lineAt = (byte: number): number => {
+    const next = starts.findIndex((start) => start > byte)
+    return next === -1 ? starts.length - 1 : next - 1
+  }
+
+  return (range) => {
+    if (range.end <= range.start || range.start < 0) return null
+    return { start: lineAt(range.start), end: lineAt(range.end - 1) }
+  }
 }
 
 /** The 0-indexed inclusive bounds a query ranks within. */

@@ -5,6 +5,7 @@ import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ImageBlock } from '../../types/media.js'
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { JSONValue } from '../../types/json.js'
+import type { StorageSearchResult } from '../../storage/storage.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 
@@ -388,6 +389,72 @@ describe('retrieval tool', () => {
       expect(ranked).toContain('0-11')
       expect(result).toContain('line 1: nothing of note')
       expect(result).not.toContain('connection pool was exhausted')
+    })
+
+    it('narrows a section to the span the strategy reports as the match', async () => {
+      const lines = buriedAnswerLines()
+      // Shaped like a chunk-level index: ranks a window, and reports where in it the match sits.
+      const strategy = {
+        async search(storage: InMemoryStorage): Promise<StorageSearchResult[]> {
+          const window = (await storage.list('')).find((key) => key === '60-71')
+          if (!window) return []
+          const text = new TextDecoder().decode((await storage.read(window))!)
+          const start = text.indexOf('line 62:')
+          return [{ key: window, score: 1, byteRange: { start, end: start + 'line 62:'.length } }]
+        },
+      }
+      const stash = new Stash(new InMemoryStorage({ searchStrategy: strategy }), 'test-session', 'test-agent')
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: lines.join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), {
+        reference: ref,
+        query: 'database connection pool exhausted',
+      })) as string
+
+      // The reported span, not the whole 60-71 window the strategy ranked.
+      expect(result).toContain('line 62: the payment database connection pool was exhausted')
+      expect(result).not.toContain('line 61:')
+      expect(result).not.toContain('line 63:')
+    })
+
+    it('reads the reported span as byte offsets, not character offsets', async () => {
+      // A wide multi-byte line ahead of the answer, then lines short enough that reading the offset
+      // as characters undershoots past the answer onto a later line.
+      const lines = ['alpha', '😀'.repeat(10), 'ANSWER', ...Array.from({ length: 12 }, () => 'filler')]
+      const answerStart = new TextEncoder().encode(`${lines[0]}\n${lines[1]}\n`).length
+      const strategy = {
+        async search(): Promise<StorageSearchResult[]> {
+          return [{ key: '0-11', score: 1, byteRange: { start: answerStart, end: answerStart + 3 } }]
+        },
+      }
+      const stash = new Stash(new InMemoryStorage({ searchStrategy: strategy }), 'test-session', 'test-agent')
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: lines.join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), { reference: ref, query: 'the answer' })) as string
+
+      expect(result).toContain('ANSWER')
+      expect(result).not.toContain('😀')
+      expect(result).not.toContain('filler')
+    })
+
+    it('returns the whole ranked section when the strategy reports no span', async () => {
+      const strategy = {
+        async search(storage: InMemoryStorage): Promise<Array<{ key: string; score: number }>> {
+          const window = (await storage.list('')).find((key) => key === '60-71')
+          return window ? [{ key: window, score: 1 }] : []
+        },
+      }
+      const stash = new Stash(new InMemoryStorage({ searchStrategy: strategy }), 'test-session', 'test-agent')
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), {
+        reference: ref,
+        query: 'database connection pool exhausted',
+      })) as string
+
+      expect(result).toContain('line 61:')
+      expect(result).toContain('line 62: the payment database connection pool was exhausted')
+      expect(result).toContain('line 72:')
     })
 
     it('reuses the window index across queries rather than rebuilding it', async () => {
